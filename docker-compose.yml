@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  youtube-queue:
+    build: .
+    ports:
+      - "3000:3000"
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./server/.env:/app/server/.env:ro
+      - ./server/data:/app/server/data
+      - ./server/logs:/app/server/logs
+    restart: unless-stopped
+    command: npm run start:production
+
+  # Optional: Use external PostgreSQL if needed
+  # postgres:
+  #   image: postgres:15
+  #   environment:
+  #     POSTGRES_DB: youtube_queue
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: password
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+
+# volumes:
+#   postgres_data:

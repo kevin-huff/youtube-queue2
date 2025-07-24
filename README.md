@@ -1,423 +1,257 @@
-# YouTube Queue - Twitch Video Queue System
+# YouTube Queue Bot
 
-A real-time video queue system for Twitch streamers that allows viewers to submit YouTube, TikTok, and Instagram videos through chat commands. Built with Node.js, React, Socket.io, and PostgreSQL.
+A real-time video queue system for Twitch streamers with a modern web interface.
 
-## 🎯 Features
+## 🚀 Quick Start (Standalone Environment)
 
-### Core Functionality
-- **Real-time Queue Management**: Live updates using Socket.io
-- **Multi-platform Support**: YouTube, TikTok, and Instagram Reels
-- **Twitch Bot Integration**: Automated chat monitoring and commands
-- **Video Metadata Extraction**: Automatic title, thumbnail, and duration detection
-- **Admin Dashboard**: Complete control over queue and bot settings
-
-### Queue Features
-- Enable/disable queue through chat or admin panel
-- Video validation and duplicate prevention
-- Customizable queue limits and cooldowns
-- Real-time viewer feedback
-- Queue reordering and management
-
-### Bot Commands
-- **Moderator Commands**:
-  - `!queue on/off` - Enable/disable video submissions
-  - `!skip` - Skip currently playing video
-  - `!clear` - Clear entire queue
-  - `!volume <0-100>` - Adjust volume
-
-- **Viewer Commands**:
-  - Drop video links in chat when queue is open
-  - `!queue` - Check queue status
-  - `!help` - Show available commands
-
-## 🏗️ Architecture
-
-```
-├── server/               # Node.js backend
-│   ├── src/
-│   │   ├── api/         # REST API routes
-│   │   ├── bot/         # Twitch bot implementation
-│   │   ├── services/    # Business logic
-│   │   ├── socket/      # Socket.io handlers
-│   │   └── database/    # Database configuration
-│   └── prisma/          # Database schema and migrations
-├── client/              # React frontend
-│   ├── src/
-│   │   ├── components/  # Reusable components
-│   │   ├── pages/       # Page components
-│   │   └── contexts/    # React contexts
-└── shared/              # Shared utilities (future)
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 16+ and npm
-- PostgreSQL 12+
-- Twitch account for bot credentials
-
-### Automated Setup
-Run the setup script for guided installation:
+For ChatGPT Codex or other standalone environments, use the provided startup script:
 
 ```bash
 # Clone the repository
 git clone https://github.com/kevin-huff/youtube-queue2.git
 cd youtube-queue2
 
-# Run automated setup
-./setup.sh
+# Run the startup script
+./start.sh
 ```
 
-The setup script will:
-1. Check prerequisites
-2. Install all dependencies
-3. Create environment files
-4. Set up the database
-5. Run initial migrations
+The startup script will:
+- ✅ Check Node.js requirements (v16+)
+- ✅ Install all dependencies automatically
+- ✅ Set up environment files
+- ✅ Configure SQLite database (no PostgreSQL required)
+- ✅ Generate secure admin credentials
+- ✅ Start both server and client
 
-### Manual Setup
+## 📱 Access the Application
 
-1. **Install Dependencies**
-```bash
-npm run install:all
-```
-
-2. **Database Setup**
-```bash
-# Create PostgreSQL database
-createdb youtube_queue
-
-# Copy environment file
-cp server/.env.example server/.env
-```
-
-3. **Configure Environment**
-Edit `server/.env` with your settings:
-
-```env
-# Database
-DATABASE_URL="postgresql://username:password@localhost:5432/youtube_queue"
-
-# Twitch Bot Credentials
-TWITCH_USERNAME=your_bot_username
-TWITCH_OAUTH_TOKEN=oauth:your_token_here
-TWITCH_CHANNEL=your_channel_name
-
-# Optional: YouTube API for enhanced metadata
-YOUTUBE_API_KEY=your_youtube_api_key
-
-# Server Configuration
-PORT=5000
-NODE_ENV=development
-JWT_SECRET=your-super-secret-jwt-key
-CORS_ORIGIN=http://localhost:3000
-```
-
-4. **Run Database Migrations**
-```bash
-npm run db:migrate
-```
-
-5. **Start Development Server**
-```bash
-npm run dev
-```
-
-The application will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
-- Queue Page: http://localhost:3000/queue
-- Admin Dashboard: http://localhost:3000/admin
+Once started, access these URLs:
+- **Queue Page**: http://localhost:3000/queue (for viewers)
+- **Admin Panel**: http://localhost:3000/admin (for streamers)
+- **API Server**: http://localhost:5000
 
 ## 🔧 Configuration
 
-### Twitch Bot Setup
+The startup script creates a `server/.env` file with default settings. To enable Twitch integration:
 
-1. **Create a Twitch Account** for your bot (or use existing)
-
-2. **Get OAuth Token**:
-   - Visit https://twitchapps.com/tmi/
-   - Login with your bot account
-   - Copy the generated OAuth token
-
-3. **Configure Bot**:
+1. Edit `server/.env`
+2. Configure these variables:
    ```env
    TWITCH_USERNAME=your_bot_username
    TWITCH_OAUTH_TOKEN=oauth:your_token_here
-   TWITCH_CHANNEL=your_channel_name  # without #
+   TWITCH_CHANNEL=your_channel_name
    ```
 
-### YouTube API (Optional)
-For enhanced video metadata:
+### Getting Twitch Credentials
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing
-3. Enable YouTube Data API v3
-4. Create API credentials
-5. Add the API key to your `.env` file
+1. **Bot Username**: Create a Twitch account for your bot
+2. **OAuth Token**: Get from https://twitchapps.com/tmi/
+3. **Channel**: Your Twitch channel name (without #)
 
-### Queue Settings
-Customize queue behavior in the admin dashboard:
-- Maximum queue size
-- Submission cooldown period
-- Maximum video duration
-- Auto-play next video
-- Volume control
+### Optional: YouTube API
 
-## 📱 Usage
+For video metadata (thumbnails, titles):
+```env
+YOUTUBE_API_KEY=your_youtube_api_key_here
+```
 
-### For Streamers
+Get a YouTube API key from [Google Cloud Console](https://console.cloud.google.com/).
 
-1. **Start the Application**
+## 🤖 Bot Commands
+
+When the Twitch bot is configured:
+
+| Command | Description | Permission |
+|---------|-------------|------------|
+| `!queue on/off` | Enable/disable queue | Mods only |
+| `!skip` | Skip current video | Mods only |
+| `!clear` | Clear entire queue | Mods only |
+| `!help` | Show available commands | Everyone |
+
+Viewers can submit videos by posting YouTube URLs in chat when the queue is enabled.
+
+## 🐳 Docker Setup (Alternative)
+
+If you prefer Docker:
+
+```bash
+# Build and start with Docker Compose
+docker-compose up --build
+```
+
+## 📂 Manual Setup
+
+If you prefer manual setup:
+
+1. **Install dependencies**:
+   ```bash
+   npm run install:all
+   ```
+
+2. **Set up environment**:
+   ```bash
+   cp .env.example server/.env
+   echo "REACT_APP_SERVER_URL=http://localhost:5000" > client/.env
+   ```
+
+3. **Configure database**:
+   ```bash
+   cd server
+   npm run db:setup
+   cd ..
+   ```
+
+4. **Start development**:
    ```bash
    npm run dev
    ```
 
-2. **Configure Settings**
-   - Open admin dashboard at `/admin`
-   - Enable/disable queue
-   - Adjust settings as needed
+## 🏗️ Architecture
 
-3. **Display Queue**
-   - Open queue page at `/queue` in OBS browser source
-   - Resize to fit your layout
+```
+youtube-queue2/
+├── client/          # React frontend
+├── server/          # Node.js backend
+├── start.sh         # Standalone startup script
+├── docker-compose.yml # Docker configuration
+└── .env.example     # Environment template
+```
 
-### For Viewers
+### Backend (server/)
+- **Express.js** API server
+- **Socket.io** for real-time updates
+- **Prisma** ORM with SQLite/PostgreSQL
+- **TMI.js** for Twitch chat integration
 
-1. **Submit Videos**
-   - Drop YouTube, TikTok, or Instagram links in chat
-   - Only works when queue is enabled
+### Frontend (client/)
+- **React** with hooks
+- **Socket.io-client** for real-time updates
+- **Responsive design** for mobile/desktop
 
-2. **Check Status**
-   - Use `!queue` command to see current status
-   - Use `!help` for available commands
+## 🔒 Security Features
+
+- JWT authentication for admin access
+- Rate limiting on API endpoints
+- Input validation and sanitization
+- CORS protection
+- Helmet.js security headers
+
+## ⚙️ Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | Database connection string | SQLite file |
+| `TWITCH_USERNAME` | Bot's Twitch username | - |
+| `TWITCH_OAUTH_TOKEN` | Twitch OAuth token | - |
+| `TWITCH_CHANNEL` | Channel to monitor | - |
+| `YOUTUBE_API_KEY` | YouTube Data API key | - |
+| `JWT_SECRET` | JWT signing secret | Auto-generated |
+| `ADMIN_PASSWORD` | Admin panel password | Auto-generated |
+| `PORT` | Server port | 5000 |
+| `MAX_QUEUE_SIZE` | Maximum queue length | 50 |
+| `SUBMISSION_COOLDOWN` | Cooldown between submissions (seconds) | 30 |
+| `MAX_VIDEO_DURATION` | Max video length (seconds) | 600 |
 
 ## 🛠️ Development
 
-### Available Scripts
-
 ```bash
-# Install all dependencies
+# Install dependencies
 npm run install:all
 
 # Start development servers
 npm run dev
 
-# Start individual services
-npm run dev:server    # Backend only
-npm run dev:client    # Frontend only
+# Run tests
+npm test
 
-# Database operations
-npm run db:migrate    # Run migrations
-npm run db:reset      # Reset database
-npm run db:seed       # Seed with test data
-
-# Production build
-npm run build
-npm run start:production
-
-# Testing
-npm run test
-npm run test:server
-npm run test:client
-
-# Linting
+# Lint code
 npm run lint
+
+# Build for production
+npm run build
 ```
 
-### Project Structure
+## 📊 Database Schema
 
-```
-youtube-queue2/
-├── client/                    # React frontend
-│   ├── public/
-│   ├── src/
-│   │   ├── components/       # Reusable UI components
-│   │   │   └── NavBar.js
-│   │   ├── contexts/         # React contexts
-│   │   │   └── SocketContext.js
-│   │   ├── pages/           # Main page components
-│   │   │   ├── QueuePage.js
-│   │   │   └── AdminPage.js
-│   │   ├── App.js
-│   │   └── index.js
-│   └── package.json
-├── server/                   # Node.js backend
-│   ├── src/
-│   │   ├── api/             # REST API routes
-│   │   │   └── index.js
-│   │   ├── bot/             # Twitch bot
-│   │   │   └── TwitchBot.js
-│   │   ├── database/        # Database connection
-│   │   │   └── connection.js
-│   │   ├── services/        # Business logic
-│   │   │   ├── QueueService.js
-│   │   │   └── VideoService.js
-│   │   ├── socket/          # Socket.io handlers
-│   │   │   └── index.js
-│   │   ├── utils/           # Utilities
-│   │   │   └── logger.js
-│   │   └── index.js         # Main server file
-│   ├── prisma/              # Database schema
-│   │   └── schema.prisma
-│   └── package.json
-├── setup.sh                 # Automated setup script
-├── package.json             # Root package.json
-└── README.md
-```
+The app uses Prisma with the following models:
+- **Videos**: Queue entries with metadata
+- **Settings**: Bot configuration
+- **Users**: Admin authentication
 
-### Database Schema
+## 🔍 Troubleshooting
 
-The application uses PostgreSQL with Prisma ORM:
+### Common Issues
 
-- **QueueItem**: Video queue entries
-- **Setting**: Application configuration
-- **User**: User information (future)
+1. **Port already in use**: The startup script automatically stops existing processes
+2. **Database connection**: Uses SQLite by default, no setup required
+3. **Missing Node.js**: Install Node.js 16+ from https://nodejs.org
+4. **Permission denied**: Run `chmod +x start.sh` first
 
-## 🔐 Security Features
+### Logs
 
-- Input validation and sanitization
-- Rate limiting on API endpoints
-- SQL injection prevention with Prisma
-- XSS protection with helmet
-- CORS configuration
-- Environment variable protection
+Server logs are available in:
+- Console output during development
+- `server/logs/app.log` in production
 
 ## 🚀 Deployment
 
+### Production Deployment
+
+1. Set `NODE_ENV=production` in `server/.env`
+2. Use PostgreSQL for better performance
+3. Build the client: `npm run build:client`
+4. Start production server: `npm run start:production`
+
 ### Environment Setup
 
-For production deployment:
+For production, configure:
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+CORS_ORIGIN=https://your-domain.com
+```
 
-1. **Set Production Environment Variables**
-2. **Build the Client**
-   ```bash
-   npm run build
-   ```
-3. **Configure Database** (PostgreSQL in production)
-4. **Start Production Server**
-   ```bash
-   npm run start:production
-   ```
+## 📝 License
 
-### Docker Support (Future)
-
-Docker configuration will be added in future releases for easier deployment.
+This project is licensed under the Unlicense - see the [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-### Development Guidelines
+## 📞 Support
 
-- Follow existing code style
-- Add tests for new features
-- Update documentation as needed
-- Use conventional commit messages
+- Create an issue on GitHub for bugs
+- Check existing issues for solutions
+- Review the troubleshooting section above
 
-## 📝 API Documentation
+## 🎯 Features
 
-### REST Endpoints
+- ✅ Real-time queue updates
+- ✅ Twitch chat integration
+- ✅ YouTube video metadata
+- ✅ Admin controls
+- ✅ Mobile-responsive design
+- ✅ Rate limiting and moderation
+- ✅ Automatic video validation
+- ✅ Queue management commands
+- ✅ SQLite support (no database setup required)
+- ✅ Docker support
+- ✅ One-command startup
 
-- `GET /api/queue` - Get current queue
-- `POST /api/queue` - Add video to queue
-- `DELETE /api/queue/:id` - Remove video from queue
-- `PUT /api/queue/reorder` - Reorder queue
-- `GET /api/bot/status` - Get bot status
-- `POST /api/admin/queue/toggle` - Enable/disable queue
+## 📈 Roadmap
 
-### Socket Events
-
-**Client to Server:**
-- `queue:join` - Join queue room
-- `queue:add` - Add video to queue
-- `queue:remove` - Remove video from queue
-- `admin:enable_queue` - Enable queue
-- `admin:disable_queue` - Disable queue
-
-**Server to Client:**
-- `queue:initial_state` - Initial queue state
-- `queue:video_added` - Video added to queue
-- `queue:video_removed` - Video removed from queue
-- `queue:updated` - Queue updated
-- `queue:now_playing` - Currently playing video
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **Bot Not Connecting**
-   - Check Twitch credentials in `.env`
-   - Verify OAuth token is valid
-   - Ensure channel name is correct (no #)
-
-2. **Database Connection Issues**
-   - Verify PostgreSQL is running
-   - Check DATABASE_URL format
-   - Ensure database exists
-
-3. **Videos Not Loading**
-   - Check YouTube API key (if using)
-   - Verify video URLs are valid
-   - Check network connectivity
-
-4. **Socket Connection Failed**
-   - Verify server is running on correct port
-   - Check CORS configuration
-   - Ensure client connects to correct server URL
-
-### Debug Mode
-
-Enable debug logging:
-```env
-NODE_ENV=development
-LOG_LEVEL=debug
-```
-
-## 🎯 Roadmap
-
-### Upcoming Features
-
-- [ ] Playlist management
-- [ ] User authentication and profiles
-- [ ] Advanced queue filtering
-- [ ] Video rating and voting system
-- [ ] Stream deck integration
-- [ ] Mobile responsive design improvements
-- [ ] Docker containerization
-- [ ] Advanced analytics
-
-### Long-term Goals
-
-- [ ] Multi-streamer support
-- [ ] Plugin system for extensions
-- [ ] Advanced moderation tools
-- [ ] Integration with other platforms (Discord, etc.)
-- [ ] Machine learning for content recommendations
-
-## 📄 License
-
-This project is released under the [Unlicense](LICENSE) - see the LICENSE file for details.
-
-## 👨‍💻 Author
-
-**Kevin Huff**
-- GitHub: [@kevin-huff](https://github.com/kevin-huff)
-
-## 🙏 Acknowledgments
-
-- Twitch for their excellent chat API
-- YouTube, TikTok, and Instagram for video platforms
-- The open-source community for amazing tools
-- Socket.io for real-time communication
-- React and Node.js communities
+- [ ] Multi-platform support (YouTube Live, etc.)
+- [ ] User voting system
+- [ ] Queue templates
+- [ ] Analytics dashboard
+- [ ] Custom themes
+- [ ] API documentation
 
 ---
 
-**Happy Streaming! 🎬✨**
-
-For questions, issues, or feature requests, please open an issue on GitHub.
+Built with ❤️ for the streaming community

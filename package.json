@@ -12,6 +12,12 @@
     "build:client": "cd client && npm run build",
     "start": "cd server && npm start",
     "start:production": "cd server && npm run start:production",
+    "setup": "./start.sh",
+    "setup:production": "./start-production.sh",
+    "production:start": "./start-production.sh",
+    "production:stop": "./start-production.sh stop",
+    "production:restart": "./start-production.sh restart",
+    "production:status": "./start-production.sh status",
     "test": "npm run test:server && npm run test:client",
     "test:server": "cd server && npm test",
     "test:client": "cd client && npm test",
@@ -24,7 +30,12 @@
     "lint:server": "cd server && npm run lint",
     "lint:client": "cd client && npm run lint",
     "clean": "rm -rf node_modules server/node_modules client/node_modules",
-    "postinstall": "husky install"
+    "clean:all": "npm run clean && rm -rf client/build server/data logs production.log .server.pid .admin-credentials",
+    "postinstall": "husky install",
+    "docker:build": "docker build -t youtube-queue .",
+    "docker:run": "docker run -p 3000:3000 -p 5000:5000 youtube-queue",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
   },
   "repository": {
     "type": "git",

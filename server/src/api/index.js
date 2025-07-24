@@ -377,6 +377,16 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// Health check endpoint
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
 // Error handling middleware
 router.use((error, req, res, next) => {
   logger.error('API Error:', error);
