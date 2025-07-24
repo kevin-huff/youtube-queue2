@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html  data-bs-theme="dark">
+
+<head>
+  <title>Mediashare Guest Controls</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css"
+    integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w=="
+    crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+  <link href="//cdn.datatables.net/1.12.1/css/jquery.dataTables.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/js/all.min.js"
+    integrity="sha512-rpLlll167T5LJHwp0waJCh3ZRf7pO6IT1+LZOhAyP6phAirwchClbTZV3iqL3BMrVxIYRbzGTpli4rfxsCK6Vw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://kit.fontawesome.com/5a69a86b05.js" crossorigin="anonymous"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"
+    integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js"
+    integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js"
+    integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl"
+    crossorigin="anonymous"></script>
+  <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+    }
+    .leaderboard-user {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px;
+      border-bottom: 1px solid #ccc;
+    }
+    .vid_card:hover {
+      transform-box: content-box;
+      transform: scale(1.25);
+      transition: transform 1s;
+      z-index: 100;
+    }
+    .vid_card:hover .card-header {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      width: auto;
+    }
+    .stat {
+      margin-right: 20px;
+    }
+
+    .stat i {
+      margin-right: 5px;
+    }
+
+    .btn-fixed-bottom {
+      position: absolute;
+      bottom: 0;
+      margin-bottom: 20px;
+      font-weight: bold;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    .btn-fixed-bottom:hover {
+      background-color: #0056b3;
+    }
+
+    #leaderboard-container {
+      position: fixed;
+      right: 10px;
+      width: 275px;
+      background-color: #353e47;
+      padding: 15px;
+      border: 1px solid #000;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+    #leaderboard-container::before,
+    #leaderboard-container::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: -1;
+      border: 3px dashed #4ab4ff;  /* Dashed border */
+      border-radius: 10px;  /* Rounded corners */
+    }
+    #leaderboard-container::after {
+      top: 5px;
+      left: 5px;
+      bottom: 5px;
+      right: 5px;
+    }
+    .rating {
+      flex: 1;
+      text-align: right; 
+    }
+
+    .rank {
+      text-align: left; 
+    }
+    .user {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .rating-modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      overflow: auto;
+      background-color: #434654;
+    }
+    .rating-modal .modal-body {
+      padding: 20px;
+    }
+    .rating-modal .modal-body ul {
+      list-style-type: none;
+      padding-left: 20px;
+    }
+    .rating-modal .modal-body ul li {
+      margin-bottom: 10px;
+    }
+    #half-stars .rating-group {
+      display: inline-flex;
+    }
+
+    #half-stars .rating__icon {
+      pointer-events: none;
+    }
+
+    #half-stars .rating__input {
+      position: absolute !important;
+      left: -9999px !important;
+    }
+
+    #half-stars .rating__label {
+      cursor: pointer;
+      /* if you change the left/right padding, update the margin-right property of .rating__label--half as well. */
+      padding: 0 0.1em;
+      font-size: 3rem;
+    }
+
+    #half-stars .rating__label--half {
+      padding-right: 0;
+      margin-right: -1.2em;
+      z-index: 2;
+    }
+
+    #half-stars .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__icon--none {
+      color: #eee;
+    }
+
+    #half-stars .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input:checked~.rating__label .rating__icon--star,
+    #half-stars .rating__input:checked~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__label .rating__icon--star,
+    #half-stars .rating-group:hover .rating__label--half .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__input:hover~.rating__label .rating__icon--star,
+    #half-stars .rating__input:hover~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input--none:hover+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    .rating-modal-content {
+      background-color: #434654;
+      padding: 20px;
+      border: 1px solid #888;
+      text-align: center;
+      border-radius: 10px;
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: bold;
+      color: #4ab4ff;
+      margin-bottom: 15px;
+    }
+
+    p {
+      font-size: 16px;
+      color: #d1d1d1;
+      margin-bottom: 10px;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.9);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+    .moderation-icon {
+      position: absolute;
+      left: 0;
+      color: #fff;   /* Change color as needed */
+      font-size: 2em;   /* Change font size as needed */
+      background: rgba(0, 0, 0, 0.5);   /* Change background color as needed */
+      padding: 5px;
+      border-radius: 5px;
+    }
+    .footer {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      /* Set the fixed height of the footer here */
+      height: 40px;
+      line-height: 60px; /* Vertically center the text there */
+    }
+    .card-header {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 29ch;
+    }
+    .navbar-stats {
+      background-color: #697581;
+      padding: 10px;
+      margin: 0 10px;
+      border-radius: 5px;
+      box-shadow: inset 0 3px 6px rgba(0,0,0,0.16), inset 0 3px 6px rgba(0,0,0,0.23);
+    }
+    #stars-display .fa-star {
+            font-size: 6em; /* Adjust for desired size */
+            color: gold;
+    }
+    .thumbnail {
+      width: 50%;
+      height: auto;
+    }
+  </style>
+
+<body>
+  <audio id="countdown_01" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown_theme.mp3?v=1730586719571"></audio>
+  <audio id="countdown_02" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(1).mp3?v=1730586679281"></audio>
+  <audio id="countdown_03" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(2).mp3?v=1730586689758"></audio>
+  <audio id="countdown_04" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(3).mp3?v=1730586693650"></audio>
+  <audio id="countdown_05" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(4).mp3?v=1730586666414"></audio>
+  <audio id="countdown_06" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(5).mp3?v=1730586675646"></audio>
+  <nav class="navbar sticky-top bg-body-tertiary" style="background-color: #3b8ec9; display: flex; justify-content: center;">
+      <div style="text-align: left;">
+          <img src="/abbabox_logo.png" alt="Abbabox Logo" height="75px" class="d-inline-block align-text-bottom">
+          <br />
+          &nbsp;The Best Damn Free Media Share Stream in the Universe
+      </div>
+  </nav>
+  
+
+  <div class="container bootstrap-dark">
+    <p>
+      Dearest Guest,
+    </p>
+    <p>Welcome to Abbabox's free mediashare experience! Here's how to use this page:</p>
+    <ul>
+      <li><strong>Enter your name:</strong> Enter your name in the text box below. This is the name that will be displayed on stream.</li>
+      <li><strong>Input your ratings:</strong> When a video is viewed on stream, a rating slider will appear. Select a score with the slider or use the text box for a percise rating and it will be displayed on screen.</li>
+      <li><strong>Lock in your rating:</strong> Click the "Locked In" button to let Abba know you're ready. This will play a sound on stream. Don't worry, you can still change your rating after locking in.</li>
+      <li><strong>Change your name:</strong> If you need to change your name after you've rated a video, simply enter the new name in the text box and click the "Update Name" button.</li>
+      <li><strong>Sign off:</strong> If you need to leave the stream, click the "Sign Off" button. This will remove your box from the stream.</li>
+      <li><strong>Reopen the rating dialog:</strong> Click the "Rate" button to bring back the rating slider.</li>
+      <li><strong>Play sounds:</strong> You can also play various crowd sounds (mostly farts) on stream. Just click the corresponding button.</li>
+    </ul>
+    <p>Have fun and don't forget to give ZilchGnu 4 stars! (Just kidding... unless?)</p>
+      Thank you for participating.
+<br />
+      Kevin The Technomancer (ZilchGnu)
+    </p>
+      <div class="btn-group" role="group" aria-label="Basic example">
+        <button onclick="triggerMoan()" class="btn btn-danger">Moan</button>
+        <button onclick="triggerFart()" class="btn btn-warning">Fart</button>
+        <button onclick="lockedin()" class="btn btn-success">Locked In</button>
+        <button onclick="rate()" class="btn btn-info">Rate</button>
+    </div>
+    <br /><br />
+    <input type="text" id="username" placeholder="Name to show on stream." />
+    <input type="hidden" id="password" value="<%= password %>"/>
+    <!-- Modal -->
+    <div class="modal fade" id="rateModal" tabindex="-1" aria-labelledby="rateModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="rateModalLabel">Rate the video</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div> <!-- End modal-header -->
+          <div class="modal-body text-center">
+            <p>Please rate these videos out of 4 stars:</p>
+            <h2 id="roundTitle">Round Title Here</h2>
+            <hr>            
+            <h5><span id="user1Name">User 1</span>'s Video</h5>
+            <p id="user1Title"></p>
+            <img id="user1Thumbnail" class="thumbnail" src="#" alt="User 1 Thumbnail">
+            <input type="range" min="0" max="4" step="0.0001" id="user1Rating-slider" value="0" style="width: 450px;">
+            <input type="number" min="0" max="4" step="0.0001" id="user1Rating-text" value="0" style="width: 200px;">
+            <div id="user1Rating-value">Rating: 0</div>
+            <hr>
+            <h5><span id="user2Name">User 2</span>'s Video</h5>
+            <p id="user2Title"></p>
+            <img id="user2Thumbnail" class="thumbnail" src="#" alt="User 2 Thumbnail">
+            <input type="range" min="0" max="4" step="0.0001" id="user2Rating-slider" value="0" style="width: 450px;">
+            <input type="number" min="0" max="4" step="0.0001" id="user2Rating-text" value="0" style="width: 200px;">
+            <div id="user2Rating-value">Rating: 0</div>
+          </div>          
+          <div class="modal-footer">
+            <button onclick="triggerMoan()" class="btn btn-danger">Moan</button>
+            <button onclick="triggerFart()" class="btn btn-warning">Fart</button>
+            <button onclick="lockedin()" class="btn btn-success">Locked In</button>
+          </div> <!-- End modal-footer -->
+        </div> <!-- End modal-content -->
+      </div> <!-- End modal-dialog -->
+    </div> <!-- End modal -->
+    <script>
+      const socket = io();
+      let lastUsernameUsed = '';
+      document.addEventListener('DOMContentLoaded', function () {
+        const user1RatingSlider = document.getElementById('user1Rating-slider');
+        const user1RatingText = document.getElementById('user1Rating-text');
+        const user2RatingSlider = document.getElementById('user2Rating-slider');
+        const user2RatingText = document.getElementById('user2Rating-text');
+
+        function updateUser1Rating() {
+            const user1Rating = user1RatingSlider.value;
+            user1RatingText.value = user1Rating;
+            $('#user1Rating-value').text(`User 1's Rating: ${user1Rating}`);
+            socket.emit('finalsRating', {judgeId: $('#username').val(), userId: 'user1',  rating: user1Rating});
+        }
+
+        function updateUser2Rating() {
+            const user2Rating = user2RatingSlider.value;
+            user2RatingText.value = user2Rating;
+            $('#user2Rating-value').text(`User 2's Rating: ${user2Rating}`);
+            socket.emit('finalsRating', {judgeId: $('#username').val(), userId: 'user2',  rating: user2Rating});
+        }
+
+        user1RatingSlider.addEventListener('input', updateUser1Rating);
+        user1RatingText.addEventListener('input', function() {
+            user1RatingSlider.value = user1RatingText.value;
+            updateUser1Rating();
+        });
+
+        user2RatingSlider.addEventListener('input', updateUser2Rating);
+        user2RatingText.addEventListener('input', function() {
+            user2RatingSlider.value = user2RatingText.value;
+            updateUser2Rating();
+        });
+            
+        socket.on('connect', () => {
+          console.log('socket.io connected');
+        });
+
+        socket.on('updateFinals', function(data) {
+            console.log('updateFinals', data);
+            $('#roundTitle').text(data.roundTitle);
+
+            $('#user1Name').text(data.user1.name);
+            $('#user1Title').text(data.user1.videoData.snippet.title);
+            $('#user1Thumbnail').attr('src', getThumbnail(data.user1.videoData));
+
+            $('#user2Name').text(data.user2.name);
+            $('#user2Title').text(data.user2.videoData.snippet.title);
+            $('#user2Thumbnail').attr('src', getThumbnail(data.user2.videoData));
+            // Reset the rating sliders
+            user1RatingSlider.value = 0;
+            user1RatingText.value = 0;
+            user2RatingSlider.value = 0;
+            user2RatingText.value = 0;
+            $('#user1Rating-value').text(`User 1's Rating: 0`);
+            $('#user2Rating-value').text(`User 2's Rating: 0`);
+        });
+
+        function getThumbnail(youtube){
+            // Existing function to get thumbnail URL
+            let thumbnailUrl = "";
+            if (youtube["snippet"]["thumbnails"]["standard"]) {
+                thumbnailUrl = youtube["snippet"]["thumbnails"]["standard"]["url"];
+            } else {
+                thumbnailUrl = youtube["snippet"]["thumbnails"]["default"]["url"];
+            }
+            return thumbnailUrl;
+        }
+      });
+    
+      window.triggerMoan = function() {
+        const user = $('#username').val();
+        const password = $('#password').val();
+        socket.emit('moan', { username: user, password: password, trusted: true });
+      }
+    
+      window.triggerFart = function() {
+        const user = $('#username').val();
+        const password = $('#password').val();
+        socket.emit('fart', { username: user, password: password, trusted: true });
+      }
+    
+      window.rate = function() {
+        $('#rateModal').modal('show');
+      }
+    
+      window.lockedin = function() {
+        const user = $('#username').val();
+        const password = $('#password').val();
+        socket.emit('lockedin', { username: user, password: password, trusted: true });
+      }
+    
+      window.updateName = function() {
+        const user = $('#username').val();
+        socket.emit('update_name', {user: user, lastUsernameUsed: lastUsernameUsed});
+      }
+    
+      window.signOff = function() {
+        const user = $('#username').val();
+        socket.emit('sign_off', user);
+      }
+    </script>
+  </div>
+</body>
+
+</html>

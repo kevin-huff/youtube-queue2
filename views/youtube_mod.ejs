@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Moderate Youtube Queue</title>
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
+    integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous" />
+  <!-- Dark mode CSS -->
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@forevolve/bootstrap-dark@1.0.0/dist/css/bootstrap-dark.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css"
+    integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w=="
+    crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+  <link href="//cdn.datatables.net/1.12.1/css/jquery.dataTables.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/js/all.min.js"
+    integrity="sha512-rpLlll167T5LJHwp0waJCh3ZRf7pO6IT1+LZOhAyP6phAirwchClbTZV3iqL3BMrVxIYRbzGTpli4rfxsCK6Vw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://kit.fontawesome.com/5a69a86b05.js" crossorigin="anonymous"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"
+    integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js"
+    integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js"
+    integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl"
+    crossorigin="anonymous"></script>
+  <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+  <script type="module" src="moderator.js"></script>
+  <script>
+    window.socialScoresData = <%- JSON.stringify(social_scores) %>;
+    window.moderationsData = <%- JSON.stringify(moderations) %>;
+  </script>
+  <style>
+    .btn-fixed-bottom {
+      position: absolute;
+      bottom: 0;
+      margin-bottom: 20px;
+      font-weight: bold;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    .btn-fixed-bottom:hover {
+      background-color: #0056b3;
+    }
+
+    #leaderboard-container {
+      position: fixed;
+      top: 50px;
+      right: 10px;
+      width: 300px;
+      background-color: #353e47;
+      padding: 10px;
+      border: 1px solid #000;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+
+    .user {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .rating-modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: #434654;
+    }
+
+    #half-stars .rating-group {
+      display: inline-flex;
+    }
+
+    #half-stars .rating__icon {
+      pointer-events: none;
+    }
+
+    #half-stars .rating__input {
+      position: absolute !important;
+      left: -9999px !important;
+    }
+
+    #half-stars .rating__label {
+      cursor: pointer;
+      /* if you change the left/right padding, update the margin-right property of .rating__label--half as well. */
+      padding: 0 0.1em;
+      font-size: 3rem;
+    }
+
+    #half-stars .rating__label--half {
+      padding-right: 0;
+      margin-right: -1.2em;
+      z-index: 2;
+    }
+
+    #half-stars .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__icon--none {
+      color: #eee;
+    }
+
+    #half-stars .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input:checked~.rating__label .rating__icon--star,
+    #half-stars .rating__input:checked~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__label .rating__icon--star,
+    #half-stars .rating-group:hover .rating__label--half .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__input:hover~.rating__label .rating__icon--star,
+    #half-stars .rating__input:hover~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input--none:hover+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    .rating-modal-content {
+      background-color: #434654;
+      margin: 15% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 80%;
+      text-align: center;
+      animation: fadeIn 1s;
+      border-radius: 10px;
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: bold;
+      color: #4ab4ff;
+      margin-bottom: 15px;
+    }
+
+    p {
+      font-size: 16px;
+      color: #d1d1d1;
+      margin-bottom: 10px;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.9);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    /* Position the moderation icon at the bottom left corner */
+.moderation-icon {
+  position: absolute;
+  left: 0;
+  color: #fff;   /* Change color as needed */
+  font-size: 2em;   /* Change font size as needed */
+  background: rgba(0, 0, 0, 0.5);   /* Change background color as needed */
+  padding: 5px;
+  border-radius: 5px;
+}
+  </style>
+
+<body>
+  <audio id="countdown_01" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown_theme.mp3?v=1730586719571"></audio>
+  <audio id="countdown_02" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(1).mp3?v=1730586679281"></audio>
+  <audio id="countdown_03" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(2).mp3?v=1730586689758"></audio>
+  <audio id="countdown_04" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(3).mp3?v=1730586693650"></audio>
+  <audio id="countdown_05" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(4).mp3?v=1730586666414"></audio>
+  <audio id="countdown_06" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(5).mp3?v=1730586675646"></audio>
+  <nav class="navbar navbar-dark sticky-top" style="background-color: #3b8ec9;">
+    <span class="navbar-brand mb-0 h1">The Youtube Queue</span>
+    <span class="navbar-text" id="counts">
+      <span id="queue_count">
+        <%= youtube.length %>
+      </span>
+      Videos in Queue |
+      <span id="watch_count">
+        <%= yt_count %>
+      </span> Videos Watched
+    </span>
+    <span class="navbar-text">
+    </span>
+    <form class="form-inline">
+      <div class="btn-group">
+        <button class="btn btn-primary my-2 my-sm-0" id="shuffle" type="button">
+          <i class="fas fa-random"></i> Shuffle
+        </button>
+        <button class="btn btn-info my-2 my-sm-0" id="time-sort" type="button">
+          <i class="fas fa-clock"></i> Duration Sort
+        </button>
+        <button class="btn btn-warning my-2 my-sm-0" id="make_fair" type="button">
+          <i class="fas fa-balance-scale"></i> Make Fair
+        </button>
+        <button class="btn btn-success my-2 my-sm-0" id="social_sort" type="button">
+          <i class="fas fa-sort-amount-up"></i> Social Sort
+        </button>
+      </div>
+    </form>
+  </nav>
+
+  <div class="container bootstrap-dark">
+    <div id="leaderboard-container">
+      <h5>Social Score Leader Board</h5>
+      <div id="leaderboard"></div>
+    </div> <!-- End leaderboard --> 
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3" id="youtube_videos">
+      <% youtube.forEach(function(youtube, index) { %>
+        <div class="col mb-4 vid_card" id="row_<%= youtube['video']['id'] %>">
+          <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h5 class="card-title m-0">
+                <%= youtube['video']['snippet']['title'] %>
+              </h5>
+              <button data-video-id='<%= youtube['video']['id'] %>' class='btn btn-sm btn-danger remove-youtube-btn'
+                data-toggle='tooltip' data-placement='top' title='Remove Video'><i class='fa-solid fa-trash'></i></button>
+            </div> <!-- End card-header -->
+            <div class="card-body p-0">
+              <% if (youtube['video']['snippet']['thumbnails']['standard']) { %>
+                <img src="<%= youtube['video']['snippet']['thumbnails']['standard']['url'] %>" class="card-img-top" alt="Video Thumbnail" />
+                <% } else { %>
+                  <img src="<%= youtube['video']['snippet']['thumbnails']['default']['url'] %>" class="card-img-top" alt="Video Thumbnail" />
+                  <% } %>
+            </div><!-- End card-body --> 
+            <div class="card-footer d-flex justify-content-between">
+              <small class="username"><%= youtube['user'] %></small>
+              <small class="duration"><%= youtube['length'] ? formatDuration(youtube['length']) : '' %></small>
+              <button class="btn btn-lg btn-primary watch-youtube-btn" data-video-id='<%= youtube['video']['id'] %>' data-video-link='<%= youtube['link'] %>'>Check Vid</button>          
+            </div> <!-- End card-footer -->
+          </div> <!-- End card -->
+        </div> <!-- End col -->
+        <% }); %>
+    </div> <!-- End row -->
+  </div> <!-- End container -->
+  <!-- Modal -->
+  <div class="modal fade" id="moderateModal" tabindex="-1" aria-labelledby="moderateModalLabel" aria-hidden="true" data-video-id="">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="moderateModalLabel">Moderate this video</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div> <!-- End modal-header -->
+        <div class="modal-body">
+          <p>Use buttons below to moderate this video</p>
+          <p>If the video is safe use thumbs up.</p>
+          <p>If the video is questionable use thumbs down.</p>
+          <p>If you are unsure or don't want to moderate this video click skip judgement.</p>
+          <p>If the video violates TOS use the Delete Button.</p>
+          <button data-video-id='' class='btn btn-sm btn-danger remove-youtube-btn'
+          data-toggle='tooltip' data-placement='top' title='Remove Video'><i class='fa-solid fa-trash'></i></button>
+          <input type="hidden" id="username" value="">
+        </div> <!-- End modal-body -->
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Skip Judgement</button>
+          <button type="button" class="btn btn-danger" id="thumbsDownButton">
+            <i class="fas fa-thumbs-down"></i> Questionable Video
+          </button>
+          <button type="button" class="btn btn-success" id="thumbsUpButton">
+            <i class="fas fa-thumbs-up"></i> Safe Video
+          </button>
+        </div> <!-- End modal-footer -->
+      </div> <!-- End modal-content -->
+    </div> <!-- End modal-dialog -->
+  </div> <!-- End modal -->
+  <div id="rating-modal" class="rating-modal">
+    <div class="rating-modal-content">
+      <h2>The <span id="this-rating"></span> <i class="fas fa-star"></i> Rating Has Changed Your Social Score</h2>
+      <p id="rating-username">Username: <span></span></p>
+      <p id="rating-weighted">Weighted Social Score: <span></span></p>
+      <p id="rating-change-rating">Change in Rating: <span></span></p>
+      <p id="rating-rank">Ranking: <span></span></p>
+      <p id="rating-change-rank">Change in Rank: <span></span></p>
+    </div> <!-- End rating-modal-content -->
+  </div> <!-- End rating-modal -->
+
+        <!-- Footer -->
+        <footer class="page-footer font-small blue pt-4">
+
+          <!-- Footer Links -->
+          <div class="container-fluid text-center text-md-left">
+
+            <!-- Grid row -->
+            <div class="row">
+
+              <!-- Grid column -->
+              <div class="col-md-6 mt-md-0 mt-3">
+
+                <!-- Content -->
+                <h5 class="text-uppercase">Support Abbabox</h5>
+                <p>Help the streamer keep doing the things. Support him anyway you can.</p>
+
+              </div>
+              <!-- Grid column -->
+
+              <hr class="clearfix w-100 d-md-none pb-3">
+
+              <!-- Grid column -->
+              <div class="col-md-3 mb-md-0 mb-3">
+
+                <!-- Links -->
+                <h5 class="text-uppercase">Social</h5>
+
+                <ul class="list-unstyled">
+                  <li>
+                    <a href="https://twitter.com/abbabox1">Twitter</a>
+                  </li>
+                  <li>
+                    <a href="https://www.youtube.com/c/Abbabox">YouTube</a>
+                  </li>
+                  <li>
+                    <a href="https://discord.com/invite/vgB85mF">Discord</a>
+                  </li>
+                  <li>
+                    <a href="https://www.tiktok.com/@abbabox?lang=en">TikTok</a>
+                  </li>
+                </ul>
+
+              </div>
+              <!-- Grid column -->
+
+              <!-- Grid column -->
+              <div class="col-md-3 mb-md-0 mb-3">
+
+                <!-- Links -->
+                <h5 class="text-uppercase">Pay the Man</h5>
+
+                <ul class="list-unstyled">
+                  <li>
+                    <a href="https://streamlabs.com/abbabox/tip">Paypal</a>
+                  </li>
+                  <li>
+                    <a href="https://www.streamloots.com/abbabox">StreamLoots</a>
+                  </li>
+                  <li>
+                    <a href="https://jointhrone.com/u/abbabox">Throne</a>
+                  </li>
+                  <li>
+                    <a href="https://streamlabs.com/abbabox/merch">Merch</a>
+                  </li>
+                </ul>
+
+              </div>
+              <!-- Grid column -->
+
+            </div>
+            <!-- Grid row -->
+
+          </div>
+          <!-- Footer Links -->
+
+          <!-- Copyright -->
+          <div class="footer-copyright text-center py-3">© 2023 Designed by the
+            Citizens of the ABXCrew
+          </div>
+          <!-- Copyright -->
+
+        </footer>
+        <!-- Footer -->
+</body>
+
+</html>

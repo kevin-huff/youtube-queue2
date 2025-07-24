@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html  data-bs-theme="dark">
+
+<head>
+  <title>Mediashare Guest Controls</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css"
+    integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w=="
+    crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+  <link href="//cdn.datatables.net/1.12.1/css/jquery.dataTables.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/js/all.min.js"
+    integrity="sha512-rpLlll167T5LJHwp0waJCh3ZRf7pO6IT1+LZOhAyP6phAirwchClbTZV3iqL3BMrVxIYRbzGTpli4rfxsCK6Vw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://kit.fontawesome.com/5a69a86b05.js" crossorigin="anonymous"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script
+  src="https://code.jquery.com/jquery-3.7.1.min.js"
+  integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+  crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js"
+    integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+    crossorigin="anonymous"></script>
+  <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.3.2/html2canvas.min.js"></script>
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+    }
+    .leaderboard-user {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px;
+      border-bottom: 1px solid #ccc;
+    }
+    .vid_card:hover {
+      transform-box: content-box;
+      transform: scale(1.25);
+      transition: transform 1s;
+      z-index: 100;
+    }
+    .vid_card:hover .card-header {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      width: auto;
+    }
+    .stat {
+      margin-right: 20px;
+    }
+
+    .stat i {
+      margin-right: 5px;
+    }
+
+    .btn-fixed-bottom {
+      position: absolute;
+      bottom: 0;
+      margin-bottom: 20px;
+      font-weight: bold;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    .btn-fixed-bottom:hover {
+      background-color: #0056b3;
+    }
+
+    #leaderboard-container {
+      position: fixed;
+      right: 10px;
+      width: 275px;
+      background-color: #353e47;
+      padding: 15px;
+      border: 1px solid #000;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+    #leaderboard-container::before,
+    #leaderboard-container::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: -1;
+      border: 3px dashed #4ab4ff;  /* Dashed border */
+      border-radius: 10px;  /* Rounded corners */
+    }
+    #leaderboard-container::after {
+      top: 5px;
+      left: 5px;
+      bottom: 5px;
+      right: 5px;
+    }
+    .rating {
+      flex: 1;
+      text-align: right; 
+    }
+
+    .rank {
+      text-align: left; 
+    }
+    .user {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .rating-modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      overflow: auto;
+      background-color: #434654;
+    }
+    .rating-modal .modal-body {
+      padding: 20px;
+    }
+    .rating-modal .modal-body ul {
+      list-style-type: none;
+      padding-left: 20px;
+    }
+    .rating-modal .modal-body ul li {
+      margin-bottom: 10px;
+    }
+    #half-stars .rating-group {
+      display: inline-flex;
+    }
+
+    #half-stars .rating__icon {
+      pointer-events: none;
+    }
+
+    #half-stars .rating__input {
+      position: absolute !important;
+      left: -9999px !important;
+    }
+
+    #half-stars .rating__label {
+      cursor: pointer;
+      /* if you change the left/right padding, update the margin-right property of .rating__label--half as well. */
+      padding: 0 0.1em;
+      font-size: 3rem;
+    }
+
+    #half-stars .rating__label--half {
+      padding-right: 0;
+      margin-right: -1.2em;
+      z-index: 2;
+    }
+
+    #half-stars .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__icon--none {
+      color: #eee;
+    }
+
+    #half-stars .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input:checked~.rating__label .rating__icon--star,
+    #half-stars .rating__input:checked~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__label .rating__icon--star,
+    #half-stars .rating-group:hover .rating__label--half .rating__icon--star {
+      color: orange;
+    }
+
+    #half-stars .rating__input:hover~.rating__label .rating__icon--star,
+    #half-stars .rating__input:hover~.rating__label--half .rating__icon--star {
+      color: #ddd;
+    }
+
+    #half-stars .rating-group:hover .rating__input--none:checked+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    #half-stars .rating__input--none:hover+.rating__label .rating__icon--none {
+      color: red;
+    }
+
+    .rating-modal-content {
+      background-color: #434654;
+      padding: 20px;
+      border: 1px solid #888;
+      text-align: center;
+      border-radius: 10px;
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: bold;
+      color: #4ab4ff;
+      margin-bottom: 15px;
+    }
+
+    p {
+      font-size: 16px;
+      color: #d1d1d1;
+      margin-bottom: 10px;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.9);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+    .moderation-icon {
+      position: absolute;
+      left: 0;
+      color: #fff;   /* Change color as needed */
+      font-size: 2em;   /* Change font size as needed */
+      background: rgba(0, 0, 0, 0.5);   /* Change background color as needed */
+      padding: 5px;
+      border-radius: 5px;
+    }
+    .footer {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      /* Set the fixed height of the footer here */
+      height: 40px;
+      line-height: 60px; /* Vertically center the text there */
+    }
+    .card-header {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 29ch;
+    }
+    .navbar-stats {
+      background-color: #697581;
+      padding: 10px;
+      margin: 0 10px;
+      border-radius: 5px;
+      box-shadow: inset 0 3px 6px rgba(0,0,0,0.16), inset 0 3px 6px rgba(0,0,0,0.23);
+    }
+    #stars-display .fa-star {
+            font-size: 6em; /* Adjust for desired size */
+            color: gold;
+    }
+  </style>
+
+<body>
+  <audio id="countdown_01" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown_theme.mp3?v=1730586719571"></audio>
+  <audio id="countdown_02" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(1).mp3?v=1730586679281"></audio>
+  <audio id="countdown_03" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(2).mp3?v=1730586689758"></audio>
+  <audio id="countdown_04" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(3).mp3?v=1730586693650"></audio>
+  <audio id="countdown_05" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(4).mp3?v=1730586666414"></audio>
+  <audio id="countdown_06" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/countdown-%20(5).mp3?v=1730586675646"></audio>
+  <audio id="gong" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/gong.mp3?v=1700004228232"></audio>
+  <audio id="veto" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/answer-wrong.mp3?v=1700004667898"></audio>
+  <audio id="fart_01" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/dry-fart.mp3?v=1700004818800"></audio>
+  <audio id="fart_02" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/fart_1.mp3?v=1700023345954"></audio>
+  <audio id="fart_03" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/fart_03.mp3?v=1700023464386"></audio>  
+  <audio id="fart_04" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/perfect-fart.mp3?v=1700023636828"></audio>
+  <audio id="fart_05" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/fart-toot.mp3?v=1700023653624"></audio>
+  <audio id="fart_06" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/fart-with-reverb_NcgStsA.mp3?v=1700023644773"></audio>
+  <audio id="fart_07" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/fart3.mp3?v=1700023649738"></audio>
+  <audio id="forced_shuffle" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/forced_shuffle.mp3?v=1702767312975"></audio>
+  <audio id="lockedin" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/input_ok.mp3?v=1703768903507"></audio>
+  <audio id="tts" src="/tts"></audio>
+  <audio id="moan_01" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/moan-1.mp3?v=1706443774474"></audio>
+  <audio id="moan_02" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/maon-2.mp3?v=1706443815977"></audio>
+  <audio id="moan_03" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/maon-3.mp3?v=1706443854425"></audio>
+  <audio id="moan_04" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/moan-4.mp3?v=1706443879906"></audio>
+  <audio id="moan_05" src="https://cdn.glitch.global/38551651-fc87-4f60-b474-a27d424d372b/moan_5.m4a?v=1706444485774"></audio>
+    <nav class="navbar sticky-top bg-body-tertiary" style="background-color: #3b8ec9; display: flex; justify-content: center;">
+      <div style="text-align: left;">
+          <img src="/abbabox_logo.png" alt="Abbabox Logo" height="75px" class="d-inline-block align-text-bottom">
+          <br />
+          &nbsp;The Best Damn Free Media Share Stream in the Universe
+      </div>
+  </nav>
+  
+
+  <div class="container bootstrap-dark">
+    <div class="alert alert-warning alert-dismissible fade show d-none" role="alert" id="fixVideoAlert">
+      <h4 class="alert-heading" id="alert_heading">Oopsie</h4>
+      <hr>
+      <p>Looks like you refreshed while a video was playing. Please <b>Re-enter</b> your name and click Fix Video</p>
+      <div class="d-flex justify-content-between align-items-center">
+        <button type="button" onclick="fixVideo()" class="btn btn-warning" data-bs-dismiss="alert" aria-label="Fix Video">Fix Video</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="card mt-5">
+        <div class="card-body">
+          <h5 class="card-title">Welcome to Abbabox's Free Mediashare Guest Console</h5>
+          <div class="col">
+            <p>
+              Dearest Guest,
+            </p>
+            <p>Welcome to Abbabox's free mediashare experience! Here's how to use this page:</p>
+            <ul>
+              <li><strong>Enter your name:</strong> Enter your name in the text box below. This is the name that will be displayed on stream.</li>
+              <li><strong>Input your ratings:</strong> When a video is viewed on stream, a rating slider will appear. Select a score with the slider or use the text box for a percise rating and it will be displayed on screen.</li>
+              <li><strong>Lock in your rating:</strong> Click the "Locked In" button to let Abba know you're ready. This will play a sound on stream. Don't worry, you can still change your rating after locking in.</li>
+              <li><strong>Change your name:</strong> If you need to change your name after you've rated a video, simply enter the new name in the text box and click the "Update Name" button.</li>
+              <li><strong>Sign off:</strong> If you need to leave the stream, click the "Sign Off" button. This will remove your box from the stream.</li>
+              <li><strong>Reopen the rating dialog:</strong> Click the "Rate" button to bring back the rating slider.</li>
+              <li><strong>Play sounds:</strong> You can also play various crowd sounds (mostly farts) on stream. Just click the corresponding button.</li>
+            </ul>
+            <p>Have fun and don't forget to give ZilchGnu 4 stars! (Just kidding... unless?)</p>
+              Thank you for participating.
+            <br />
+              Kevin The Technomancer (ZilchGnu)
+            </p>
+          </div>
+      </div>
+    </div>    
+    <div class="row row-cols-1 row-cols-md-2 g-4">
+      <div class="col">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Name to show on stream</h5>
+            <div class="form-floating mb-3">
+              <input type="text" id="username" placeholder="Honored Guest" value="Honored Guest" class="form-control" data-bs-toggle="tooltip" title="The name that will show next to your ratings on stream."  />  
+              <label for="username" class="form-label">Name to show on stream</label>
+            </div>
+            <input type="hidden" id="password" value="<%= password %>"/>
+          </div>
+          <div class="card-footer text-center">
+            <button onclick="updateName()" class="btn btn-outline-primary" data-bs-toggle="tooltip" title="Update your name that shows on stream">Change Display Name</button>
+            <button onclick="signOff()" class="btn btn-outline-secondary" data-bs-toggle="tooltip" title="This will remove your rating box from stream">Leave the Stream</button>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Sounds</h5>
+            <div class="btn-group" role="group" aria-label="Sounds">
+              <button onclick="triggerGong()" class="btn btn-outline-primary" data-bs-toggle="tooltip" title="Play Gong Sound and send TTS on stream"><i class="fas fa-bell"></i> Gong</button>
+              <button onclick="triggerVeto()" class="btn btn-outline-secondary" data-bs-toggle="tooltip" title="Play Veto Sound on stream"><i class="fas fa-times-circle"></i> Veto</button>
+              <button onclick="triggerFart()" class="btn btn-outline-warning" data-bs-toggle="tooltip" title="Play Fart Sound on stream"><i class="fas fa-wind"></i> Fart</button>
+              <button onclick="triggerMoan()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Play Moan Sound on stream"><i class="fas fa-volume-up"></i> Moan</button>
+              <button onclick="replayTTS()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Replay the last generate TTS on stream"><i class="fas fa-play"></i> Replay TTS</button>
+              <button onclick="pauseTTS()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Pause the TTS currently playing on stream"><i class="fas fa-pause"></i> Pause TTS</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col mb-4">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Rating Controls</h5>
+            <div class="text-center">
+              <div class="btn-group" role="group" aria-label="Rating Controls">
+                <button onclick="lockedin()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Plays locked in sound on stream."><i class="fas fa-lock"></i> Locked In</button>
+                <button onclick="rate()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Reopens the rating dialog"><i class="fas fa-star"></i> Rate</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col mb-4">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Video Player Controls</h5>
+            <div class="text-center">
+              <div class="btn-group" role="group" aria-label="Video Controls">
+                <input class="btn-check" type="checkbox" id="toggleVideoPlayerCheckbox" data-bs-toggle="tooltip" title="Use to not load videos on this page, mainly for abba so he doesn't have the video shown twice." onclick="toggleVideoPlayer()">
+                <label class="btn btn-outline-primary" for="toggleVideoPlayerCheckbox"><i class="fas fa-video-slash"></i> Don't Play Video</label>
+                <input class="btn-check" type="checkbox" id="toggleMuteCheckbox" data-bs-toggle="tooltip" title="Starts all videos muted, mainly for abba so he doesn't get double sound on stream." onclick="toggleMute()">
+                <label class="btn btn-outline-primary" for="toggleMuteCheckbox"><i class="fas fa-volume-xmark"></i> Always Mute</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+    <!-- Modal -->
+    <div class="modal fade" id="rateModal" tabindex="-1" aria-labelledby="rateModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="rateModalLabel">Rate this video</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div> <!-- End modal-header -->
+          <div class="modal-body text-center">
+            <p>Please rate this video out of 4 stars:</p>
+            <input type="range" min="0" max="4" step="0.0001" name="guestRating" id="guestRating-slider" value="0" style="width: 450px;">
+            <input type="number" min="0" max="4" step="0.0001" name="guestRatingText" id="guestRating-text" value="0" style="width: 200px;">
+            <div id="guestRating-value">Guest's Rating: 0</div>
+          </div>
+          <div class="modal-footer">
+            <div class="btn-group" role="group" aria-label="Modal Controls">
+              <button onclick="triggerGong()" class="btn btn-outline-primary" data-bs-toggle="tooltip" title="Play Gong Sound and send TTS on stream"><i class="fas fa-bell"></i> Gong</button>
+              <button onclick="triggerVeto()" class="btn btn-outline-secondary" data-bs-toggle="tooltip" title="Play Veto Sound on stream"><i class="fas fa-times-circle"></i> Veto</button>
+              <button onclick="triggerFart()" class="btn btn-outline-warning" data-bs-toggle="tooltip" title="Play Fart Sound on stream"><i class="fas fa-wind"></i> Fart</button>
+              <button onclick="triggerMoan()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Play Moan Sound on stream"><i class="fas fa-volume-up"></i> Moan</button>
+              <button onclick="replayTTS()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Replay the last generate TTS on stream"><i class="fas fa-play"></i> Replay TTS</button>
+              <button onclick="pauseTTS()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Pause the TTS currently playing on stream"><i class="fas fa-pause"></i> Pause TTS</button>             
+              <button onclick="lockedin()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Plays locked in sound on stream.">Locked In</button>
+            </div>
+          </div> <!-- End modal-footer -->
+        </div> <!-- End modal-content -->
+      </div> <!-- End modal-dialog -->
+    </div> <!-- End modal -->
+    <div class="modal " id="watchYoutubeModal" data-bs-backdrop='static' tabindex="-1" aria-labelledby="videoModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="youtubeVideoTitle"></h5>
+            <div class="btn-group" role="group" aria-label="Modal Controls">
+              <button onclick="triggerFart()" class="btn btn-outline-warning" data-bs-toggle="tooltip" title="Play Fart Sound on stream"><i class="fas fa-wind"></i> Fart</button>
+              <button onclick="triggerMoan()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Play Moan Sound on stream"><i class="fas fa-volume-up"></i> Moan</button>
+              <button onclick="triggerGong()" class="btn btn-outline-primary" data-bs-toggle="tooltip" title="Play Gong Sound and send TTS on stream"><i class="fas fa-bell"></i> Gong</button>
+              <button onclick="replayTTS()" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Replay the last generate TTS on stream"><i class="fas fa-play"></i> Replay TTS</button>
+              <button onclick="pauseTTS()" class="btn btn-outline-danger" data-bs-toggle="tooltip" title="Pause the TTS currently playing on stream"><i class="fas fa-pause"></i> Pause TTS</button>             
+              <button type="button" class="btn btn-outline-success" aria-label="Close" data-bs-dismiss="modal" data-bs-toggle="tooltip" title="Stops video playing on stream and moves on to rating.">Start Rating</button>
+            </div>
+          </div>
+          <div class="modal-body" id="watchYoutubeModalBody">
+            <!-- 16:9 aspect ratio -->
+            <div class="ratio ratio-16x9" >
+              <div id="youtube-player"></div>
+            </div>
+            <!-- Media controls -->
+            <div class="d-flex justify-content-between align-items-center mt-3">
+              <button type="button" class="btn btn-default" id="youtube-play-pause" aria-label="Left Align">
+                <div style="width: 12px; text-align: center;"> <!-- adjust the width as needed -->
+                  <i class="fas fa-play fa active" aria-hidden="true"></i>
+                  <i class="fas fa-pause fa inactive" aria-hidden="true" style="display:none;"></i>
+                </div>
+              </button>
+              <div class="progress" style="flex-grow: 1; margin: 0 10px;">
+                <div class="progress-bar" id="youtube-player-progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+              </div>
+              <!-- Time left/duration -->
+              <div id="time-left-duration">
+                <span id="current-time">00:00</span> / <span id="total-duration">00:00</span>
+              </div>
+              <!-- Volume control -->
+              <div class="volume-slider" style="margin-left: 10px;">
+                <input type="range" id="volume-control" min="0" max="100" step="1" value="100">
+              </div>          
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/guest_controls.js"></script>
+</body>
+
+</html>

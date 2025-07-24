@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html data-bs-theme="dark">
+<head>
+    <title>Generate Guest Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css"
+        integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w=="
+        crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+</head>
+<body>
+    <div class="container bootstrap-dark">
+        <h1>Generate Guest Login</h1>
+        <form id="loginForm">
+            <label for="loginCode" class="form-label">Login Code:</label>
+            <div class="mb-3 input-group">
+                <input type="text" class="form-control" id="loginCode" name="loginCode" placeholder="Enter login code">
+                <button type="button" class="btn btn-primary" onclick="generateCode()"><i class="fas fa-random"></i></button>
+            </div>
+            <div class="mb-3">
+                <label for="username" class="form-label">Username:</label>
+                <input type="text" class="form-control" id="username" name="username" placeholder="Enter username">
+            </div>
+            <button type="submit" class="btn btn-primary">Generate</button>
+        </form>
+        <h2>Current Logins</h2>
+        <table id="loginsTable" class="table table-dark table-striped">
+            <thead>
+                <tr>
+                    <th>Login Code</th>
+                    <th>Username</th>
+                    <th>Details</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows will be added here dynamically -->
+                <% for (const username in logins) { %>
+                    <tr>
+                        <td><%= logins[username] %></td>
+                        <td><%= username %></td>
+                        <td>
+                            <textarea class="form-control" readonly onclick="copyToClipboard(event)">
+Link: https://youtube-queue.glitch.me/chat_guest
+Username: <%= logins[username] %>
+Password: <%= username %>
+                            </textarea>
+                        </td>
+                        <td>
+                            <button class="btn btn-secondary" onclick="disableLogin(this, '<%= username %>')">Disable</button>
+                        </td>
+                    </tr>
+                <% } %>                
+            </tbody>
+        </table>        
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+        crossorigin="anonymous"></script>
+    <script src="https://kit.fontawesome.com/5a69a86b05.js" crossorigin="anonymous"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"
+        integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js"
+        integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+        crossorigin="anonymous"></script>
+    <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+    <script>
+        var socket = io();
+
+        function generateCode() {
+            // Emit an event to the server to generate a code
+            socket.emit('generateCode');
+
+            // Listen for the 'codeGenerated' event from the server
+            socket.on('codeGenerated', function(code) {
+                // Update the input field with the received code
+                document.getElementById("loginCode").value = code;
+            });
+        }
+        document.getElementById('loginForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            var loginCode = document.getElementById('loginCode').value;
+            var username = document.getElementById('username').value;
+
+            // Check if loginCode or username is blank
+            if (!loginCode.trim() || !username.trim()) {
+                alert('Both fields are required.');
+                return;
+            }
+            // Emit a 'saveLogin' event to the server with the loginCode and username
+            socket.emit('saveLogin', { loginCode: loginCode, username: username });
+        });
+        var tableBody = document.getElementById('loginsTable').getElementsByTagName('tbody')[0];
+
+        // Add event listener to the table body
+        tableBody.addEventListener('click', function(event) {
+            // Check if the clicked element is a button
+            if (event.target.tagName.toLowerCase() === 'button') {
+                // Call the disableLogin function with the button and the username
+                var username = event.target.parentNode.previousSibling.previousSibling.textContent;
+                disableLogin(event.target, username);
+            }
+        });
+
+
+        socket.on('loginSaved', function(login) {
+            // Add the new login to the table
+            var tableBody = document.getElementById('loginsTable').getElementsByTagName('tbody')[0];
+            var newRow = tableBody.insertRow();
+
+            var loginCodeCell = newRow.insertCell(0);
+            var usernameCell = newRow.insertCell(1);
+            var detailsCell = newRow.insertCell(2);
+            var actionsCell = newRow.insertCell(3);
+
+            loginCodeCell.textContent = login.loginCode;
+            usernameCell.textContent = login.username;
+
+            var detailsTextArea = document.createElement('textarea');
+            detailsTextArea.textContent = `Link: https://youtube-queue.glitch.me/chat_guest\nUsername: ${login.username}\nPassword: ${login.loginCode}`;
+            detailsTextArea.className = 'form-control';
+            detailsTextArea.readOnly = true;
+            detailsTextArea.addEventListener('click', function(event) {
+                // Call the disableLogin function with the event and the username
+                copyToClipboard(event);
+            });
+            detailsCell.appendChild(detailsTextArea);
+
+            var disableButton = document.createElement('button');
+            disableButton.textContent = 'Disable';
+            disableButton.className = 'btn btn-secondary';
+
+            // Append the button to the actions cell
+            actionsCell.appendChild(disableButton);
+
+            actionsCell.appendChild(disableButton);
+        });
+        function disableLogin(element, username) {
+            // Emit a 'disableLogin' event to the server with the username
+            socket.emit('disableLogin', username);
+            socket.emit('sign_off', username);
+            // Find the row that needs to be removed
+            var row = element.parentNode.parentNode;
+
+            // Remove the row from the table
+            row.parentNode.removeChild(row);
+        }
+        function copyToClipboard(event) {
+            // Get the text area that was clicked
+            var textArea = event.target;
+
+            // Select the text in the text area
+            textArea.select();
+
+            // Copy the selected text to the clipboard
+            document.execCommand('copy');
+        }
+    </script>
+
+</body>
+</html>

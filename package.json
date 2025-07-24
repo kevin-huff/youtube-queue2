@@ -1,0 +1,46 @@
+{
+  "name": "youtube-queue",
+  "version": "0.0.1",
+  "description": "Youtube Queue Twitch Bot for Free media share",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "censor-sensor": "^1.0.6",
+    "dotenv": "^16.0.3",
+    "ejs": "^3.1.6",
+    "elevenlabs-node": "^2.0.3",
+    "express": "^4.17.2",
+    "express-basic-auth": "^1.2.1",
+    "fuse.js": "^6.6.2",
+    "googleapis": "^111.0.0",
+    "jsoning": "^0.13.23",
+    "openai": "3.2.1",
+    "request": "^2.88.2",
+    "socket.io": "^4.5.0",
+    "spoken": "^1.1.17",
+    "tmi.js": "^1.8.5",
+    "youtube-metadata-from-url": "^1.0.3"
+  },
+  "engines": {
+    "node": "16"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "*.json"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kevin-huff/youtube_queue.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "node",
+    "glitch",
+    "express"
+  ]
+}

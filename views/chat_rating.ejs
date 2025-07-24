@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chat Rating</title>
+    <style>
+        body {
+            background: #000;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        #content {
+            width: 800px;
+            height: 600px;
+            border: 3px solid #0f0;
+            padding: 20px;
+            box-sizing: border-box;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        #rating, #user-rating, #label {
+            color: #0f0;
+            text-shadow: 0 0 10px #0f0;
+        }
+        #label {
+            font-size: 4em;
+            margin-bottom: 10px;
+        }
+        #rating {
+            font-size: 20em;
+        }
+        #user-rating {
+            font-size: 5em;
+            opacity: 0;
+            transition: opacity 1s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="grid"></div>
+    <div id="content">
+        <div id="label">Chat Avg:</div>
+        <div id="rating">0</div>
+        <div id="user-rating"></div>
+    </div>
+
+
+
+    <script src="https://cdn.socket.io/4.4.0/socket.io.min.js"></script>
+    <script>
+        var socket = io();
+        socket.on("connect", () => {
+            console.log(socket.connected); // true
+        });
+        var ratingElement = document.getElementById('rating');
+        var userRatingElement = document.getElementById('user-rating');
+        var labelElement = document.getElementById('label');
+
+        socket.on('average_chat_rating', function(rating) {
+            ratingElement.textContent = rating;
+
+            // after 0.5s, change color back to original
+            setTimeout(function() {
+                ratingElement.style.color = '#0f0';
+            }, 500);
+        });
+
+        socket.on('new_chat_rating', function(ratings) {
+            var lastRating = ratings[ratings.length - 1];
+            userRatingElement.textContent = lastRating.username + ': ' + lastRating.rating;
+            userRatingElement.style.opacity = 1;
+
+            // after 2s, fade out user rating
+            setTimeout(function() {
+                userRatingElement.style.opacity = 0;
+            }, 2000);
+        });
+        socket.on('final_judgement', function() {
+            labelElement.textContent = 'Final Judgement:';
+            setTimeout(function() {
+                labelElement.textContent = "Chat Avg:";
+                ratingElement.textContent = '0';
+            }, 5000);
+        });
+
+    </script>
+</body>
+</html>

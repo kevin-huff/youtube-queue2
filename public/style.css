@@ -1,0 +1,63 @@
+.dice-name{
+	font-size: 10px;
+	font-weight: bold;
+	margin: 20px auto;
+}
+.dice-wrapper{
+	display: inline-block;
+    width: 215px;
+    height: 490px;
+    border: 1px solid gray;
+    border-radius: 5px;
+    margin-right: 5px;
+    text-align: center;
+	vertical-align: top;
+}
+.dice-wrapper .btn{
+	width: 90% !important;
+	margin: 10px auto;	
+}
+.dice-wrapper .diebtn{
+	font-size: auto;
+	width: 23% !important;
+	margin: 2.5px auto;	
+	text-align: left
+}
+.dice-host {
+	width: 100%;
+}
+.terminal-log {
+    overflow: auto;
+    max-height: 200px;
+    background-color: black;
+    color: white;
+}
+#roll-log {
+    overflow: auto;
+    background-color: black;
+    color: white;
+    white-space: pre-wrap;
+    display: flex;
+    flex-direction: column-reverse;
+}
+.terminal-log pre {
+	overflow: unset;
+	white-space: pre-wrap;
+	margin: 0;
+}
+pre {
+  background-color: #f5f5f5;
+  padding: 15px;
+  border-radius: 5px;
+  font-family: monospace;
+  white-space: pre-wrap;
+}
+.ui-autocomplete {
+    z-index: 99999;
+}
+
+#messages-list {
+  position: fixed;
+  top: 0;
+  width: 300px;
+}
