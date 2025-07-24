@@ -31,7 +31,7 @@
     "lint:client": "cd client && npm run lint",
     "clean": "rm -rf node_modules server/node_modules client/node_modules",
     "clean:all": "npm run clean && rm -rf client/build server/data logs production.log .server.pid .admin-credentials",
-    "postinstall": "husky install",
+    "postinstall": "command -v husky >/dev/null 2>&1 && husky install || echo 'Husky not found, skipping git hooks setup'",
     "docker:build": "docker build -t youtube-queue .",
     "docker:run": "docker run -p 3000:3000 -p 5000:5000 youtube-queue",
     "docker:up": "docker-compose up --build",
