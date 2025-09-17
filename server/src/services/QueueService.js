@@ -2,9 +2,10 @@ const { getDatabase } = require('../database/connection');
 const logger = require('../utils/logger');
 
 class QueueService {
-  constructor(io) {
+  constructor(io, channelId) {
     this.db = null;
     this.io = io;
+    this.channelId = channelId;
     this.currentlyPlaying = null;
     this.settings = new Map();
   }
@@ -13,18 +14,20 @@ class QueueService {
     this.db = getDatabase();
     await this.loadSettings();
     await this.cleanupOldItems();
-    logger.info('QueueService initialized');
+    logger.info(`QueueService initialized for channel: ${this.channelId}`);
   }
 
   async loadSettings() {
     try {
-      const settings = await this.db.botSetting.findMany();
+      const settings = await this.db.botSetting.findMany({
+        where: { channelId: this.channelId }
+      });
       settings.forEach(setting => {
         this.settings.set(setting.key, setting.value);
       });
-      logger.info('Bot settings loaded');
+      logger.info(`Bot settings loaded for channel: ${this.channelId}`);
     } catch (error) {
-      logger.error('Failed to load settings:', error);
+      logger.error(`Failed to load settings for channel ${this.channelId}:`, error);
       throw error;
     }
   }
@@ -39,16 +42,25 @@ class QueueService {
   async updateSetting(key, value) {
     try {
       await this.db.botSetting.upsert({
-        where: { key },
+        where: { 
+          channelId_key: {
+            channelId: this.channelId,
+            key: key
+          }
+        },
         update: { value: value.toString() },
-        create: { key, value: value.toString() }
+        create: { 
+          channelId: this.channelId,
+          key: key, 
+          value: value.toString() 
+        }
       });
       
       this.settings.set(key, value.toString());
       this.io.emit('setting:updated', { key, value });
-      logger.info(`Setting updated: ${key} = ${value}`);
+      logger.info(`Setting updated for channel ${this.channelId}: ${key} = ${value}`);
     } catch (error) {
-      logger.error(`Failed to update setting ${key}:`, error);
+      logger.error(`Failed to update setting ${key} for channel ${this.channelId}:`, error);
       throw error;
     }
   }
@@ -82,9 +94,10 @@ class QueueService {
       // Check user cooldown
       await this.checkSubmissionCooldown(submitter);
 
-      // Check if video already exists in queue
+      // Check if video already exists in queue for this channel
       const existingVideo = await this.db.queueItem.findFirst({
         where: {
+          channelId: this.channelId,
           videoId: videoData.videoId,
           status: { in: ['PENDING', 'PLAYING'] }
         }
@@ -97,15 +110,21 @@ class QueueService {
       // Get next position
       const nextPosition = await this.getNextPosition();
 
-      // Create user if not exists
+      // Create user if not exists (scoped to this channel)
       await this.db.user.upsert({
-        where: { twitchUsername: submitter },
+        where: { 
+          twitchUsername_channelId: {
+            twitchUsername: submitter,
+            channelId: this.channelId
+          }
+        },
         update: { 
           submissionCount: { increment: 1 },
           lastSubmission: new Date()
         },
         create: { 
           twitchUsername: submitter,
+          channelId: this.channelId,
           submissionCount: 1,
           lastSubmission: new Date()
         }
@@ -114,6 +133,7 @@ class QueueService {
       // Add to queue
       const queueItem = await this.db.queueItem.create({
         data: {
+          channelId: this.channelId,
           videoUrl: videoData.url,
           videoId: videoData.videoId,
           platform: videoData.platform,
@@ -197,6 +217,7 @@ class QueueService {
     try {
       const queue = await this.db.queueItem.findMany({
         where: {
+          channelId: this.channelId,
           status: { in: ['PENDING', 'PLAYING'] }
         },
         include: {
@@ -220,7 +241,10 @@ class QueueService {
   async getNextVideo() {
     try {
       const nextVideo = await this.db.queueItem.findFirst({
-        where: { status: 'PENDING' },
+        where: { 
+          channelId: this.channelId,
+          status: 'PENDING' 
+        },
         include: {
           submitter: {
             select: {
@@ -325,6 +349,7 @@ class QueueService {
     try {
       await this.db.queueItem.updateMany({
         where: {
+          channelId: this.channelId,
           status: { in: ['PENDING', 'PLAYING'] }
         },
         data: { status: 'REMOVED' }
@@ -358,7 +383,10 @@ class QueueService {
       } else {
         // Auto-reorder remaining items
         const pendingItems = await this.db.queueItem.findMany({
-          where: { status: 'PENDING' },
+          where: { 
+            channelId: this.channelId,
+            status: 'PENDING' 
+          },
           orderBy: { position: 'asc' }
         });
 
@@ -385,6 +413,7 @@ class QueueService {
   async getQueueSize() {
     return await this.db.queueItem.count({
       where: {
+        channelId: this.channelId,
         status: { in: ['PENDING', 'PLAYING'] }
       }
     });
@@ -393,6 +422,7 @@ class QueueService {
   async getNextPosition() {
     const lastItem = await this.db.queueItem.findFirst({
       where: {
+        channelId: this.channelId,
         status: { in: ['PENDING', 'PLAYING'] }
       },
       orderBy: { position: 'desc' }
@@ -407,7 +437,12 @@ class QueueService {
     if (cooldownSeconds <= 0) return;
 
     const user = await this.db.user.findUnique({
-      where: { twitchUsername: username }
+      where: { 
+        twitchUsername_channelId: {
+          twitchUsername: username,
+          channelId: this.channelId
+        }
+      }
     });
 
     if (user && user.lastSubmission) {
@@ -423,6 +458,7 @@ class QueueService {
     try {
       await this.db.submissionLog.create({
         data: {
+          channelId: this.channelId,
           username,
           action,
           details
@@ -440,6 +476,7 @@ class QueueService {
       
       await this.db.queueItem.deleteMany({
         where: {
+          channelId: this.channelId,
           status: { in: ['PLAYED', 'SKIPPED', 'REMOVED'] },
           playedAt: {
             lt: sevenDaysAgo
@@ -447,7 +484,7 @@ class QueueService {
         }
       });
 
-      logger.info('Old queue items cleaned up');
+      logger.info(`Old queue items cleaned up for channel: ${this.channelId}`);
     } catch (error) {
       logger.error('Failed to cleanup old items:', error);
     }

@@ -1,10 +1,13 @@
 const express = require('express');
 const { createServer } = require('http');
-const { Server } = require('socket.io');
+const { Server: SocketIOServer } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const session = require('express-session');
+const passport = require('passport');
+const path = require('path');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
@@ -12,22 +15,25 @@ const { initializeDatabase } = require('./database/connection');
 const apiRoutes = require('./api');
 const socketHandler = require('./socket');
 const TwitchBot = require('./bot/TwitchBot');
-const QueueService = require('./services/QueueService');
+const ChannelManager = require('./services/ChannelManager');
 const VideoService = require('./services/VideoService');
+require('./auth/passport'); // Initialize passport strategies
 
 class Server {
   constructor() {
     this.app = express();
     this.server = createServer(this.app);
-    this.io = new Server(this.server, {
+    this.io = new SocketIOServer(this.server, {
       cors: {
         origin: process.env.CORS_ORIGIN || "http://localhost:3000",
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST"],
+        credentials: true
       }
     });
     this.port = process.env.PORT || 5000;
     this.bot = null;
-    this.queueService = null;
+    this.channelManager = null;
+    this.videoService = null;
   }
 
   async initialize() {
@@ -39,11 +45,11 @@ class Server {
       // Initialize services
       logger.info('Initializing services...');
       this.videoService = new VideoService();
-      this.queueService = new QueueService(this.io);
-      await this.queueService.initialize();
+      this.channelManager = new ChannelManager(this.io);
+      await this.channelManager.initialize();
 
       // Register services with Express app for API access
-      this.app.set('queueService', this.queueService);
+      this.app.set('channelManager', this.channelManager);
       this.app.set('videoService', this.videoService);
 
       // Setup middleware
@@ -107,13 +113,30 @@ class Server {
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+    // Session configuration
+    this.app.use(session({
+      secret: process.env.SESSION_SECRET || 'your-secret-key',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      }
+    }));
+
+    // Initialize Passport
+    this.app.use(passport.initialize());
+    this.app.use(passport.session());
+
     // Health check endpoint
     this.app.get('/health', (req, res) => {
       res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        bot: this.bot ? this.bot.isConnected() : false
+        bot: this.bot ? this.bot.isConnected() : false,
+        channels: this.channelManager ? this.channelManager.getActiveChannels().length : 0
       });
     });
   }
@@ -147,18 +170,18 @@ class Server {
   }
 
   setupSocket() {
-    socketHandler(this.io, this.queueService);
+    socketHandler(this.io, this.channelManager);
     logger.info('Socket.io server configured');
   }
 
   async initializeTwitchBot() {
-    if (!process.env.TWITCH_USERNAME || !process.env.TWITCH_OAUTH_TOKEN || !process.env.TWITCH_CHANNEL) {
+    if (!process.env.TWITCH_BOT_USERNAME || !process.env.TWITCH_BOT_OAUTH_TOKEN) {
       logger.warn('Twitch bot credentials not provided, bot will not start');
       return;
     }
 
     try {
-      this.bot = new TwitchBot(this.queueService, this.io);
+      this.bot = new TwitchBot(this.channelManager, this.io);
       await this.bot.initialize();
       
       // Register bot with Express app for API access
@@ -167,6 +190,7 @@ class Server {
       logger.info('Twitch bot initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize Twitch bot:', error);
+      // Don't fail server startup if bot fails
     }
   }
 

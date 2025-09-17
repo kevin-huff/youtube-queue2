@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# YouTube Queue - Standalone Startup Script
-# For use with ChatGPT Codex or other standalone environments
+# Multi-Channel Twitch Queue - Startup Script
+# Supports multiple streamers with OAuth authentication
 
 set -e  # Exit on any error
 
-echo "🚀 Starting YouTube Queue Application..."
-echo "========================================"
+echo "🚀 Starting Multi-Channel Twitch Queue Application..."
+echo "==================================================="
 
 # Color codes for output
 RED='\033[0;31m'
@@ -65,17 +65,21 @@ setup_env_files() {
         cp .env.example server/.env
         
         # Generate random secrets
-        JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || echo "your_super_secret_jwt_key_$(date +%s)")
-        ADMIN_PASSWORD=$(openssl rand -base64 12 2>/dev/null || echo "admin123")
+        SESSION_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "session_secret_$(date +%s)")
+        JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "jwt_secret_$(date +%s)")
         
         # Update the .env file with generated secrets
-        sed -i.bak "s|JWT_SECRET=\"your_super_secret_jwt_key_here\"|JWT_SECRET=\"$JWT_SECRET\"|" server/.env
-        sed -i.bak "s|ADMIN_PASSWORD=\"your_secure_admin_password\"|ADMIN_PASSWORD=\"$ADMIN_PASSWORD\"|" server/.env
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            sed -i '' "s|SESSION_SECRET=\"your_session_secret_here\"|SESSION_SECRET=\"$SESSION_SECRET\"|" server/.env
+            sed -i '' "s|JWT_SECRET=\"your_super_secret_jwt_key_here\"|JWT_SECRET=\"$JWT_SECRET\"|" server/.env
+        else
+            # Linux
+            sed -i "s|SESSION_SECRET=\"your_session_secret_here\"|SESSION_SECRET=\"$SESSION_SECRET\"|" server/.env
+            sed -i "s|JWT_SECRET=\"your_super_secret_jwt_key_here\"|JWT_SECRET=\"$JWT_SECRET\"|" server/.env
+        fi
         
-        print_warning "Generated admin password: $ADMIN_PASSWORD"
-        print_warning "Please save this password - you'll need it to access the admin panel"
-        
-        rm -f server/.env.bak
+        print_status "Generated secure session and JWT secrets"
     else
         print_status "Server .env file already exists"
     fi
@@ -94,8 +98,8 @@ setup_env_files() {
 install_dependencies() {
     print_info "Installing dependencies..."
     
-    # Install root dependencies
-    if [ ! -d "node_modules" ]; then
+    # Check if package.json exists and install root dependencies
+    if [ -f "package.json" ] && [ ! -d "node_modules" ]; then
         print_info "Installing root dependencies..."
         npm install
     fi
@@ -119,15 +123,23 @@ install_dependencies() {
 setup_database() {
     print_info "Setting up database..."
     
-    # Check if DATABASE_URL is configured
-    if grep -q "postgresql://username:password@localhost" server/.env; then
-        print_warning "Database URL needs to be configured in server/.env"
-        print_info "Using SQLite as fallback for development..."
-        
-        # Create SQLite database URL
+    # Check if using SQLite (default) or PostgreSQL
+    if grep -q "file:./dev.db" server/.env; then
+        print_info "Using SQLite database (default for development)"
         mkdir -p server/data
-        sed -i.bak 's|DATABASE_URL="postgresql://username:password@localhost:5432/youtube_queue"|DATABASE_URL="file:./data/dev.db"|' server/.env
-        rm -f server/.env.bak
+    elif grep -q "postgresql://" server/.env; then
+        print_info "Using PostgreSQL database"
+    else
+        print_warning "No database URL configured, defaulting to SQLite..."
+        # Set SQLite as default
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            sed -i '' 's|DATABASE_URL=".*"|DATABASE_URL="file:./dev.db"|' server/.env
+        else
+            # Linux
+            sed -i 's|DATABASE_URL=".*"|DATABASE_URL="file:./dev.db"|' server/.env
+        fi
+        mkdir -p server/data
     fi
     
     # Run database setup
@@ -135,8 +147,8 @@ setup_database() {
     print_info "Generating Prisma client..."
     npx prisma generate
     
-    print_info "Running database migrations..."
-    npx prisma db push
+    print_info "Running database setup..."
+    npx prisma db push --force-reset
     
     cd ..
     print_status "Database setup completed"
@@ -159,12 +171,23 @@ start_application() {
         sleep 2
     fi
     
-    print_status "Starting YouTube Queue application..."
-    print_info "Server will run on: http://localhost:5000"
-    print_info "Client will run on: http://localhost:3000"
+    print_status "Starting Multi-Channel Twitch Queue application..."
+    print_info "API Server will run on: http://localhost:5000"
+    print_info "Frontend will run on: http://localhost:3000"
     
     # Start both server and client concurrently
-    npm run dev
+    if [ -f "package.json" ] && grep -q "\"dev\":" package.json; then
+        npm run dev
+    else
+        # Fallback to manual startup
+        cd server && npm run dev &
+        SERVER_PID=$!
+        cd ../client && npm start &
+        CLIENT_PID=$!
+        
+        # Wait for either to exit
+        wait $SERVER_PID $CLIENT_PID
+    fi
 }
 
 # Function to display configuration info
@@ -173,36 +196,80 @@ show_config_info() {
     echo "🔧 Configuration Information"
     echo "============================="
     
-    # Check if Twitch credentials are configured
+    # Check OAuth configuration
+    OAUTH_CONFIGURED=true
+    if grep -q "your_twitch_client_id" server/.env || grep -q "your_twitch_app_client_id" server/.env; then
+        OAUTH_CONFIGURED=false
+    fi
+    
+    # Check bot configuration
+    BOT_CONFIGURED=true
     if grep -q "your_bot_username" server/.env; then
+        BOT_CONFIGURED=false
+    fi
+    
+    if [ "$OAUTH_CONFIGURED" = false ]; then
+        print_warning "Twitch OAuth not configured yet!"
+        echo ""
+        echo "🔑 To enable Twitch OAuth authentication:"
+        echo "1. Create a Twitch application at: https://dev.twitch.tv/console/apps"
+        echo "2. Set OAuth Redirect URL to: http://localhost:5000/api/auth/twitch/callback"
+        echo "3. Edit server/.env and configure:"
+        echo "   - TWITCH_CLIENT_ID=your_client_id"
+        echo "   - TWITCH_CLIENT_SECRET=your_client_secret"
+        echo ""
+    else
+        print_status "Twitch OAuth configured"
+    fi
+    
+    if [ "$BOT_CONFIGURED" = false ]; then
         print_warning "Twitch bot not configured yet!"
         echo ""
-        echo "To set up the Twitch bot, edit server/.env and configure:"
-        echo "- TWITCH_USERNAME: Your bot's Twitch username"
-        echo "- TWITCH_OAUTH_TOKEN: Get from https://twitchapps.com/tmi/"
-        echo "- TWITCH_CHANNEL: Channel to monitor (without #)"
+        echo "🤖 To enable the Twitch bot:"
+        echo "1. Create a separate Twitch account for your bot"
+        echo "2. Get OAuth token from: https://twitchapps.com/tmi/"
+        echo "3. Edit server/.env and configure:"
+        echo "   - TWITCH_BOT_USERNAME=your_bot_username"
+        echo "   - TWITCH_BOT_OAUTH_TOKEN=oauth:your_bot_token"
         echo ""
+    else
+        print_status "Twitch bot configured"
     fi
     
     # Check if YouTube API is configured
     if grep -q "your_youtube_api_key_here" server/.env; then
         print_warning "YouTube API not configured (optional)"
-        echo "- YOUTUBE_API_KEY: Get from Google Cloud Console"
+        echo "📺 For video metadata, configure:"
+        echo "   - YOUTUBE_API_KEY: Get from Google Cloud Console"
         echo ""
     fi
     
-    echo "📱 Access URLs:"
-    echo "- Queue Page: http://localhost:3000/queue"
-    echo "- Admin Page: http://localhost:3000/admin"
+    echo "🌐 Access URLs:"
+    echo "- Main Application: http://localhost:3000"
+    echo "- Login/Dashboard: http://localhost:3000/dashboard"
     echo "- API Server: http://localhost:5000"
+    echo "- Health Check: http://localhost:5000/health"
     echo ""
     
-    echo "🤖 Bot Commands (when configured):"
-    echo "- !queue on/off - Enable/disable queue (mods only)"
-    echo "- !skip - Skip current video (mods only)"
-    echo "- !clear - Clear queue (mods only)"
+    echo "🏗️ How it works:"
+    echo "1. Streamers log in via Twitch OAuth"
+    echo "2. Each streamer can add their own channel"
+    echo "3. Bot automatically joins/leaves channels"
+    echo "4. Each channel has isolated queues and settings"
+    echo ""
+    
+    echo "🤖 Bot Commands (per channel):"
+    echo "- !queue on/off - Enable/disable queue (broadcaster/mods)"
+    echo "- !skip - Skip current video (broadcaster/mods)"
+    echo "- !clear - Clear queue (broadcaster/mods)"
+    echo "- !remove <id> - Remove specific video (broadcaster/mods)"
     echo "- !help - Show commands"
     echo ""
+    
+    if [ "$OAUTH_CONFIGURED" = false ] || [ "$BOT_CONFIGURED" = false ]; then
+        print_warning "Some features require configuration. See above for setup instructions."
+        echo ""
+    fi
 }
 
 # Main execution

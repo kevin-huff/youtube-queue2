@@ -1,90 +1,182 @@
 import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
   Typography,
   Button,
   Box,
-  Chip,
+  Avatar,
+  Menu,
+  MenuItem,
+  IconButton,
   useTheme,
+  alpha,
+  Container
 } from '@mui/material';
 import {
-  Queue as QueueIcon,
-  AdminPanelSettings as AdminIcon,
-  Circle as CircleIcon,
+  LiveTv,
+  Dashboard,
+  Login,
+  Logout
 } from '@mui/icons-material';
-import { useSocket } from '../contexts/SocketContext';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const NavBar = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
-  const { connected, queueEnabled, queue } = useSocket();
+  const { user, logout, login } = useAuth();
+  const [anchorEl, setAnchorEl] = React.useState(null);
 
-  const isQueuePage = location.pathname === '/queue';
-  const isAdminPage = location.pathname === '/admin';
+  const handleMenuOpen = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleLogout = async () => {
+    handleMenuClose();
+    await logout();
+  };
+
+  const handleDashboard = () => {
+    handleMenuClose();
+    navigate('/dashboard');
+  };
+
+  const isAuthPage = location.pathname === '/' || location.pathname === '/login';
 
   return (
     <AppBar 
-      position="static" 
+      position="sticky" 
+      elevation={0}
       sx={{ 
-        backgroundColor: 'background.paper',
-        borderBottom: `1px solid ${theme.palette.divider}`,
+        bgcolor: alpha(theme.palette.background.paper, 0.8),
+        backdropFilter: 'blur(10px)',
+        borderBottom: `1px solid ${alpha(theme.palette.divider, 0.1)}`
       }}
     >
-      <Toolbar>
-        <Typography 
-          variant="h6" 
-          component="div" 
-          sx={{ 
-            flexGrow: 1,
-            fontWeight: 600,
-            color: 'primary.main',
-          }}
-        >
-          YouTube Queue
-        </Typography>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          {/* Connection Status */}
-          <Chip
-            icon={<CircleIcon sx={{ fontSize: '12px !important' }} />}
-            label={connected ? 'Connected' : 'Disconnected'}
-            color={connected ? 'success' : 'error'}
-            size="small"
-            variant="outlined"
-          />
-
-          {/* Queue Status */}
-          <Chip
-            label={queueEnabled ? `Queue Open (${queue.length})` : 'Queue Closed'}
-            color={queueEnabled ? 'primary' : 'default'}
-            size="small"
-            variant={queueEnabled ? 'filled' : 'outlined'}
-          />
-
-          {/* Navigation Buttons */}
-          <Button
-            startIcon={<QueueIcon />}
-            onClick={() => navigate('/queue')}
-            variant={isQueuePage ? 'contained' : 'outlined'}
-            sx={{ minWidth: 100 }}
+      <Container maxWidth="lg">
+        <Toolbar disableGutters>
+          {/* Logo/Brand */}
+          <Box 
+            display="flex" 
+            alignItems="center" 
+            sx={{ cursor: 'pointer' }}
+            onClick={() => navigate(user ? '/dashboard' : '/')}
           >
-            Queue
-          </Button>
+            <LiveTv sx={{ mr: 1, color: 'primary.main' }} />
+            <Typography 
+              variant="h6" 
+              sx={{ 
+                fontWeight: 700,
+                background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+                backgroundClip: 'text',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
+              TwitchQueue
+            </Typography>
+          </Box>
 
-          <Button
-            startIcon={<AdminIcon />}
-            onClick={() => navigate('/admin')}
-            variant={isAdminPage ? 'contained' : 'outlined'}
-            color="secondary"
-            sx={{ minWidth: 100 }}
-          >
-            Admin
-          </Button>
-        </Box>
-      </Toolbar>
+          <Box sx={{ flexGrow: 1 }} />
+
+          {/* Navigation */}
+          {user ? (
+            <>
+              {!isAuthPage && (
+                <Button
+                  startIcon={<Dashboard />}
+                  onClick={() => navigate('/dashboard')}
+                  sx={{ mr: 2 }}
+                >
+                  Dashboard
+                </Button>
+              )}
+              
+              <Box>
+                <IconButton
+                  onClick={handleMenuOpen}
+                  sx={{
+                    p: 0.5,
+                    border: `2px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+                    '&:hover': {
+                      borderColor: theme.palette.primary.main,
+                    }
+                  }}
+                >
+                  <Avatar
+                    src={user.profileImageUrl}
+                    alt={user.displayName}
+                    sx={{ width: 32, height: 32 }}
+                  >
+                    {user.displayName?.[0] || user.username?.[0]}
+                  </Avatar>
+                </IconButton>
+                
+                <Menu
+                  anchorEl={anchorEl}
+                  open={Boolean(anchorEl)}
+                  onClose={handleMenuClose}
+                  anchorOrigin={{
+                    vertical: 'bottom',
+                    horizontal: 'right',
+                  }}
+                  transformOrigin={{
+                    vertical: 'top',
+                    horizontal: 'right',
+                  }}
+                  PaperProps={{
+                    sx: {
+                      mt: 1,
+                      minWidth: 200,
+                      borderRadius: 2,
+                      boxShadow: theme.shadows[8]
+                    }
+                  }}
+                >
+                  <Box sx={{ px: 2, py: 1, borderBottom: `1px solid ${theme.palette.divider}` }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {user.displayName || user.username}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      @{user.username}
+                    </Typography>
+                  </Box>
+                  
+                  <MenuItem onClick={handleDashboard}>
+                    <Dashboard sx={{ mr: 2, fontSize: 20 }} />
+                    Dashboard
+                  </MenuItem>
+                  
+                  <MenuItem onClick={handleLogout}>
+                    <Logout sx={{ mr: 2, fontSize: 20 }} />
+                    Logout
+                  </MenuItem>
+                </Menu>
+              </Box>
+            </>
+          ) : (
+            <Button
+              variant="contained"
+              startIcon={<Login />}
+              onClick={login}
+              sx={{
+                background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
+                '&:hover': {
+                  background: `linear-gradient(135deg, ${theme.palette.primary.light} 0%, ${theme.palette.primary.main} 100%)`,
+                }
+              }}
+            >
+              Login with Twitch
+            </Button>
+          )}
+        </Toolbar>
+      </Container>
     </AppBar>
   );
 };

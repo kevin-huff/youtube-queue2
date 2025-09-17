@@ -3,15 +3,15 @@ const logger = require('../utils/logger');
 const VideoService = require('../services/VideoService');
 
 class TwitchBot {
-  constructor(queueService, io) {
-    this.queueService = queueService;
+  constructor(channelManager, io) {
+    this.channelManager = channelManager;
     this.io = io;
     this.client = null;
     this.videoService = new VideoService();
     this.connected = false;
-    this.rateLimiter = new Map(); // Track user rate limits
-    this.moderators = new Set();
-    this.bannedUsers = new Set();
+    this.rateLimiter = new Map(); // Track user rate limits per channel
+    this.channelModerators = new Map(); // channelId -> Set of moderators
+    this.channelBannedUsers = new Map(); // channelId -> Set of banned users
     
     this.config = {
       options: {
@@ -22,15 +22,25 @@ class TwitchBot {
         secure: true
       },
       identity: {
-        username: process.env.TWITCH_USERNAME,
-        password: process.env.TWITCH_OAUTH_TOKEN
+        username: process.env.TWITCH_BOT_USERNAME,
+        password: process.env.TWITCH_BOT_OAUTH_TOKEN
       },
-      channels: [process.env.TWITCH_CHANNEL]
+      channels: [] // Will be populated dynamically
     };
   }
 
   async initialize() {
     try {
+      // Get initial channels from ChannelManager
+      const activeChannels = this.channelManager.getActiveChannels();
+      this.config.channels = activeChannels.map(channelId => `#${channelId}`);
+
+      // Initialize per-channel state
+      for (const channelId of activeChannels) {
+        this.channelModerators.set(channelId, new Set());
+        this.channelBannedUsers.set(channelId, new Set());
+      }
+
       this.client = new tmi.Client(this.config);
 
       // Set up event listeners
@@ -40,7 +50,7 @@ class TwitchBot {
       await this.client.connect();
       this.connected = true;
 
-      logger.info(`Twitch bot connected to channel: ${process.env.TWITCH_CHANNEL}`);
+      logger.info(`Twitch bot connected to ${activeChannels.length} channels: ${activeChannels.join(', ')}`);
     } catch (error) {
       logger.error('Failed to initialize Twitch bot:', error);
       throw error;
@@ -71,13 +81,23 @@ class TwitchBot {
 
     // Moderation events
     this.client.on('mod', (channel, username) => {
-      this.moderators.add(username.toLowerCase());
-      logger.info(`${username} is now a moderator`);
+      const channelId = channel.substring(1).toLowerCase();
+      let channelModerators = this.channelModerators.get(channelId);
+      if (!channelModerators) {
+        channelModerators = new Set();
+        this.channelModerators.set(channelId, channelModerators);
+      }
+      channelModerators.add(username.toLowerCase());
+      logger.info(`${username} is now a moderator in ${channelId}`);
     });
 
     this.client.on('unmod', (channel, username) => {
-      this.moderators.delete(username.toLowerCase());
-      logger.info(`${username} is no longer a moderator`);
+      const channelId = channel.substring(1).toLowerCase();
+      const channelModerators = this.channelModerators.get(channelId);
+      if (channelModerators) {
+        channelModerators.delete(username.toLowerCase());
+      }
+      logger.info(`${username} is no longer a moderator in ${channelId}`);
     });
   }
 
@@ -85,32 +105,40 @@ class TwitchBot {
     // Ignore messages from the bot itself
     if (self) return;
 
+    // Extract channel name (remove # prefix)
+    const channelId = channel.substring(1).toLowerCase();
     const username = userstate.username.toLowerCase();
     const displayName = userstate['display-name'] || username;
     const isModerator = userstate.mod || userstate.badges?.broadcaster;
     const isSubscriber = userstate.subscriber;
 
     try {
-      // Check if user is banned
-      if (this.bannedUsers.has(username)) {
+      // Check if channel is active
+      if (!this.channelManager.isChannelActive(channelId)) {
+        return;
+      }
+
+      // Check if user is banned in this channel
+      const channelBannedUsers = this.channelBannedUsers.get(channelId) || new Set();
+      if (channelBannedUsers.has(username)) {
         return;
       }
 
       // Handle commands
       if (message.startsWith('!')) {
-        await this.handleCommand(channel, userstate, message, isModerator);
+        await this.handleCommand(channel, channelId, userstate, message, isModerator);
         return;
       }
 
       // Check for video URLs in message
-      await this.checkForVideoUrls(channel, username, message);
+      await this.checkForVideoUrls(channel, channelId, username, message);
     } catch (error) {
       logger.error('Error handling message:', error);
       this.sendMessage(channel, `@${displayName} Sorry, there was an error processing your request.`);
     }
   }
 
-  async handleCommand(channel, userstate, message, isModerator) {
+  async handleCommand(channel, channelId, userstate, message, isModerator) {
     const args = message.slice(1).split(' ');
     const command = args[0].toLowerCase();
     const username = userstate.username.toLowerCase();
@@ -119,15 +147,15 @@ class TwitchBot {
     switch (command) {
       case 'queue':
         if (args[1]) {
-          await this.handleQueueCommand(channel, userstate, args[1], isModerator);
+          await this.handleQueueCommand(channel, channelId, userstate, args[1], isModerator);
         } else {
-          await this.showQueueStatus(channel);
+          await this.showQueueStatus(channel, channelId);
         }
         break;
 
       case 'skip':
         if (isModerator) {
-          await this.handleSkipCommand(channel, username);
+          await this.handleSkipCommand(channel, channelId, username);
         } else {
           this.sendMessage(channel, `@${displayName} Only moderators can skip videos.`);
         }
@@ -135,7 +163,7 @@ class TwitchBot {
 
       case 'clear':
         if (isModerator) {
-          await this.handleClearCommand(channel, username);
+          await this.handleClearCommand(channel, channelId, username);
         } else {
           this.sendMessage(channel, `@${displayName} Only moderators can clear the queue.`);
         }
@@ -143,7 +171,7 @@ class TwitchBot {
 
       case 'volume':
         if (isModerator && args[1]) {
-          await this.handleVolumeCommand(channel, args[1]);
+          await this.handleVolumeCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
           this.sendMessage(channel, `@${displayName} Only moderators can change volume.`);
         } else {
@@ -153,7 +181,7 @@ class TwitchBot {
 
       case 'ban':
         if (isModerator && args[1]) {
-          await this.handleBanCommand(channel, args[1]);
+          await this.handleBanCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
           this.sendMessage(channel, `@${displayName} Only moderators can ban users.`);
         } else {
@@ -163,7 +191,7 @@ class TwitchBot {
 
       case 'unban':
         if (isModerator && args[1]) {
-          await this.handleUnbanCommand(channel, args[1]);
+          await this.handleUnbanCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
           this.sendMessage(channel, `@${displayName} Only moderators can unban users.`);
         } else {
@@ -181,7 +209,7 @@ class TwitchBot {
     }
   }
 
-  async handleQueueCommand(channel, userstate, action, isModerator) {
+  async handleQueueCommand(channel, channelId, userstate, action, isModerator) {
     const displayName = userstate['display-name'] || userstate.username;
 
     if (!isModerator) {
@@ -189,16 +217,22 @@ class TwitchBot {
       return;
     }
 
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      this.sendMessage(channel, 'Queue service not available for this channel.');
+      return;
+    }
+
     switch (action.toLowerCase()) {
       case 'on':
       case 'enable':
-        await this.queueService.enableQueue(true);
+        await queueService.enableQueue(true);
         this.sendMessage(channel, 'Queue is now enabled! Drop your video links in chat!');
         break;
 
       case 'off':
       case 'disable':
-        await this.queueService.enableQueue(false);
+        await queueService.enableQueue(false);
         this.sendMessage(channel, 'Queue is now disabled.');
         break;
 
@@ -208,18 +242,30 @@ class TwitchBot {
     }
   }
 
-  async showQueueStatus(channel) {
-    const isEnabled = await this.queueService.isQueueEnabled();
-    const queueSize = await this.queueService.getQueueSize();
-    const maxSize = await this.queueService.getSetting('max_queue_size', '50');
+  async showQueueStatus(channel, channelId) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      this.sendMessage(channel, 'Queue service not available for this channel.');
+      return;
+    }
+
+    const isEnabled = await queueService.isQueueEnabled();
+    const queueSize = await queueService.getQueueSize();
+    const maxSize = await queueService.getSetting('max_queue_size', '50');
     
     const status = isEnabled ? 'enabled' : 'disabled';
     this.sendMessage(channel, `Queue is ${status} (${queueSize}/${maxSize} videos)`);
   }
 
-  async handleSkipCommand(channel, username) {
+  async handleSkipCommand(channel, channelId, username) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      this.sendMessage(channel, 'Queue service not available for this channel.');
+      return;
+    }
+
     try {
-      const nextVideo = await this.queueService.skipCurrent(username);
+      const nextVideo = await queueService.skipCurrent(username);
       if (nextVideo) {
         this.sendMessage(channel, `Skipped! Now playing: ${nextVideo.title}`);
       } else {
@@ -230,16 +276,28 @@ class TwitchBot {
     }
   }
 
-  async handleClearCommand(channel, username) {
+  async handleClearCommand(channel, channelId, username) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      this.sendMessage(channel, 'Queue service not available for this channel.');
+      return;
+    }
+
     try {
-      await this.queueService.clearQueue(username);
+      await queueService.clearQueue(username);
       this.sendMessage(channel, 'Queue cleared!');
     } catch (error) {
       this.sendMessage(channel, `Error: ${error.message}`);
     }
   }
 
-  async handleVolumeCommand(channel, volumeStr) {
+  async handleVolumeCommand(channel, channelId, volumeStr) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      this.sendMessage(channel, 'Queue service not available for this channel.');
+      return;
+    }
+
     const volume = parseInt(volumeStr);
     if (isNaN(volume) || volume < 0 || volume > 100) {
       this.sendMessage(channel, 'Volume must be a number between 0 and 100.');
@@ -247,29 +305,45 @@ class TwitchBot {
     }
 
     try {
-      await this.queueService.updateSetting('current_volume', volume);
+      await queueService.updateSetting('current_volume', volume);
       this.sendMessage(channel, `Volume set to ${volume}%`);
     } catch (error) {
       this.sendMessage(channel, `Error setting volume: ${error.message}`);
     }
   }
 
-  async handleBanCommand(channel, target) {
+  async handleBanCommand(channel, channelId, target) {
     const username = target.replace('@', '').toLowerCase();
-    this.bannedUsers.add(username);
+    let channelBannedUsers = this.channelBannedUsers.get(channelId);
+    if (!channelBannedUsers) {
+      channelBannedUsers = new Set();
+      this.channelBannedUsers.set(channelId, channelBannedUsers);
+    }
+    
+    channelBannedUsers.add(username);
     this.sendMessage(channel, `${username} has been banned from submitting videos.`);
     
     // Log the ban
-    await this.queueService.logSubmission('system', 'BAN_USER', { username });
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (queueService) {
+      await queueService.logSubmission('system', 'BAN_USER', { username });
+    }
   }
 
-  async handleUnbanCommand(channel, target) {
+  async handleUnbanCommand(channel, channelId, target) {
     const username = target.replace('@', '').toLowerCase();
-    this.bannedUsers.delete(username);
+    const channelBannedUsers = this.channelBannedUsers.get(channelId);
+    if (channelBannedUsers) {
+      channelBannedUsers.delete(username);
+    }
+    
     this.sendMessage(channel, `${username} has been unbanned and can now submit videos.`);
     
     // Log the unban
-    await this.queueService.logSubmission('system', 'UNBAN_USER', { username });
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (queueService) {
+      await queueService.logSubmission('system', 'UNBAN_USER', { username });
+    }
   }
 
   showHelp(channel, displayName, isModerator) {
@@ -293,14 +367,20 @@ class TwitchBot {
     helpMessages.forEach(msg => this.sendMessage(channel, msg));
   }
 
-  async checkForVideoUrls(channel, username, message) {
-    // Check if queue is enabled
-    if (!(await this.queueService.isQueueEnabled())) {
+  async checkForVideoUrls(channel, channelId, username, message) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
       return;
     }
 
-    // Check rate limiting
-    if (this.isRateLimited(username)) {
+    // Check if queue is enabled
+    if (!(await queueService.isQueueEnabled())) {
+      return;
+    }
+
+    // Check rate limiting (per channel)
+    const rateLimitKey = `${channelId}:${username}`;
+    if (this.isRateLimited(rateLimitKey)) {
       return;
     }
 
@@ -321,12 +401,12 @@ class TwitchBot {
         const metadata = await this.videoService.getVideoMetadata(url);
         
         // Add to queue
-        await this.queueService.addToQueue(metadata, username);
+        await queueService.addToQueue(metadata, username);
         
         this.sendMessage(channel, `@${username} Added to queue: ${metadata.title}`);
         
         // Apply rate limiting
-        this.applyRateLimit(username);
+        this.applyRateLimit(rateLimitKey);
         
         // Only process first valid URL per message
         break;
@@ -337,10 +417,9 @@ class TwitchBot {
       }
     }
   }
-
-  isRateLimited(username) {
+  isRateLimited(key) {
     const now = Date.now();
-    const userLimit = this.rateLimiter.get(username);
+    const userLimit = this.rateLimiter.get(key);
     
     if (!userLimit) return false;
     
@@ -349,8 +428,8 @@ class TwitchBot {
     return (now - userLimit.lastSubmission) < cooldown;
   }
 
-  applyRateLimit(username) {
-    this.rateLimiter.set(username, {
+  applyRateLimit(key) {
+    this.rateLimiter.set(key, {
       lastSubmission: Date.now()
     });
   }
@@ -391,13 +470,72 @@ class TwitchBot {
 
   // Get bot statistics
   getStats() {
+    const channels = this.channelManager.getActiveChannels();
+    const channelStats = {};
+    
+    for (const channelId of channels) {
+      const moderators = this.channelModerators.get(channelId) || new Set();
+      const bannedUsers = this.channelBannedUsers.get(channelId) || new Set();
+      
+      channelStats[channelId] = {
+        moderators: Array.from(moderators),
+        bannedUsers: Array.from(bannedUsers)
+      };
+    }
+
     return {
       connected: this.connected,
-      channel: process.env.TWITCH_CHANNEL,
-      moderators: Array.from(this.moderators),
-      bannedUsers: Array.from(this.bannedUsers),
+      channels: channels,
+      channelStats: channelStats,
       rateLimitedUsers: this.rateLimiter.size
     };
+  }
+
+  // Add method to join a new channel dynamically
+  async joinChannel(channelId) {
+    if (this.client && this.connected) {
+      try {
+        await this.client.join(`#${channelId}`);
+        
+        // Initialize channel-specific state
+        this.channelModerators.set(channelId, new Set());
+        this.channelBannedUsers.set(channelId, new Set());
+        
+        logger.info(`Bot joined channel: ${channelId}`);
+        return true;
+      } catch (error) {
+        logger.error(`Failed to join channel ${channelId}:`, error);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  // Add method to leave a channel dynamically
+  async leaveChannel(channelId) {
+    if (this.client && this.connected) {
+      try {
+        await this.client.part(`#${channelId}`);
+        
+        // Clean up channel-specific state
+        this.channelModerators.delete(channelId);
+        this.channelBannedUsers.delete(channelId);
+        
+        // Clean up rate limits for this channel
+        for (const [key] of this.rateLimiter) {
+          if (key.startsWith(`${channelId}:`)) {
+            this.rateLimiter.delete(key);
+          }
+        }
+        
+        logger.info(`Bot left channel: ${channelId}`);
+        return true;
+      } catch (error) {
+        logger.error(`Failed to leave channel ${channelId}:`, error);
+        return false;
+      }
+    }
+    return false;
   }
 }
 
