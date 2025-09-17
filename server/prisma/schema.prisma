@@ -10,9 +10,62 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Account {
+  id              String         @id @default(cuid())
+  twitchId        String?        @unique @map("twitch_id")
+  username        String         @unique
+  displayName     String?        @map("display_name")
+  profileImageUrl String?        @map("profile_image_url")
+  email           String?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  channels        ChannelOwner[]
+
+  @@map("accounts")
+}
+
+model Channel {
+  id              String    @id // Twitch channel name (lowercase)
+  twitchUserId    String?   @unique @map("twitch_user_id")
+  displayName     String    @map("display_name")
+  profileImageUrl String?   @map("profile_image_url")
+  isActive        Boolean   @default(true) @map("is_active")
+  settings        Json      @default("{}")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  users           User[]
+  owners          ChannelOwner[]
+  queueItems      QueueItem[]
+  botSettings     BotSetting[]
+  submissionLogs  SubmissionLog[]
+
+  @@map("channels")
+}
+
+model ChannelOwner {
+  id        Int         @id @default(autoincrement())
+  accountId String      @map("account_id")
+  channelId String      @map("channel_id")
+  role      ChannelRole @default(OWNER)
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  account   Account     @relation(fields: [accountId], references: [id])
+  channel   Channel     @relation(fields: [channelId], references: [id])
+
+  @@unique([accountId, channelId])
+  @@map("channel_owners")
+}
+
 model User {
   id               Int      @id @default(autoincrement())
-  twitchUsername   String   @unique @map("twitch_username")
+  twitchUsername   String   @map("twitch_username")
+  channelId        String   @map("channel_id")
   role             Role     @default(VIEWER)
   isBanned         Boolean  @default(false) @map("is_banned")
   submissionCount  Int      @default(0) @map("submission_count")
@@ -21,14 +74,17 @@ model User {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   // Relations
+  channel          Channel   @relation(fields: [channelId], references: [id])
   queueItems       QueueItem[]
   submissionLogs   SubmissionLog[]
 
+  @@unique([twitchUsername, channelId])
   @@map("users")
 }
 
 model QueueItem {
   id               Int         @id @default(autoincrement())
+  channelId        String      @map("channel_id")
   videoUrl         String      @map("video_url")
   videoId          String      @map("video_id")
   platform         Platform
@@ -42,28 +98,37 @@ model QueueItem {
   playedAt         DateTime?   @map("played_at")
 
   // Relations
-  submitter        User        @relation(fields: [submitterUsername], references: [twitchUsername])
+  channel          Channel     @relation(fields: [channelId], references: [id])
+  submitter        User        @relation(fields: [submitterUsername, channelId], references: [twitchUsername, channelId])
 
   @@map("queue_items")
 }
 
 model BotSetting {
-  key       String   @id
+  id        String   @id @default(cuid())
+  channelId String   @map("channel_id")
+  key       String
   value     String
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
+  // Relations
+  channel   Channel  @relation(fields: [channelId], references: [id])
+
+  @@unique([channelId, key])
   @@map("bot_settings")
 }
 
 model SubmissionLog {
   id        Int      @id @default(autoincrement())
+  channelId String   @map("channel_id")
   username  String
   action    String
   details   Json?
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  user      User     @relation(fields: [username], references: [twitchUsername])
+  channel   Channel  @relation(fields: [channelId], references: [id])
+  user      User     @relation(fields: [username, channelId], references: [twitchUsername, channelId])
 
   @@map("submission_logs")
 }
@@ -72,6 +137,11 @@ enum Role {
   ADMIN
   MODERATOR
   VIEWER
+}
+
+enum ChannelRole {
+  OWNER
+  MANAGER
 }
 
 enum Platform {
