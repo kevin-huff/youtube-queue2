@@ -107,7 +107,16 @@ const formatModerationTimestamp = (value) => {
 const getQueueAlias = (item) =>
   item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
 
-const QueueItem = ({ video, index, isPlaying = false, isTopEight = false }) => {
+const QueueItem = ({
+  video,
+  index,
+  isPlaying = false,
+  isTopEight = false,
+  isVip = false,
+  canManageVip = false,
+  onToggleVip = null,
+  vipActionInFlight = false
+}) => {
   const theme = useTheme();
   const showWarning = video.moderationStatus === 'WARNING';
   const showApproval = video.moderationStatus !== 'WARNING' && Boolean(video.moderatedBy);
@@ -203,7 +212,7 @@ const QueueItem = ({ video, index, isPlaying = false, isTopEight = false }) => {
                   icon={<CheckCircle sx={{ fontSize: 16 }} />}
                   label="Cleared"
                 />
-              )}
+      )}
             </Box>
 
             {showWarning && (
@@ -237,6 +246,27 @@ const QueueItem = ({ video, index, isPlaying = false, isTopEight = false }) => {
                 {video.moderationNote ? ` — ${video.moderationNote}` : ''}
               </Typography>
             )}
+
+            {/* VIP indicator + action */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75 }}>
+              {isVip && (
+                <Chip
+                  size="small"
+                  color="secondary"
+                  label="VIP"
+                />
+              )}
+              {canManageVip && typeof onToggleVip === 'function' && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => onToggleVip(video.id, isVip ? 'UNVIP' : 'VIP')}
+                  disabled={vipActionInFlight}
+                >
+                  {isVip ? 'Un-VIP' : 'VIP'}
+                </Button>
+              )}
+            </Box>
           </Stack>
         }
       />
@@ -367,7 +397,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     completeVotingSession,
     showOverlayPlayer,
     hideOverlayPlayer,
-    overlayShowPlayer
+    overlayShowPlayer,
+    vipQueue
   } = useSocket();
 
   const [activeCupId, setActiveCupId] = useState(null);
@@ -387,6 +418,10 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [forceLockLoading, setForceLockLoading] = useState(false);
 
   const normalizedChannelId = channelName?.toLowerCase();
+
+  // VIP management state
+  const [vipActionId, setVipActionId] = useState(null);
+  const [vipError, setVipError] = useState(null);
 
   const {
     containerRef,
@@ -725,6 +760,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   // Channel owners/managers and show producers/hosts can operate playback
   const canOperatePlayback = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER', 'HOST']);
   const canManageRoles = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER']);
+  const canManageVip = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER']);
 
   const loadRoles = useCallback(async () => {
     if (!canManageRoles || !normalizedChannelId) {
@@ -960,6 +996,32 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     setIsSeeking(true);
     setPendingSeek(Math.max(0, next));
   };
+
+  const handleVipAction = useCallback(async (itemId, action) => {
+    if (!normalizedChannelId || !itemId) {
+      return;
+    }
+    try {
+      setVipError(null);
+      setVipActionId(itemId);
+      const response = await fetch(`/api/channels/${normalizedChannelId}/submissions/${itemId}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update VIP');
+      }
+      // Socket will emit updated VIP list; no local mutation needed
+    } catch (error) {
+      console.error('VIP action failed:', error);
+      setVipError(error.message || 'Failed to update VIP');
+    } finally {
+      setVipActionId(null);
+    }
+  }, [normalizedChannelId]);
 
   const handleSeekCommit = (_, value) => {
     const next = Array.isArray(value) ? value[0] : value;
@@ -1214,6 +1276,12 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                 />
               </Box>
 
+              {vipError && (
+                <Alert severity="error" onClose={() => setVipError(null)} sx={{ mb: 2 }}>
+                  {vipError}
+                </Alert>
+              )}
+
               {!channelConnected ? (
                 <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
                   <LinearProgress sx={{ width: '100%' }} />
@@ -1239,6 +1307,10 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       index={index}
                       isPlaying={currentlyPlaying?.id === video.id}
                       isTopEight={video.status === 'TOP_EIGHT'}
+                      isVip={Array.isArray(vipQueue) && vipQueue.includes(video.id)}
+                      canManageVip={canManageVip}
+                      onToggleVip={handleVipAction}
+                      vipActionInFlight={vipActionId === video.id}
                     />
                   ))}
                 </List>
