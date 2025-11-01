@@ -186,6 +186,7 @@ const QueueOverlay = () => {
   const [shuffleVisual, setShuffleVisual] = useState(null);
   const [progress, setProgress] = useState(0);
   const [audioError, setAudioError] = useState(false);
+  const [sbAudioError, setSbAudioError] = useState(false);
   // Removed predicted placement feature; no active cup tracking needed
   const [socialRevealActive, setSocialRevealActive] = useState(false);
   const shuffleSignatureRef = useRef(null);
@@ -360,7 +361,18 @@ const QueueOverlay = () => {
 
     setAudioError(false);
 
-    const audio = new Audio(shuffleAudioSrc);
+    let shuffleUrl = shuffleAudioSrc;
+    try {
+      const u = new URL(shuffleUrl, window.location.origin);
+      if (window.location.protocol === 'https:' && u.protocol === 'http:') {
+        shuffleUrl = u.pathname + u.search;
+      } else if (!/^https?:/i.test(shuffleUrl)) {
+        shuffleUrl = u.pathname + u.search;
+      } else {
+        shuffleUrl = u.toString();
+      }
+    } catch (_) {}
+    const audio = new Audio(shuffleUrl);
     audioRef.current = audio;
     audio.volume = 1;
 
@@ -418,13 +430,31 @@ const QueueOverlay = () => {
     const handler = (payload = {}) => {
       try {
         if (!payload.url) return;
+        let url = payload.url;
+        try {
+          const u = new URL(url, window.location.origin);
+          if (window.location.protocol === 'https:' && u.protocol === 'http:') {
+            // Avoid mixed content; try same-origin relative path
+            url = u.pathname + u.search;
+          } else if (!/^https?:/i.test(url)) {
+            // Relative path; keep as-is (served by same origin)
+            url = u.pathname + u.search;
+          } else {
+            url = u.toString();
+          }
+        } catch (_) {
+          // fallback to original
+        }
         if (sbAudioRef.current) {
           try { sbAudioRef.current.pause(); } catch (_) {}
         }
-        const audio = new Audio(payload.url);
+        const audio = new Audio(url);
         sbAudioRef.current = audio;
         audio.volume = 1;
-        audio.play().catch(() => {});
+        audio.play().catch((err) => {
+          console.warn('Soundboard audio playback failed:', err);
+          setSbAudioError(true);
+        });
       } catch (_) {}
     };
     addChannelListener('soundboard:play', handler);
@@ -803,7 +833,7 @@ const ringLayout = useMemo(() => {
                                 fontWeight: 600
                               }}
                             >
-                              #{item.position ?? globalIndex + 1}
+                              #{globalIndex + 1}
                             </Box>
                             {typeof rank === 'number' && (
                               <Box
@@ -962,6 +992,26 @@ const ringLayout = useMemo(() => {
               Shuffle audio blocked. Current source: {shuffleAudioSrc}
             </Box>
           )}
+          {sbAudioError && (
+            <Box
+              sx={{
+                position: 'absolute',
+                bottom: 46,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                px: 2.6,
+                py: 1.1,
+                borderRadius: 999,
+                background: alpha('#ffcc00', 0.16),
+                color: '#ffd166',
+                fontSize: 12,
+                letterSpacing: 1.2,
+                textTransform: 'uppercase'
+              }}
+            >
+              Soundboard audio blocked. Click the overlay once to enable audio.
+            </Box>
+          )}
         </Box>
       )}
       <Grid
@@ -1071,7 +1121,7 @@ const ringLayout = useMemo(() => {
                     <Box sx={{ position: 'absolute', top: 12, left: 12, display: 'flex', gap: 1 }}>
                       <Chip
                         size="small"
-                        label={`#${item.position ?? index + 1}`}
+                        label={`#${index + 1}`}
                         sx={{
                           bgcolor: alpha('#030712', 0.75),
                           color: alpha('#ffffff', 0.85),

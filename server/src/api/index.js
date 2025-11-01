@@ -1325,10 +1325,11 @@ router.post(
 
       // Persist as channel setting and notify clients
       const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
-      await queueService.updateSetting('shuffle_audio_url', publicUrl);
+      // Store relative path to avoid mixed-content issues behind HTTPS
+      await queueService.updateSetting('shuffle_audio_url', publicRel);
 
       logger.info(`Uploaded shuffle audio for ${normalizedChannelId}: ${publicUrl}`);
-      return res.status(201).json({ url: publicUrl, filename: req.file.filename, channelId: normalizedChannelId });
+      return res.status(201).json({ url: publicRel, absoluteUrl: publicUrl, filename: req.file.filename, channelId: normalizedChannelId });
     } catch (error) {
       logger.error('Error uploading shuffle audio:', error);
       const status = error.status || 500;
@@ -1378,13 +1379,11 @@ router.post('/channels/:channelId/soundboard/upload', requireAuth, requireChanne
     }
 
     const name = (req.body?.name || req.file.originalname || 'Sound').toString().slice(0, 100);
-    const proto = req.protocol;
-    const host = req.get('host');
-    const url = `${proto}://${host}/uploads/${channelId}/${req.file.filename}`;
+    const urlRel = `/uploads/${channelId}/${req.file.filename}`;
 
     const items = await getSoundboardItems(queueService);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const item = { id, name, url, filename: req.file.filename, createdAt: new Date().toISOString() };
+    const item = { id, name, url: urlRel, filename: req.file.filename, createdAt: new Date().toISOString() };
     const next = [item, ...items].slice(0, 100); // cap to 100
     await setSoundboardItems(queueService, next);
 

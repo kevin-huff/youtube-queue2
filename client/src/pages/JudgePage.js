@@ -44,6 +44,7 @@ const JudgePage = () => {
     seekOverlay
   } = useSocket();
   const sbAudioRef = useRef(null);
+  const [sbAudioError, setSbAudioError] = useState(false);
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
   const [isLocked, setIsLocked] = useState(false);
@@ -100,13 +101,27 @@ const JudgePage = () => {
     const handler = (payload = {}) => {
       try {
         if (!payload.url) return;
+        let url = payload.url;
+        try {
+          const u = new URL(url, window.location.origin);
+          if (window.location.protocol === 'https:' && u.protocol === 'http:') {
+            url = u.pathname + u.search;
+          } else if (!/^https?:/i.test(url)) {
+            url = u.pathname + u.search;
+          } else {
+            url = u.toString();
+          }
+        } catch (_) {}
         if (sbAudioRef.current) {
           try { sbAudioRef.current.pause(); } catch (_) {}
         }
-        const audio = new Audio(payload.url);
+        const audio = new Audio(url);
         sbAudioRef.current = audio;
         audio.volume = 1;
-        audio.play().catch(() => {});
+        audio.play().catch((err) => {
+          console.warn('Soundboard audio playback failed:', err);
+          setSbAudioError(true);
+        });
       } catch (_) {}
     };
     addChannelListener('soundboard:play', handler);
@@ -545,6 +560,11 @@ const JudgePage = () => {
                 <Typography variant="h6">Soundboard</Typography>
                 <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>Refresh</Button>
               </Box>
+              {sbAudioError && (
+                <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
+                  Sound playback blocked by the browser. Click anywhere on the page once, then try again.
+                </Alert>
+              )}
               {sbError && (
                 <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
                   {sbError}
