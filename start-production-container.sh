@@ -19,7 +19,7 @@ if [ -f ".env" ]; then
 fi
 
 if [ -n "${DATABASE_URL}" ]; then
-  echo "[entrypoint] DATABASE_URL detected — running prisma migrate deploy"
+  echo "[entrypoint] DATABASE_URL detected — running prisma migrations"
   # Try migrate deploy; if it fails (no migrations) fall back to db push
   if npx prisma migrate deploy; then
     echo "[entrypoint] Migrations deployed successfully"
@@ -27,6 +27,9 @@ if [ -n "${DATABASE_URL}" ]; then
     echo "[entrypoint] migrate deploy failed, trying prisma db push"
     npx prisma db push
   fi
+  # Ensure Prisma client is generated for runtime
+  echo "[entrypoint] Generating Prisma client"
+  npx prisma generate
 else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"
 fi

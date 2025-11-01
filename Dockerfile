@@ -16,18 +16,22 @@ COPY package*.json ./
 COPY server/package*.json ./server/
 COPY client/package*.json ./client/
 
-# Install all dependencies (including dev) to support client build & prisma generate
-RUN npm ci
+# Speed up npm and avoid extra metadata
+RUN npm config set fund false && npm config set audit false && npm config set progress false
+
+# Install only required workspaces with production deps to reduce build time
+# - client: includes react-scripts in dependencies, sufficient for build
+# - server: prod deps only; prisma will run via npx during entrypoint
+RUN npm ci --omit=dev --no-audit --no-fund --workspace server --workspace client
 
 # Copy source and build the client
 COPY . .
 RUN cd client && npm run build
 
-# Generate Prisma client
-RUN cd server && npx prisma generate
+# Defer Prisma client generation to runtime to avoid extra build-time installs
 
 # Remove dev dependencies to keep node_modules production-only
-RUN npm prune --production
+# node_modules already installed with --omit=dev; no further prune required
 
 
 ### Final image: copy only what we need for runtime
