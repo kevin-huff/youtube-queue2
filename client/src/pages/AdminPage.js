@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -18,6 +18,8 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   IconButton,
+  CircularProgress,
+  alpha
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -28,8 +30,45 @@ import {
   Queue as QueueIcon,
   Delete as DeleteIcon,
   VolumeUp as VolumeIcon,
+  Pause as PauseIcon,
+  WarningAmber as WarningIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
+
+const formatTimestamp = (value) => {
+  if (!value) return 'Just now';
+  try {
+    const date = new Date(value);
+    return date.toLocaleString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      month: 'short',
+      day: 'numeric'
+    });
+  } catch (error) {
+    return value;
+  }
+};
+
+const getSubmitterAlias = (item) =>
+  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
+
+const getSubmitterUsername = (item) =>
+  item?.submitter?.twitchUsername || item?.submitterUsername || null;
+
+const formatSubmitterLabel = (item, { includeReal = false } = {}) => {
+  const alias = getSubmitterAlias(item);
+  if (!includeReal) {
+    return alias;
+  }
+
+  const real = getSubmitterUsername(item);
+  if (real && real !== alias) {
+    return `${alias} (real: ${real})`;
+  }
+
+  return alias;
+};
 
 const AdminPage = () => {
   const {
@@ -45,10 +84,15 @@ const AdminPage = () => {
     removeVideoFromQueue,
     updateSetting,
     settings,
+    channelId,
+    playOverlay,
+    pauseOverlay,
+    channelConnected
+  , vipQueue
   } = useSocket();
 
   const [localSettings, setLocalSettings] = useState({
-    maxQueueSize: '50',
+    maxQueueSize: '1000',
     submissionCooldown: '30',
     maxVideoDuration: '600',
     autoPlayNext: true,
@@ -61,6 +105,78 @@ const AdminPage = () => {
     moderators: [],
     bannedUsers: [],
   });
+
+  const [pendingSubmissions, setPendingSubmissions] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingError, setPendingError] = useState(null);
+  const [pendingActionId, setPendingActionId] = useState(null);
+
+  const loadPendingSubmissions = useCallback(async () => {
+    if (!channelId) {
+      setPendingSubmissions([]);
+      return;
+    }
+
+    try {
+      setPendingLoading(true);
+      setPendingError(null);
+
+      const response = await fetch(`/api/channels/${channelId}/submissions?status=PENDING`, {
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to load submissions');
+      }
+
+      const data = await response.json();
+      setPendingSubmissions(data.submissions || []);
+    } catch (error) {
+      console.error('Failed to load submissions:', error);
+      setPendingError(error.message || 'Failed to load submissions');
+    } finally {
+      setPendingLoading(false);
+    }
+  }, [channelId]);
+
+  useEffect(() => {
+    loadPendingSubmissions();
+  }, [loadPendingSubmissions]);
+
+  const handleSubmissionAction = async (itemId, action) => {
+    if (!channelId) {
+      return;
+    }
+
+    try {
+      setPendingActionId(itemId);
+      setPendingError(null);
+
+      const response = await fetch(`/api/channels/${channelId}/submissions/${itemId}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ action })
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update submission');
+      }
+
+      setPendingSubmissions((prev) => prev.filter((item) => item.id !== itemId));
+      await loadPendingSubmissions();
+    } catch (error) {
+      console.error('Failed to update submission:', error);
+      setPendingError(error.message || 'Failed to update submission');
+    } finally {
+      setPendingActionId(null);
+    }
+  };
 
   // Fetch bot status on component mount
   useEffect(() => {
@@ -153,16 +269,27 @@ const AdminPage = () => {
               </Box>
 
               <Stack spacing={2}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={queueEnabled}
-                      onChange={handleToggleQueue}
-                      color="primary"
-                    />
-                  }
-                  label={`Queue ${queueEnabled ? 'Enabled' : 'Disabled'}`}
-                />
+                <Box display="flex" alignItems="center" justifyContent="space-between">
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={queueEnabled}
+                        onChange={handleToggleQueue}
+                        color="primary"
+                      />
+                    }
+                    label={`Queue ${queueEnabled ? 'Enabled' : 'Disabled'}`}
+                  />
+                  {channelId && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => window.open(`/player/${channelId}`, '_blank')}
+                    >
+                      Open Player
+                    </Button>
+                  )}
+                </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Chip
@@ -210,8 +337,112 @@ const AdminPage = () => {
                   >
                     Clear
                   </Button>
+                  
+                  <Button
+                    variant="outlined"
+                    startIcon={<PlayIcon />}
+                    onClick={playOverlay}
+                    size="small"
+                    color="secondary"
+                    disabled={!channelConnected}
+                  >
+                    Play
+                  </Button>
+                  
+                  <Button
+                    variant="outlined"
+                    startIcon={<PauseIcon />}
+                    onClick={pauseOverlay}
+                    size="small"
+                    color="secondary"
+                    disabled={!channelConnected}
+                  >
+                    Pause
+                  </Button>
                 </Stack>
               </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Moderation Queue */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <QueueIcon sx={{ mr: 1, color: 'warning.main' }} />
+                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                    Moderation Queue
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={loadPendingSubmissions}
+                  disabled={pendingLoading}
+                >
+                  Refresh
+                </Button>
+              </Box>
+
+              {pendingError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {pendingError}
+                </Alert>
+              )}
+
+              {pendingLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : pendingSubmissions.length === 0 ? (
+                <Alert severity="info">
+                  No pending submissions right now. You&rsquo;re all caught up!
+                </Alert>
+              ) : (
+                <List disablePadding>
+                  {pendingSubmissions.map((submission) => (
+                    <ListItem key={submission.id} divider alignItems="flex-start" sx={{ py: 1.5 }}>
+                      <ListItemText
+                        primary={submission.title || 'Untitled Video'}
+                        secondary={`Submitted by ${formatSubmitterLabel(submission, { includeReal: true })} • ${formatTimestamp(submission.createdAt)}`}
+                      />
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={() => handleSubmissionAction(submission.id, 'APPROVE')}
+                          disabled={pendingActionId === submission.id}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          color={Array.isArray(vipQueue) && vipQueue.includes(submission.id) ? 'secondary' : 'primary'}
+                          onClick={() => handleSubmissionAction(submission.id, Array.isArray(vipQueue) && vipQueue.includes(submission.id) ? 'UNVIP' : 'VIP')}
+                          disabled={pendingActionId === submission.id}
+                        >
+                          {Array.isArray(vipQueue) && vipQueue.includes(submission.id) ? 'Un-VIP' : 'VIP'}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          color="error"
+                          onClick={() => handleSubmissionAction(submission.id, 'REJECT')}
+                          disabled={pendingActionId === submission.id}
+                        >
+                          Reject
+                        </Button>
+                        {pendingActionId === submission.id && (
+                          <CircularProgress size={16} />
+                        )}
+                      </Stack>
+                    </ListItem>
+                  ))}
+                </List>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -354,32 +585,104 @@ const AdminPage = () => {
                 <List dense>
                   {queue.map((video, index) => (
                     <React.Fragment key={video.id}>
-                      <ListItem>
+                      <ListItem
+                        alignItems="flex-start"
+                        sx={{
+                          ...(video.moderationStatus === 'WARNING'
+                            ? {
+                                borderLeft: '4px solid',
+                                borderColor: 'warning.main',
+                                bgcolor: (theme) => alpha(theme.palette.warning.main, 0.08)
+                              }
+                            : {})
+                        }}
+                      >
                         <ListItemText
                           primary={video.title || 'Untitled Video'}
                           secondary={
-                            <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Chip
-                                label={video.platform}
-                                size="small"
-                                variant="outlined"
-                              />
-                              <span>by {video.submitter?.twitchUsername || video.submitterUsername}</span>
-                              {video.duration && (
-                                <span>• {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}</span>
+                            <Box
+                              component="span"
+                              sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}
+                            >
+                              <Box
+                                sx={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 1,
+                                  flexWrap: 'wrap'
+                                }}
+                              >
+                                <Chip
+                                  label={video.platform}
+                                  size="small"
+                                  variant="outlined"
+                                />
+                                <span>by {formatSubmitterLabel(video, { includeReal: true })}</span>
+                                {video.duration && (
+                                  <span>
+                                    • {Math.floor(video.duration / 60)}:
+                                    {(video.duration % 60).toString().padStart(2, '0')}
+                                  </span>
+                                )}
+                              </Box>
+
+                              {video.moderationStatus === 'WARNING' && (
+                                <Alert
+                                  severity="warning"
+                                  icon={<WarningIcon fontSize="inherit" />}
+                                  sx={{ py: 0.75, px: 1, borderRadius: 1 }}
+                                >
+                                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block' }}>
+                                    Flagged by {video.moderatedByDisplayName || video.moderatedBy || 'Moderator'}
+                                    {video.moderatedAt ? ` — ${formatTimestamp(video.moderatedAt)}` : ''}
+                                  </Typography>
+                                  {video.moderationNote && (
+                                    <Typography variant="caption">
+                                      {video.moderationNote}
+                                    </Typography>
+                                  )}
+                                </Alert>
+                              )}
+
+                              {video.moderationStatus !== 'WARNING' && video.moderatedBy && (
+                                <Typography variant="caption" color="success.main">
+                                  Approved by {video.moderatedByDisplayName || video.moderatedBy}
+                                  {video.moderatedAt ? ` — ${formatTimestamp(video.moderatedAt)}` : ''}
+                                  {video.moderationNote ? ` — ${video.moderationNote}` : ''}
+                                </Typography>
                               )}
                             </Box>
                           }
                         />
                         <ListItemSecondaryAction>
-                          <IconButton
-                            edge="end"
-                            onClick={() => handleRemoveVideo(video.id)}
-                            color="error"
-                            size="small"
-                          >
-                            <DeleteIcon />
-                          </IconButton>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            {video.moderationStatus === 'WARNING' && (
+                              <Chip
+                                label="Warning"
+                                color="warning"
+                                size="small"
+                                icon={<WarningIcon fontSize="small" />}
+                              />
+                            )}
+                              {(Array.isArray(vipQueue) && vipQueue.includes(video.id)) && (
+                                <Chip label="VIP" color="secondary" size="small" />
+                              )}
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={() => handleSubmissionAction(video.id, Array.isArray(vipQueue) && vipQueue.includes(video.id) ? 'UNVIP' : 'VIP')}
+                              >
+                                {Array.isArray(vipQueue) && vipQueue.includes(video.id) ? 'Un-VIP' : 'VIP'}
+                              </Button>
+                              <IconButton
+                                edge="end"
+                                onClick={() => handleRemoveVideo(video.id)}
+                                color="error"
+                                size="small"
+                              >
+                                <DeleteIcon />
+                              </IconButton>
+                          </Stack>
                         </ListItemSecondaryAction>
                       </ListItem>
                       {index < queue.length - 1 && <Divider />}

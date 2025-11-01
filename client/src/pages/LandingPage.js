@@ -142,7 +142,7 @@ const LandingPage = () => {
         {/* Hero Section */}
         <Box sx={{ pt: 12, pb: 8, textAlign: 'center' }}>
           <Chip 
-            label="Multi-Channel Twitch Queue Bot" 
+            label="KevNetCloud × ChatGPT Present" 
             color="secondary" 
             size="small" 
             sx={{ mb: 3, fontWeight: 600 }}
@@ -160,9 +160,9 @@ const LandingPage = () => {
               mb: 3
             }}
           >
-            Queue Management
+            FREE* Mediashare
             <br />
-            Made Simple
+            For Twitch Creators
           </Typography>
           
           <Typography 
@@ -170,8 +170,9 @@ const LandingPage = () => {
             color="text.secondary" 
             sx={{ mb: 5, maxWidth: 600, mx: 'auto', fontWeight: 400 }}
           >
-            Let your Twitch viewers submit YouTube videos to your queue. 
-            Manage multiple channels from one beautiful dashboard.
+            Brought to you by KevNetCloud in collaboration with ChatGPT. Let your audience drop
+            YouTube links directly in chat and manage multi-channel mediashare queues from one
+            beautiful dashboard—just don’t forget the asterisk.
           </Typography>
           
           <Button 
@@ -190,6 +191,16 @@ const LandingPage = () => {
             }}
           >
             Login with Twitch
+          </Button>
+
+          <Button
+            variant="text"
+            color="secondary"
+            onClick={() => login({ redirectTo: '/dashboard?tab=moderation' })}
+            startIcon={<Security />}
+            sx={{ mt: 1.5 }}
+          >
+            Moderator login &amp; queue review
           </Button>
           
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>

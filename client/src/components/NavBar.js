@@ -17,7 +17,8 @@ import {
   LiveTv,
   Dashboard,
   Login,
-  Logout
+  Logout,
+  Security
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -28,6 +29,22 @@ const NavBar = () => {
   const location = useLocation();
   const { user, logout, login } = useAuth();
   const [anchorEl, setAnchorEl] = React.useState(null);
+  const canModerate = React.useMemo(() => {
+    if (!user?.channels) {
+      return false;
+    }
+
+    return user.channels.some((channel) => {
+      if (!channel) {
+        return false;
+      }
+      const roles = new Set(channel.roles || []);
+      if (channel.ownershipRole) {
+        roles.add(channel.ownershipRole);
+      }
+      return ['OWNER', 'MANAGER', 'PRODUCER', 'MODERATOR'].some((role) => roles.has(role));
+    });
+  }, [user]);
 
   const handleMenuOpen = (event) => {
     setAnchorEl(event.currentTarget);
@@ -45,6 +62,11 @@ const NavBar = () => {
   const handleDashboard = () => {
     handleMenuClose();
     navigate('/dashboard');
+  };
+
+  const handleModeration = () => {
+    handleMenuClose();
+    navigate('/dashboard?tab=moderation');
   };
 
   const isAuthPage = location.pathname === '/' || location.pathname === '/login';
@@ -69,18 +91,24 @@ const NavBar = () => {
             onClick={() => navigate(user ? '/dashboard' : '/')}
           >
             <LiveTv sx={{ mr: 1, color: 'primary.main' }} />
-            <Typography 
-              variant="h6" 
-              sx={{ 
-                fontWeight: 700,
-                background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-                backgroundClip: 'text',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-              }}
-            >
-              TwitchQueue
-            </Typography>
+            <Box>
+              <Typography 
+                variant="h6" 
+                sx={{ 
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+                  backgroundClip: 'text',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                FREE* Mediashare
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                KevNetCloud × ChatGPT
+              </Typography>
+            </Box>
           </Box>
 
           <Box sx={{ flexGrow: 1 }} />
@@ -89,13 +117,24 @@ const NavBar = () => {
           {user ? (
             <>
               {!isAuthPage && (
-                <Button
-                  startIcon={<Dashboard />}
-                  onClick={() => navigate('/dashboard')}
-                  sx={{ mr: 2 }}
-                >
-                  Dashboard
-                </Button>
+                <>
+                  <Button
+                    startIcon={<Dashboard />}
+                    onClick={() => navigate('/dashboard')}
+                    sx={{ mr: 2 }}
+                  >
+                    Dashboard
+                  </Button>
+                  {canModerate && (
+                    <Button
+                      startIcon={<Security />}
+                      onClick={() => navigate('/dashboard?tab=moderation')}
+                      sx={{ mr: 2 }}
+                    >
+                      Moderation
+                    </Button>
+                  )}
+                </>
               )}
               
               <Box>
@@ -152,6 +191,18 @@ const NavBar = () => {
                     <Dashboard sx={{ mr: 2, fontSize: 20 }} />
                     Dashboard
                   </MenuItem>
+                  {canModerate && (
+                    <MenuItem onClick={handleModeration}>
+                      <Security sx={{ mr: 2, fontSize: 20 }} />
+                      Moderation
+                    </MenuItem>
+                  )}
+                  {user.channels?.[0] && (
+                    <MenuItem onClick={() => navigate(`/player/${user.channels[0].id}`)}>
+                      <LiveTv sx={{ mr: 2, fontSize: 20 }} />
+                      Open Player Overlay
+                    </MenuItem>
+                  )}
                   
                   <MenuItem onClick={handleLogout}>
                     <Logout sx={{ mr: 2, fontSize: 20 }} />

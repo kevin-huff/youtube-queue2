@@ -5,6 +5,140 @@ const logger = require('../utils/logger');
 
 const prisma = new PrismaClient();
 
+const buildUserPayload = async (accountId) => {
+  const account = await prisma.account.findUnique({
+    where: { id: accountId },
+    include: {
+      channels: {
+        include: {
+          channel: true
+        },
+        orderBy: {
+          createdAt: 'asc'
+        }
+      },
+      roleAssignments: {
+        include: {
+          channel: true,
+          cup: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              status: true,
+              startsAt: true,
+              endsAt: true
+            }
+          }
+        },
+        orderBy: {
+          createdAt: 'asc'
+        }
+      }
+    }
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  const channelMap = new Map();
+
+  const ensureChannelEntry = (channelRecord) => {
+    if (!channelRecord) {
+      return null;
+    }
+
+    const channelId = channelRecord.id;
+    if (!channelMap.has(channelId)) {
+      channelMap.set(channelId, {
+        id: channelRecord.id,
+        displayName: channelRecord.displayName,
+        profileImageUrl: channelRecord.profileImageUrl,
+        isActive: channelRecord.isActive,
+        ownershipRole: null,
+        roles: new Set(),
+        cupRoles: new Map(),
+        cups: new Map()
+      });
+    }
+    return channelMap.get(channelId);
+  };
+
+  for (const ownership of account.channels) {
+    const entry = ensureChannelEntry(ownership.channel);
+    if (!entry) {
+      continue;
+    }
+
+    entry.ownershipRole = ownership.role;
+    if (ownership.role) {
+      entry.roles.add(ownership.role);
+    }
+  }
+
+  for (const assignment of account.roleAssignments || []) {
+    const entry = ensureChannelEntry(assignment.channel);
+    if (!entry) {
+      continue;
+    }
+
+    entry.roles.add(assignment.role);
+
+    if (assignment.cupId) {
+      const rolesForCup = entry.cupRoles.get(assignment.cupId) || new Set();
+      rolesForCup.add(assignment.role);
+      entry.cupRoles.set(assignment.cupId, rolesForCup);
+
+      if (assignment.cup) {
+        entry.cups.set(assignment.cupId, {
+          id: assignment.cup.id,
+          title: assignment.cup.title,
+          slug: assignment.cup.slug,
+          status: assignment.cup.status,
+          startsAt: assignment.cup.startsAt,
+          endsAt: assignment.cup.endsAt
+        });
+      }
+    }
+  }
+
+  const channels = Array.from(channelMap.values()).map((entry) => {
+    const cupRoles = {};
+    entry.cupRoles.forEach((rolesSet, cupId) => {
+      cupRoles[cupId] = Array.from(rolesSet);
+    });
+
+    const cups = {};
+    entry.cups.forEach((cupData, cupId) => {
+      cups[cupId] = cupData;
+    });
+
+    const roles = Array.from(entry.roles);
+
+    return {
+      id: entry.id,
+      displayName: entry.displayName,
+      profileImageUrl: entry.profileImageUrl,
+      isActive: entry.isActive,
+      ownershipRole: entry.ownershipRole,
+      role: entry.ownershipRole || roles[0] || null,
+      roles,
+      cupRoles,
+      cups
+    };
+  });
+
+  return {
+    id: account.id,
+    username: account.username,
+    displayName: account.displayName || account.username,
+    profileImageUrl: account.profileImageUrl,
+    email: account.email,
+    channels
+  };
+};
+
 // Passport configuration for Twitch OAuth
 passport.use(new TwitchStrategy({
   clientID: process.env.TWITCH_CLIENT_ID,
@@ -108,30 +242,7 @@ passport.use(new TwitchStrategy({
       }
     });
 
-    const ownedChannels = await prisma.channelOwner.findMany({
-      where: { accountId: account.id },
-      include: {
-        channel: true
-      },
-      orderBy: {
-        createdAt: 'asc'
-      }
-    });
-
-    const userData = {
-      id: account.id,
-      username: account.username,
-      displayName: account.displayName || account.username,
-      profileImageUrl: account.profileImageUrl,
-      email: account.email,
-      channels: ownedChannels.map(({ channel, role }) => ({
-        id: channel.id,
-        displayName: channel.displayName,
-        profileImageUrl: channel.profileImageUrl,
-        isActive: channel.isActive,
-        role
-      }))
-    };
+    const userData = await buildUserPayload(account.id);
 
     return done(null, userData);
   } catch (error) {
@@ -146,40 +257,13 @@ passport.serializeUser((user, done) => {
 });
 
 // Deserialize user from session
-passport.deserializeUser(async (channelId, done) => {
+passport.deserializeUser(async (accountId, done) => {
   try {
-    const account = await prisma.account.findUnique({
-      where: { id: channelId },
-      include: {
-        channels: {
-          include: {
-            channel: true
-          },
-          orderBy: {
-            createdAt: 'asc'
-          }
-        }
-      }
-    });
+    const userData = await buildUserPayload(accountId);
 
-    if (!account) {
+    if (!userData) {
       return done(null, false);
     }
-
-    const userData = {
-      id: account.id,
-      username: account.username,
-      displayName: account.displayName || account.username,
-      profileImageUrl: account.profileImageUrl,
-      email: account.email,
-      channels: account.channels.map(({ channel, role }) => ({
-        id: channel.id,
-        displayName: channel.displayName,
-        profileImageUrl: channel.profileImageUrl,
-        isActive: channel.isActive,
-        role
-      }))
-    };
 
     done(null, userData);
   } catch (error) {

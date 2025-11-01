@@ -76,6 +76,8 @@ class TwitchBot {
 
     // Chat events
     this.client.on('message', this.handleMessage.bind(this));
+  // Cheer events (bits)
+  this.client.on('cheer', this.handleCheer ? this.handleCheer.bind(this) : (channel, userstate, message) => {});
     this.client.on('join', this.handleJoin.bind(this));
     this.client.on('part', this.handlePart.bind(this));
 
@@ -135,6 +137,60 @@ class TwitchBot {
     } catch (error) {
       logger.error('Error handling message:', error);
       this.sendMessage(channel, `@${displayName} Sorry, there was an error processing your request.`);
+    }
+  }
+
+  async handleCheer(channel, userstate, message) {
+    // Handle bit cheers that include video links. Treat 500+ bits as VIP submission.
+    try {
+      const channelId = channel.substring(1).toLowerCase();
+      const username = (userstate.username || '').toLowerCase();
+      const displayName = userstate['display-name'] || username;
+
+      if (!this.channelManager.isChannelActive(channelId)) return;
+
+      const bits = Number(userstate.bits || 0);
+      if (!Number.isFinite(bits) || bits < 500) {
+        return; // only interested in 500+ bit cheers for VIP
+      }
+
+      // Extract URLs from the cheer message
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const urls = (message || '').match(urlRegex);
+      if (!urls || !urls.length) return;
+
+      const queueService = this.channelManager.getQueueService(channelId);
+      if (!queueService) return;
+
+      for (const url of urls) {
+        try {
+          if (!this.videoService.isValidVideoUrl(url)) continue;
+
+          const maxVideoDuration = await queueService.getSetting('max_video_duration', '300');
+          const metadata = await this.videoService.getVideoMetadata(url, {
+            maxDuration: parseInt(maxVideoDuration, 10)
+          });
+
+          const result = await queueService.addToQueue(metadata, username);
+          const added = result?.queueItem || null;
+
+          if (added) {
+            // Mark as VIP so it is played next (FIFO among VIPs) and excluded from shuffles
+            await queueService.addVipForItem(added.id);
+
+            this.sendMessage(channel, `@${username} Thank you for the ${bits} bits! Your video has been added as a VIP and will play next: ${metadata.title}`);
+            this.applyRateLimit(`${channelId}:${username}`);
+            break; // only process first valid URL
+          }
+        } catch (err) {
+          logger.warn('Failed to process VIP cheer URL', { channelId, username, error: err });
+          // notify user of failure
+          this.sendMessage(channel, `@${username} Failed to add VIP video: ${err.message}`);
+          break;
+        }
+      }
+    } catch (error) {
+      logger.error('Error handling cheer event:', error);
     }
   }
 
@@ -397,13 +453,40 @@ class TwitchBot {
           continue;
         }
 
-        // Get video metadata
-        const metadata = await this.videoService.getVideoMetadata(url);
+        // Get channel's max video duration setting
+        const maxVideoDuration = await queueService.getSetting('max_video_duration', '300');
+        
+        // Get video metadata with channel's max duration
+        const metadata = await this.videoService.getVideoMetadata(url, {
+          maxDuration: parseInt(maxVideoDuration, 10)
+        });
         
         // Add to queue
-        await queueService.addToQueue(metadata, username);
-        
-        this.sendMessage(channel, `@${username} Added to queue: ${metadata.title}`);
+        const result = await queueService.addToQueue(metadata, username);
+
+        let responseMessage = `@${username} Added to queue: ${metadata.title}`;
+        if (result?.duplicate) {
+          const { averageScore, judgeCount } = result.duplicate;
+          if (averageScore !== null || judgeCount) {
+            const scoreText = averageScore !== null
+              ? `${Number(averageScore).toFixed(2)}`
+              : 'previous run';
+            const judgeText = judgeCount
+              ? ` by ${judgeCount} judge${judgeCount === 1 ? '' : 's'}`
+              : '';
+            responseMessage += ` (last scored ${scoreText}${judgeText})`;
+          }
+        }
+
+        this.sendMessage(channel, responseMessage);
+
+        if (Array.isArray(result?.warnings)) {
+          result.warnings.forEach((warning) => {
+            if (warning?.message) {
+              this.sendMessage(channel, `⚠️ ${warning.message}`);
+            }
+          });
+        }
         
         // Apply rate limiting
         this.applyRateLimit(rateLimitKey);

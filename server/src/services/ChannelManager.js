@@ -1,12 +1,169 @@
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient, Prisma } = require('@prisma/client');
 const QueueService = require('./QueueService');
+const JudgeService = require('./JudgeService');
 const logger = require('../utils/logger');
+
+const DEFAULT_CHANNEL_SETTINGS = {
+  queue_enabled: false,
+  auto_play_next: false,
+  current_volume: 75,
+  max_queue_size: 0,
+  submission_cooldown: 30,
+  max_video_duration: 300,
+  max_per_user: 3
+};
+
+const normalizeChannelSettings = (rawSettings = {}) => {
+  const normalized = { ...DEFAULT_CHANNEL_SETTINGS };
+  if (rawSettings && typeof rawSettings === 'object') {
+    Object.entries(rawSettings).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        normalized[key] = value;
+      }
+    });
+  }
+  return normalized;
+};
+
+const buildCupScoreData = (queueItems) => {
+  const videos = queueItems.map((item) => {
+    const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
+    const judgeCount = judgeScores.length;
+    const submitterAlias = item.submitterAlias || null;
+    const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
+
+    if (!judgeCount) {
+    return {
+      queueItemId: item.id,
+      videoId: item.videoId,
+      videoUrl: item.videoUrl,
+      title: item.title,
+      thumbnailUrl: item.thumbnailUrl,
+      submitterUsername,
+      submitterAlias,
+      publicSubmitterName: submitterAlias || submitterUsername,
+      status: item.status,
+      judgeCount: 0,
+      averageScore: null,
+      totalScore: null,
+      judgeScores: [],
+      playedAt: item.playedAt,
+      createdAt: item.createdAt
+    };
+    }
+
+    const totalScore = judgeScores.reduce((sum, score) => sum + Number(score.score), 0);
+    const averageScore = totalScore / judgeCount;
+
+    return {
+      queueItemId: item.id,
+      videoId: item.videoId,
+      videoUrl: item.videoUrl,
+      title: item.title,
+      thumbnailUrl: item.thumbnailUrl,
+      submitterUsername,
+      submitterAlias,
+      publicSubmitterName: submitterAlias || submitterUsername,
+      status: item.status,
+      judgeCount,
+      totalScore: Number(totalScore.toFixed(5)),
+      averageScore: Number(averageScore.toFixed(5)),
+      judgeScores: judgeScores.map(score => ({
+        score: Number(score.score),
+        judgeName: score.judgeName || score.judgeSession?.judgeName || 'Anonymous',
+        comment: score.comment,
+        isLocked: score.isLocked
+      })),
+      playedAt: item.playedAt,
+      createdAt: item.createdAt
+    };
+  });
+
+  const standingsAccumulator = new Map();
+
+  videos
+    .filter((video) => typeof video.averageScore === 'number')
+    .forEach((video) => {
+      const existing = standingsAccumulator.get(video.submitterUsername) || {
+        submitterUsername: video.submitterUsername,
+        submitterAlias: video.submitterAlias || null,
+        videoScores: [], // Store all video scores
+        totalJudgeCount: 0,
+        videoCount: 0
+      };
+
+      if (!existing.submitterAlias && video.submitterAlias) {
+        existing.submitterAlias = video.submitterAlias;
+      }
+
+      existing.videoScores.push(video.averageScore);
+      existing.totalJudgeCount += video.judgeCount;
+      existing.videoCount += 1;
+
+      standingsAccumulator.set(video.submitterUsername, existing);
+    });
+
+  // Helper function to calculate median
+  const calculateMedian = (scores) => {
+    if (scores.length === 0) return null;
+    const sorted = [...scores].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 0) {
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+    return sorted[mid];
+  };
+
+  const standings = Array.from(standingsAccumulator.values())
+    .map((entry) => {
+      // Take best N (up to 5) videos by score
+      const bestScores = [...entry.videoScores]
+        .sort((a, b) => b - a)
+        .slice(0, 5);
+      
+      // Calculate median of best scores as social score
+      const socialScore = calculateMedian(bestScores);
+      
+      // Keep totalScore for compatibility (sum of all videos)
+      const totalScore = entry.videoScores.reduce((sum, score) => sum + score, 0);
+
+      return {
+        submitterUsername: entry.submitterUsername,
+        submitterAlias: entry.submitterAlias || null,
+        totalScore: Number(totalScore.toFixed(5)),
+        averageScore: socialScore !== null ? Number(socialScore.toFixed(5)) : null,
+        judgeCount: entry.totalJudgeCount,
+        videoCount: entry.videoCount
+      };
+    })
+    .sort((a, b) => {
+      // Sort by averageScore (which is now the median of best 5)
+      if (b.averageScore !== a.averageScore) {
+        return (b.averageScore ?? 0) - (a.averageScore ?? 0);
+      }
+      // Tiebreaker: more videos wins
+      if (b.videoCount !== a.videoCount) {
+        return b.videoCount - a.videoCount;
+      }
+      // Final tiebreaker: more total judge votes
+      return (b.judgeCount ?? 0) - (a.judgeCount ?? 0);
+    })
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1
+    }));
+
+  return {
+    videos,
+    standings
+  };
+};
 
 class ChannelManager {
   constructor(io) {
     this.prisma = new PrismaClient();
     this.io = io;
-    this.channels = new Map(); // channelId -> { queueService, settings, isActive }
+    this.channels = new Map(); // channelId -> { queueService, judgeService, settings, isActive }
     this.activeChannels = new Set(); // Set of active channel IDs
     this.namespaceInitializer = null;
   }
@@ -56,9 +213,15 @@ class ChannelManager {
       const queueService = new QueueService(channelNamespace, channelId);
       await queueService.initialize();
 
+      // Create JudgeService instance for this channel
+      const judgeService = new JudgeService(channelNamespace, channelId);
+      await judgeService.initialize();
+      judgeService.bindQueueService(queueService);
+
       // Store channel instance
       this.channels.set(channelId, {
         queueService,
+        judgeService,
         settings: channel.settings,
         isActive: channel.isActive,
         displayName: channel.displayName,
@@ -134,6 +297,11 @@ class ChannelManager {
     return channelInstance?.queueService;
   }
 
+  getJudgeService(channelId) {
+    const channelInstance = this.channels.get(channelId);
+    return channelInstance?.judgeService;
+  }
+
   isChannelActive(channelId) {
     return this.activeChannels.has(channelId);
   }
@@ -150,14 +318,206 @@ class ChannelManager {
     this.namespaceInitializer = initializer;
   }
 
-  async getUserChannels(accountId) {
+  async rebuildCupStandings(channelId, cupId) {
+    const normalizedChannelId = channelId.toLowerCase();
+
+    const [queueItems, cupRecord] = await Promise.all([
+      this.prisma.queueItem.findMany({
+        where: {
+          channelId: normalizedChannelId,
+          cupId,
+          status: {
+            in: ['SCORED', 'PLAYED']
+          }
+        },
+        include: {
+          judgeScores: true,
+          submitter: {
+            select: {
+              twitchUsername: true
+            }
+          }
+        },
+        orderBy: [
+          { playedAt: 'asc' },
+          { createdAt: 'asc' }
+        ]
+      }),
+      this.prisma.cup.findUnique({
+        where: {
+          id: cupId,
+          channelId: normalizedChannelId
+        },
+        select: {
+          id: true,
+          title: true,
+          theme: true,
+          status: true
+        }
+      })
+    ]);
+
+    const { videos, standings } = buildCupScoreData(queueItems);
+
+    await this.prisma.$transaction([
+      this.prisma.cupStanding.deleteMany({
+        where: { cupId }
+      }),
+      ...standings.map((standing) => this.prisma.cupStanding.create({
+        data: {
+          cupId,
+          channelId: normalizedChannelId,
+          submitterUsername: standing.submitterUsername,
+          totalScore: new Prisma.Decimal(standing.totalScore.toFixed(5)),
+          averageScore: standing.averageScore !== null
+            ? new Prisma.Decimal(standing.averageScore.toFixed(5))
+            : null,
+          judgeCount: standing.judgeCount,
+          rank: standing.rank,
+          metadata: {
+            videoCount: standing.videoCount,
+            updatedAt: new Date().toISOString()
+          }
+        }
+      }))
+    ]);
+
+    const cupMetadata = cupRecord
+      ? {
+          id: cupRecord.id,
+          title: cupRecord.title || null,
+          theme: cupRecord.theme || null,
+          status: cupRecord.status || null
+        }
+      : {
+          id: cupId,
+          title: null,
+          theme: null,
+          status: null
+        };
+
+    const enhancedStandings = standings.map((entry) => ({
+      ...entry,
+      cupId,
+      cupTitle: cupMetadata.title,
+      cupTheme: cupMetadata.theme
+    }));
+
+    const enhancedVideos = videos.map((video) => ({
+      ...video,
+      cupId,
+      cupTitle: cupMetadata.title,
+      cupTheme: cupMetadata.theme
+    }));
+
+    return {
+      cup: cupMetadata,
+      standings: enhancedStandings,
+      videos: enhancedVideos
+    };
+  }
+
+  async getUserChannels(accountId, options = {}) {
+    const {
+      withRoles = false,
+      includeExpired = false
+    } = options;
+
+    const now = new Date();
+    const normalizeChannelId = (channelId) => channelId?.toLowerCase();
+
+    const channelEntries = new Map();
+
+    const ensureChannelEntry = (channelId, channelRecord = null) => {
+      const normalizedId = normalizeChannelId(channelId);
+      if (!normalizedId) {
+        return null;
+      }
+
+      if (!channelEntries.has(normalizedId)) {
+        channelEntries.set(normalizedId, {
+          channelId: normalizedId,
+          ownershipRole: null,
+          roles: new Set(),
+          cupRoles: new Map(),
+          channel: channelRecord || null
+        });
+      } else if (channelRecord && !channelEntries.get(normalizedId).channel) {
+        channelEntries.get(normalizedId).channel = channelRecord;
+      }
+
+      return channelEntries.get(normalizedId);
+    };
+
     const ownerships = await this.prisma.channelOwner.findMany({
       where: { accountId },
-      select: { channelId: true },
+      include: withRoles ? { channel: true } : undefined,
       orderBy: { createdAt: 'asc' }
     });
 
-    return ownerships.map((ownership) => ownership.channelId);
+    ownerships.forEach((ownership) => {
+      const entry = ensureChannelEntry(ownership.channelId, ownership.channel);
+      if (!entry) {
+        return;
+      }
+      entry.ownershipRole = ownership.role;
+      if (ownership.role) {
+        entry.roles.add(ownership.role);
+      }
+    });
+
+    const roleAssignments = await this.prisma.channelRoleAssignment.findMany({
+      where: {
+        accountId,
+        ...(includeExpired
+          ? {}
+          : {
+              OR: [
+                { expiresAt: null },
+                { expiresAt: { gt: now } }
+              ]
+            })
+      },
+      include: withRoles ? { channel: true } : undefined,
+      orderBy: { createdAt: 'asc' }
+    });
+
+    roleAssignments.forEach((assignment) => {
+      const entry = ensureChannelEntry(assignment.channelId, assignment.channel);
+      if (!entry) {
+        return;
+      }
+
+      entry.roles.add(assignment.role);
+
+      if (assignment.cupId) {
+        const existing = entry.cupRoles.get(assignment.cupId) || new Set();
+        existing.add(assignment.role);
+        entry.cupRoles.set(assignment.cupId, existing);
+      }
+    });
+
+    if (!withRoles) {
+      return Array.from(channelEntries.keys());
+    }
+
+    return Array.from(channelEntries.values()).map((entry) => ({
+      channelId: entry.channelId,
+      ownershipRole: entry.ownershipRole,
+      roles: Array.from(entry.roles),
+      cupRoles: Array.from(entry.cupRoles.entries()).reduce((acc, [cupId, rolesSet]) => {
+        acc[cupId] = Array.from(rolesSet);
+        return acc;
+      }, {}),
+      channel: entry.channel
+        ? {
+            id: entry.channel.id,
+            displayName: entry.channel.displayName,
+            profileImageUrl: entry.channel.profileImageUrl,
+            isActive: entry.channel.isActive
+          }
+        : null
+    }));
   }
 
   async addChannel(rawChannelId, accountId) {
@@ -180,14 +540,7 @@ class ChannelManager {
         data: {
           id: channelId,
           displayName: channelId,
-          settings: {
-            queue_enabled: false,
-            max_queue_size: 50,
-            submission_cooldown: 30,
-            max_video_duration: 600,
-            auto_play_next: true,
-            current_volume: 75
-          }
+          settings: { ...DEFAULT_CHANNEL_SETTINGS }
         }
       });
     } else if (!channel.isActive) {
@@ -263,15 +616,16 @@ class ChannelManager {
 
   async updateChannelSettings(channelId, settings) {
     try {
-      // Update database
+      const mergedSettings = normalizeChannelSettings(settings);
+
       await this.prisma.channel.update({
         where: { id: channelId },
-        data: { settings }
+        data: { settings: mergedSettings }
       });
 
       // Update in-memory settings
       if (this.channels.has(channelId)) {
-        this.channels.get(channelId).settings = settings;
+        this.channels.get(channelId).settings = mergedSettings;
       }
 
       logger.info(`Updated settings for channel: ${channelId}`);
@@ -315,7 +669,7 @@ class ChannelManager {
         displayName: channel.displayName,
         profileImageUrl: channel.profileImageUrl,
         isActive: channel.isActive,
-        settings: channel.settings,
+        settings: normalizeChannelSettings(channel.settings),
         queueStats: queueService ? {
           size: await queueService.getQueueSize(),
           enabled: await queueService.isQueueEnabled(),

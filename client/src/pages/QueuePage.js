@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -13,6 +13,14 @@ import {
   Skeleton,
   Alert,
   Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Divider,
+  LinearProgress,
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -23,8 +31,17 @@ import {
   Instagram as InstagramIcon,
   AccessTime as TimeIcon,
   Person as PersonIcon,
+  EmojiEvents as TrophyIcon,
+  Star as StarIcon,
+  HowToVote as VoteIcon,
+  QueueMusic as QueueIcon,
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
+
+const getAlias = (item) =>
+  item?.submitterAlias || item?.submitter?.alias || null;
+
+const getQueueDisplayName = (item) => getAlias(item) || 'Anonymous';
 
 const formatDuration = (seconds) => {
   if (!seconds) return 'Unknown';
@@ -46,7 +63,7 @@ const getPlatformIcon = (platform) => {
   }
 };
 
-const VideoCard = ({ video, isPlaying = false, onPlay, onRemove }) => {
+const VideoCard = ({ video, isPlaying = false, onPlay, onRemove, isTopEight = false }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
 
@@ -148,9 +165,21 @@ const VideoCard = ({ video, isPlaying = false, onPlay, onRemove }) => {
         <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
           <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
           <Typography variant="body2" color="text.secondary">
-            {video.submitter?.twitchUsername || video.submitterUsername}
+            {getQueueDisplayName(video)}
           </Typography>
         </Box>
+        
+        {isTopEight && (
+          <Box sx={{ mt: 1 }}>
+            <Chip
+              icon={<StarIcon />}
+              label="Top 8"
+              size="small"
+              color="warning"
+              sx={{ fontWeight: 600 }}
+            />
+          </Box>
+        )}
         
         <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
           <Button
@@ -178,7 +207,16 @@ const VideoCard = ({ video, isPlaying = false, onPlay, onRemove }) => {
   );
 };
 
-const CurrentlyPlaying = ({ video, onSkip, onMarkPlayed }) => {
+const CurrentlyPlaying = ({
+  video,
+  onSkip,
+  onVote,
+  onNext,
+  skipDisabled = false,
+  voteDisabled = false,
+  nextDisabled = false,
+  errorMessage = null
+}) => {
   if (!video) return null;
 
   return (
@@ -248,30 +286,139 @@ const CurrentlyPlaying = ({ video, onSkip, onMarkPlayed }) => {
             
             <Chip
               icon={<PersonIcon />}
-              label={video.submitter?.twitchUsername || video.submitterUsername}
+              label={getQueueDisplayName(video)}
               variant="outlined"
             />
           </Box>
           
-          <Stack direction="row" spacing={2}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <Button
               variant="contained"
               color="secondary"
               startIcon={<SkipIcon />}
               onClick={onSkip}
+              disabled={skipDisabled}
             >
               Skip
             </Button>
             
             <Button
-              variant="outlined"
-              onClick={() => onMarkPlayed(video.id)}
+              variant="contained"
+              color="primary"
+              startIcon={<VoteIcon />}
+              onClick={() => onVote?.(video.id)}
+              disabled={voteDisabled}
             >
-              Mark as Played
+              Vote
+            </Button>
+
+            <Button
+              variant="outlined"
+              startIcon={<QueueIcon />}
+              onClick={onNext}
+              disabled={nextDisabled}
+            >
+              Next From Queue
             </Button>
           </Stack>
+
+          {errorMessage && (
+            <Alert severity="error" sx={{ mt: 2, maxWidth: 420 }}>
+              {errorMessage}
+            </Alert>
+          )}
         </Grid>
       </Grid>
+    </Paper>
+  );
+};
+
+const CupStandings = ({ standings, cupTitle }) => {
+  if (!standings || standings.length === 0) {
+    return null;
+  }
+
+  // Sort by social score (averageScore in the standings data)
+  const sortedStandings = [...standings].sort((a, b) => {
+    if (a.rank && b.rank) return a.rank - b.rank;
+    // Social score is stored in averageScore field (aggregate of user's videos)
+    const scoreA = a.averageScore || a.totalScore || 0;
+    const scoreB = b.averageScore || b.totalScore || 0;
+    return scoreB - scoreA;
+  });
+
+  return (
+    <Paper sx={{ p: 3, mb: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+        <TrophyIcon sx={{ fontSize: 32, color: 'warning.main' }} />
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          {cupTitle || 'Cup'} Standings - Social Score Rankings
+        </Typography>
+      </Box>
+      
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Rankings based on aggregate performance across all submitted videos
+      </Typography>
+      
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ fontWeight: 600 }}>Rank</TableCell>
+              <TableCell sx={{ fontWeight: 600 }}>User</TableCell>
+              <TableCell align="right" sx={{ fontWeight: 600 }}>Social Score</TableCell>
+              <TableCell align="right" sx={{ fontWeight: 600 }}>Videos Scored</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {sortedStandings.map((standing, index) => {
+                      const socialScore = standing.averageScore || standing.totalScore;
+              return (
+                <TableRow 
+                  key={standing.id || `${standing.submitterUsername}-${index}`}
+                  sx={{ 
+                    '&:nth-of-type(odd)': { backgroundColor: 'action.hover' },
+                    '&:hover': { backgroundColor: 'action.selected' }
+                  }}
+                >
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {standing.rank || index + 1}
+                      {index === 0 && (
+                        <TrophyIcon sx={{ fontSize: 18, color: 'gold' }} />
+                      )}
+                      {index === 1 && (
+                        <TrophyIcon sx={{ fontSize: 18, color: 'silver' }} />
+                      )}
+                      {index === 2 && (
+                        <TrophyIcon sx={{ fontSize: 18, color: '#CD7F32' }} />
+                      )}
+                    </Box>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {standing.submitterUsername || 'Anonymous'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Chip 
+                      label={socialScore ? Number(socialScore).toFixed(5) : '—'}
+                      size="small"
+                      color={index < 3 ? 'primary' : 'default'}
+                      sx={{ fontWeight: 600, minWidth: 70 }}
+                    />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="body2">
+                      {standing.judgeCount || 0}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </Paper>
   );
 };
@@ -285,10 +432,88 @@ const QueuePage = () => {
     removeVideoFromQueue,
     playNext,
     skipCurrent,
-    markAsPlayed,
+    settings,
+    cupStandings,
+    cupVideoSummaries,
+    scoresByItem,
+    refreshCupStandings,
+    votingState,
+    startVotingSession,
   } = useSocket();
 
-  const handlePlayVideo = (video) => {
+  const [activeCupId, setActiveCupId] = useState(null);
+  const [cupInfo, setCupInfo] = useState(null);
+  const [controlError, setControlError] = useState(null);
+
+  // Get active cup from settings or queue items
+  useEffect(() => {
+    if (settings?.activeCupId) {
+      setActiveCupId(settings.activeCupId);
+    } else if (queue.length > 0) {
+      const cupId = queue.find(item => item.cupId)?.cupId;
+      if (cupId) {
+        setActiveCupId(cupId);
+      }
+    }
+  }, [settings, queue]);
+
+  // Fetch cup info when activeCupId changes
+  useEffect(() => {
+    if (!activeCupId) {
+      setCupInfo(null);
+      return;
+    }
+
+    const fetchCupInfo = async () => {
+      try {
+        // Try to refresh standings to get cup info
+        refreshCupStandings(activeCupId);
+        
+        // Also fetch cup details
+        const channelId = settings?.channelId || window.location.pathname.split('/')[2];
+        if (channelId) {
+          const response = await fetch(`/api/channels/${channelId}/cups/${activeCupId}`, {
+            credentials: 'include'
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setCupInfo(data.cup || data);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch cup info:', error);
+      }
+    };
+
+    fetchCupInfo();
+  }, [activeCupId, settings, refreshCupStandings]);
+
+  const currentStandings = useMemo(() => {
+    return activeCupId ? cupStandings[activeCupId] : null;
+  }, [activeCupId, cupStandings]);
+
+  const topEightVideos = useMemo(() => {
+    return queue.filter(video => video.status === 'TOP_EIGHT');
+  }, [queue]);
+
+  const otherQueueVideos = useMemo(() => {
+    return queue.filter(video => video.status !== 'TOP_EIGHT' && video.id !== currentlyPlaying?.id);
+  }, [queue, currentlyPlaying]);
+
+  const currentCupId = useMemo(
+    () => currentlyPlaying?.cupId || activeCupId || null,
+    [currentlyPlaying?.cupId, activeCupId]
+  );
+  const votingActive = useMemo(
+    () => Boolean(votingState && votingState.stage && votingState.stage !== 'cancelled'),
+    [votingState]
+  );
+  const voteDisabled = !currentlyPlaying || !currentCupId || votingActive;
+  const skipDisabled = !currentlyPlaying;
+  const nextDisabled = queue.length === 0;
+
+  const handlePlayVideo = () => {
+    setControlError(null);
     playNext();
   };
 
@@ -297,11 +522,32 @@ const QueuePage = () => {
   };
 
   const handleSkip = () => {
+    setControlError(null);
     skipCurrent();
   };
 
-  const handleMarkPlayed = (videoId) => {
-    markAsPlayed(videoId);
+  const handleVote = async () => {
+    if (!currentlyPlaying || !currentCupId) {
+      setControlError('Assign this video to a cup before starting voting.');
+      return;
+    }
+
+    if (votingActive) {
+      return;
+    }
+
+    try {
+      setControlError(null);
+      await startVotingSession(currentlyPlaying.id, currentCupId);
+    } catch (error) {
+      console.error('Failed to start voting:', error);
+      setControlError(error.message || 'Failed to start voting');
+    }
+  };
+
+  const handlePlayNext = () => {
+    setControlError(null);
+    playNext();
   };
 
   if (!connected) {
@@ -323,6 +569,35 @@ const QueuePage = () => {
         Video Queue
       </Typography>
 
+      {/* Cup Info Banner */}
+      {cupInfo && (
+        <Alert 
+          severity="info" 
+          icon={<TrophyIcon />}
+          sx={{ mb: 3 }}
+        >
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            {cupInfo.title || 'Active Cup'}
+          </Typography>
+          {cupInfo.theme && (
+            <Typography variant="body2" color="text.secondary">
+              Theme: {cupInfo.theme}
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary">
+            Status: {cupInfo.status || 'LIVE'}
+          </Typography>
+        </Alert>
+      )}
+
+      {/* Cup Standings - Show user rankings based on social scores */}
+      {currentStandings && currentStandings.length > 0 && (
+        <CupStandings 
+          standings={currentStandings} 
+          cupTitle={cupInfo?.title}
+        />
+      )}
+
       {/* Queue Status */}
       <Alert 
         severity={queueEnabled ? 'success' : 'info'} 
@@ -330,7 +605,7 @@ const QueuePage = () => {
       >
         Queue is currently {queueEnabled ? 'OPEN' : 'CLOSED'}. 
         {queueEnabled 
-          ? ' Viewers can submit videos through Twitch chat.' 
+          ? ' Viewers can submit videos through Twitch chat throughout the night.' 
           : ' Video submissions are disabled.'
         }
       </Alert>
@@ -339,15 +614,60 @@ const QueuePage = () => {
       <CurrentlyPlaying
         video={currentlyPlaying}
         onSkip={handleSkip}
-        onMarkPlayed={handleMarkPlayed}
+        onVote={handleVote}
+        onNext={handlePlayNext}
+        skipDisabled={skipDisabled}
+        voteDisabled={voteDisabled}
+        nextDisabled={nextDisabled}
+        errorMessage={controlError}
       />
 
-      {/* Queue List */}
-      <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
-        Up Next ({queue.length})
-      </Typography>
+      {/* Top 8 Section */}
+      {topEightVideos.length > 0 && (
+        <>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+            <StarIcon sx={{ fontSize: 28, color: 'warning.main' }} />
+            <Typography variant="h5" sx={{ fontWeight: 600 }}>
+              Top 8 - Up Next
+            </Typography>
+          </Box>
+          <Grid container spacing={3} sx={{ mb: 4 }}>
+            {topEightVideos.map((video) => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={video.id}>
+                <VideoCard
+                  video={video}
+                  onPlay={handlePlayVideo}
+                  onRemove={handleRemoveVideo}
+                  isTopEight={true}
+                />
+              </Grid>
+            ))}
+          </Grid>
+        </>
+      )}
 
-      {queue.length === 0 ? (
+      {/* Rest of Queue */}
+      {otherQueueVideos.length > 0 && (
+        <>
+          <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
+            Queue ({otherQueueVideos.length})
+          </Typography>
+          <Grid container spacing={3}>
+            {otherQueueVideos.map((video) => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={video.id}>
+                <VideoCard
+                  video={video}
+                  onPlay={handlePlayVideo}
+                  onRemove={handleRemoveVideo}
+                  isTopEight={false}
+                />
+              </Grid>
+            ))}
+          </Grid>
+        </>
+      )}
+
+      {queue.length === 0 && (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="h6" color="text.secondary" gutterBottom>
             No videos in queue
@@ -356,18 +676,6 @@ const QueuePage = () => {
             Videos submitted through Twitch chat will appear here.
           </Typography>
         </Paper>
-      ) : (
-        <Grid container spacing={3}>
-          {queue.map((video, index) => (
-            <Grid item xs={12} sm={6} md={4} lg={3} key={video.id}>
-              <VideoCard
-                video={video}
-                onPlay={handlePlayVideo}
-                onRemove={handleRemoveVideo}
-              />
-            </Grid>
-          ))}
-        </Grid>
       )}
     </Box>
   );

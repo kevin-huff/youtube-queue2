@@ -32,7 +32,8 @@ function socketHandler(io, channelManager) {
           socket.emit('queue:initial_state', {
             queue,
             enabled,
-            currentlyPlaying: queueService.currentlyPlaying
+            currentlyPlaying: queueService.currentlyPlaying,
+            votingState: queueService.getVotingState()
           });
 
           logger.debug(`Sent initial queue state for channel ${channelId} to ${socket.id}`);
@@ -42,8 +43,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('queue:remove', async (data = {}) => {
+      socket.on('queue:remove', async (data) => {
         try {
+          data = data || {};
           const { itemId, removedBy = 'admin' } = data;
           if (!itemId) {
             socket.emit('error', { message: 'Item ID is required' });
@@ -56,8 +58,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('queue:reorder', async (data = {}) => {
+      socket.on('queue:reorder', async (data) => {
         try {
+          data = data || {};
           const { newOrder } = data;
           if (!Array.isArray(newOrder)) {
             socket.emit('error', { message: 'New order must be an array' });
@@ -70,17 +73,32 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('queue:play_next', async () => {
+      socket.on('queue:play_next', async (data) => {
         try {
-          await queueService.playNext();
+          data = data || {};
+          const advancedBy = typeof data.advancedBy === 'string' && data.advancedBy.trim().length
+            ? data.advancedBy.trim()
+            : (socket.request?.user?.username || 'producer');
+
+          const requestedStatus = typeof data.finalizeStatus === 'string' && data.finalizeStatus.trim().length
+            ? data.finalizeStatus.trim().toUpperCase()
+            : 'PLAYED';
+          const finalizeStatus = ['PLAYED', 'SKIPPED'].includes(requestedStatus) ? requestedStatus : 'PLAYED';
+
+          await queueService.playNext({
+            finalizeCurrent: true,
+            finalizeStatus,
+            initiatedBy: advancedBy
+          });
         } catch (error) {
           logger.error('Error playing next video:', error);
           socket.emit('error', { message: error.message });
         }
       });
 
-      socket.on('queue:skip', async (data = {}) => {
+      socket.on('queue:skip', async (data) => {
         try {
+          data = data || {};
           const { skippedBy = 'admin' } = data;
           await queueService.skipCurrent(skippedBy);
         } catch (error) {
@@ -89,8 +107,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('queue:mark_played', async (data = {}) => {
+      socket.on('queue:mark_played', async (data) => {
         try {
+          data = data || {};
           const { itemId } = data;
           if (!itemId) {
             socket.emit('error', { message: 'Item ID is required' });
@@ -103,8 +122,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('queue:clear', async (data = {}) => {
+      socket.on('queue:clear', async (data) => {
         try {
+          data = data || {};
           const { clearedBy = 'admin' } = data;
           await queueService.clearQueue(clearedBy);
         } catch (error) {
@@ -113,8 +133,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('settings:update', async (data = {}) => {
+      socket.on('settings:update', async (data) => {
         try {
+          data = data || {};
           const { key, value } = data;
           if (!key || value === undefined) {
             socket.emit('error', { message: 'Key and value are required' });
@@ -127,8 +148,9 @@ function socketHandler(io, channelManager) {
         }
       });
 
-      socket.on('volume:change', async (data = {}) => {
+      socket.on('volume:change', async (data) => {
         try {
+          data = data || {};
           const { volume } = data;
           if (typeof volume !== 'number' || volume < 0 || volume > 100) {
             socket.emit('error', { message: 'Volume must be between 0 and 100' });
@@ -157,6 +179,59 @@ function socketHandler(io, channelManager) {
           logger.error('Error disabling queue:', error);
           socket.emit('error', { message: error.message });
         }
+      });
+
+      socket.on('player:play', (data) => {
+        data = data || {};
+        logger.info(`player:play via socket ${socket.id} for channel ${channelId} (time=${data.time ?? 'n/a'})`);
+        // Update player state
+        if (!namespace._playerState) {
+          namespace._playerState = {};
+        }
+        namespace._playerState.playing = true;
+        if (typeof data.time === 'number') {
+          namespace._playerState.time = data.time;
+        }
+        namespace._playerState.lastUpdate = Date.now();
+        
+        namespace.emit('player:play', data);
+      });
+
+      socket.on('player:pause', (data) => {
+        data = data || {};
+        logger.info(`player:pause via socket ${socket.id} for channel ${channelId} (time=${data.time ?? 'n/a'})`);
+        // Update player state
+        if (!namespace._playerState) {
+          namespace._playerState = {};
+        }
+        namespace._playerState.playing = false;
+        if (typeof data.time === 'number') {
+          namespace._playerState.time = data.time;
+        }
+        namespace._playerState.lastUpdate = Date.now();
+        
+        namespace.emit('player:pause', data);
+      });
+
+      socket.on('player:seek', (data) => {
+        data = data || {};
+        logger.info(`player:seek via socket ${socket.id} for channel ${channelId} (time=${data.time ?? 'n/a'})`);
+        // Update player state
+        if (!namespace._playerState) {
+          namespace._playerState = {};
+        }
+        if (typeof data.time === 'number') {
+          namespace._playerState.time = data.time;
+        }
+        namespace._playerState.lastUpdate = Date.now();
+        
+        namespace.emit('player:seek', data);
+      });
+
+      socket.on('player:state_request', () => {
+        logger.info(`player:state_request from socket ${socket.id} for channel ${channelId}`);
+        const state = namespace._playerState || { playing: false, time: 0 };
+        socket.emit('player:state_response', state);
       });
 
       socket.on('status:request', async () => {
@@ -216,8 +291,10 @@ function socketHandler(io, channelManager) {
       }
     });
 
-    socket.on('channel:join', async ({ channelId } = {}) => {
+    socket.on('channel:join', async (data) => {
       try {
+        data = data || {};
+        const { channelId } = data;
         if (!channelId) {
           socket.emit('error', { message: 'Channel ID is required' });
           return;

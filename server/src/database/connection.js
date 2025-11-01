@@ -15,39 +15,12 @@ const initializeDatabase = async () => {
       await prisma.$connect();
       logger.info('Database connected successfully');
 
-      // Initialize default settings if they don't exist
-      await initializeDefaultSettings();
+      // Default per-channel settings are handled during channel creation
     }
 
     return prisma;
   } catch (error) {
     logger.error('Database connection failed:', error);
-    throw error;
-  }
-};
-
-const initializeDefaultSettings = async () => {
-  try {
-    const defaultSettings = [
-      { key: 'queue_enabled', value: 'false' },
-      { key: 'max_queue_size', value: process.env.MAX_QUEUE_SIZE || '50' },
-      { key: 'submission_cooldown', value: process.env.SUBMISSION_COOLDOWN || '30' },
-      { key: 'max_video_duration', value: process.env.MAX_VIDEO_DURATION || '600' },
-      { key: 'auto_play_next', value: process.env.AUTO_PLAY_NEXT || 'true' },
-      { key: 'current_volume', value: '75' }
-    ];
-
-    for (const setting of defaultSettings) {
-      await prisma.botSetting.upsert({
-        where: { key: setting.key },
-        update: {},
-        create: setting
-      });
-    }
-
-    logger.info('Default bot settings initialized');
-  } catch (error) {
-    logger.error('Failed to initialize default settings:', error);
     throw error;
   }
 };

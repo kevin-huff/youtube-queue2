@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Avatar,
+  Alert,
   Box,
+  Button,
   Card,
   CardContent,
   CardMedia,
@@ -11,27 +12,53 @@ import {
   Divider,
   Grid,
   LinearProgress,
+  CircularProgress,
+  Stack,
+  TextField,
+  MenuItem,
+  IconButton,
+  Tooltip,
   List,
   ListItem,
   ListItemAvatar,
   ListItemText,
   Paper,
   Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Typography,
   alpha,
   useTheme
 } from '@mui/material';
 import {
   AccessTime,
+  EmojiEvents,
   LiveTv,
   Person,
   QueueMusic,
   Refresh,
-  SkipNext
+  Shuffle,
+  SkipNext,
+  PlayArrow,
+  Visibility,
+  Equalizer,
+  CheckCircle,
+  Cancel,
+  Lock as LockIcon,
+  Timeline as TimelineIcon,
+  Delete as DeleteIcon,
+  WarningAmber
 } from '@mui/icons-material';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { useSocket } from '../contexts/SocketContext';
+import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
+import PlayerControlPanel from '../components/PlayerControlPanel';
+import { useAuth } from '../contexts/AuthContext';
 
 const formatDuration = (seconds) => {
   if (!seconds && seconds !== 0) {
@@ -42,65 +69,67 @@ const formatDuration = (seconds) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
-const VideoPlayer = ({ video, queueEnabled }) => {
-  const theme = useTheme();
-
-  if (!video) {
-    return (
-      <Paper
-        sx={{
-          p: 6,
-          textAlign: 'center',
-          background: alpha(theme.palette.background.paper, 0.5),
-          border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}`
-        }}
-      >
-        <QueueMusic sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-        <Typography variant="h6" color="text.secondary">
-          No video currently playing
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Queue is {queueEnabled ? 'enabled' : 'disabled'}
-        </Typography>
-      </Paper>
-    );
+const formatTimestamp = (seconds) => {
+  if (typeof seconds !== 'number' || Number.isNaN(seconds) || seconds < 0) {
+    return '0:00';
   }
 
-  return (
-    <Card sx={{ position: 'relative', paddingTop: '56.25%' }}>
-      <Box
-        sx={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%'
-        }}
-      >
-        <iframe
-          width="100%"
-          height="100%"
-          src={`https://www.youtube.com/embed/${video.videoId}?autoplay=1`}
-          title={video.title}
-          frameBorder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        />
-      </Box>
-    </Card>
-  );
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 };
 
-const QueueItem = ({ video, index }) => {
+const formatModerationTimestamp = (value) => {
+  if (!value) {
+    return 'Just now';
+  }
+
+  try {
+    const date = new Date(value);
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (error) {
+    return value;
+  }
+};
+
+const getQueueAlias = (item) =>
+  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
+
+const QueueItem = ({ video, index, isPlaying = false, isTopEight = false }) => {
   const theme = useTheme();
+  const showWarning = video.moderationStatus === 'WARNING';
+  const showApproval = video.moderationStatus !== 'WARNING' && Boolean(video.moderatedBy);
+
+  const highlightColor = isPlaying
+    ? theme.palette.primary.main
+    : isTopEight
+      ? theme.palette.secondary.main
+      : showWarning
+        ? theme.palette.warning.main
+        : null;
 
   return (
     <ListItem
       sx={{
-        bgcolor: 'background.paper',
+        bgcolor: highlightColor ? alpha(highlightColor, 0.08) : 'background.paper',
         mb: 1,
         borderRadius: 1,
-        border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
+        border: highlightColor
+          ? `1.5px solid ${alpha(highlightColor, 0.7)}`
+          : `1px solid ${alpha(theme.palette.divider, 0.1)}`,
+        boxShadow: highlightColor ? theme.shadows[4] : 'none',
         transition: 'all 0.3s ease',
         '&:hover': {
           bgcolor: alpha(theme.palette.primary.main, 0.05),
@@ -120,26 +149,95 @@ const QueueItem = ({ video, index }) => {
         </Avatar>
       </ListItemAvatar>
       <ListItemText
+        primaryTypographyProps={{ component: 'div' }}
+        secondaryTypographyProps={{ component: 'div' }}
         primary={
-          <Typography variant="subtitle1" noWrap fontWeight={600}>
+          <Typography variant="subtitle1" component="div" noWrap fontWeight={600}>
             {video.title}
           </Typography>
         }
         secondary={
-          <Box display="flex" alignItems="center" gap={2} mt={0.5}>
-            <Chip
-              size="small"
-              icon={<Person />}
-              label={video.submitter?.twitchUsername || video.submitterUsername || video.requestedBy || 'Anonymous'}
-              variant="outlined"
-            />
-            <Chip
-              size="small"
-              icon={<AccessTime />}
-              label={formatDuration(video.duration)}
-              variant="outlined"
-            />
-          </Box>
+          <Stack component="div" spacing={0.75} mt={0.5}>
+            <Box component="div" display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+              <Chip
+                size="small"
+                icon={<Person />}
+                label={getQueueAlias(video)}
+                variant="outlined"
+              />
+              <Chip
+                size="small"
+                icon={<AccessTime />}
+                label={formatDuration(video.duration)}
+                variant="outlined"
+              />
+              {isTopEight && (
+                <Chip
+                  size="small"
+                  icon={<EmojiEvents sx={{ fontSize: 16 }} />}
+                  label="Top 8"
+                  color="secondary"
+                  variant="outlined"
+                />
+              )}
+              {isPlaying && (
+                <Chip
+                  size="small"
+                  label="Now"
+                  color="primary"
+                />
+              )}
+              {showWarning && (
+                <Chip
+                  size="small"
+                  color="warning"
+                  icon={<WarningAmber sx={{ fontSize: 16 }} />}
+                  label="Warning"
+                />
+              )}
+              {showApproval && (
+                <Chip
+                  size="small"
+                  color="success"
+                  variant="outlined"
+                  icon={<CheckCircle sx={{ fontSize: 16 }} />}
+                  label="Cleared"
+                />
+              )}
+            </Box>
+
+            {showWarning && (
+              <Alert
+                severity="warning"
+                icon={<WarningAmber fontSize="inherit" />}
+                sx={{
+                  mt: 0.25,
+                  py: 0.75,
+                  '& .MuiAlert-message': {
+                    width: '100%'
+                  }
+                }}
+              >
+                <Typography variant="caption" fontWeight={600} display="block">
+                  Flagged by {video.moderatedByDisplayName || video.moderatedBy || 'Moderator'}
+                  {video.moderatedAt ? ` — ${formatModerationTimestamp(video.moderatedAt)}` : ''}
+                </Typography>
+                {video.moderationNote && (
+                  <Typography variant="caption" display="block">
+                    {video.moderationNote}
+                  </Typography>
+                )}
+              </Alert>
+            )}
+
+            {showApproval && (
+              <Typography variant="caption" color="success.main">
+                Approved by {video.moderatedByDisplayName || video.moderatedBy}
+                {video.moderatedAt ? ` — ${formatModerationTimestamp(video.moderatedAt)}` : ''}
+                {video.moderationNote ? ` — ${video.moderationNote}` : ''}
+              </Typography>
+            )}
+          </Stack>
         }
       />
       {video.thumbnailUrl || video.thumbnail ? (
@@ -154,11 +252,90 @@ const QueueItem = ({ video, index }) => {
   );
 };
 
+const formatScoreValue = (value) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '—';
+  }
+  return value.toFixed(5);
+};
+
+const ROLE_LABELS = {
+  PRODUCER: 'Producer',
+  HOST: 'Host',
+  JUDGE: 'Judge',
+  MODERATOR: 'Moderator'
+};
+
+const ROLE_OPTIONS = [
+  { value: 'PRODUCER', label: ROLE_LABELS.PRODUCER },
+  { value: 'HOST', label: ROLE_LABELS.HOST },
+  { value: 'JUDGE', label: ROLE_LABELS.JUDGE },
+  { value: 'MODERATOR', label: ROLE_LABELS.MODERATOR }
+];
+
+const VOTING_STAGE_META = {
+  collecting: {
+    label: 'Collecting Scores',
+    accent: '#5ce1ff'
+  },
+  revealing: {
+    label: 'Judge Reveal',
+    accent: '#ff89df'
+  },
+  average: {
+    label: 'Average Reveal',
+    accent: '#7dffb3'
+  },
+  social: {
+    label: 'Social Score Reveal',
+    accent: '#ffd166'
+  },
+  completed: {
+    label: 'Final Score',
+    accent: '#a890ff'
+  }
+};
+
+const describeJudgeStatus = (judge) => {
+  if (!judge) {
+    return { label: 'Pending', color: 'default' };
+  }
+
+  if (judge.revealStatus === 'revealed') {
+    return { label: 'Revealed', color: 'secondary' };
+  }
+
+  if (judge.revealStatus === 'skipped') {
+    return { label: 'Excluded', color: 'warning' };
+  }
+
+  if (judge.locked) {
+    return { label: 'Locked', color: 'success' };
+  }
+
+  if (typeof judge.score === 'number') {
+    return { label: 'Scored', color: 'info' };
+  }
+
+  if (judge.connected === false) {
+    return { label: 'Offline', color: 'default' };
+  }
+
+  return { label: 'Waiting', color: 'default' };
+};
+
 const ChannelQueue = () => {
   const { channelName } = useParams();
   const [channel, setChannel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [pendingSeek, setPendingSeek] = useState(null);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [shuffleLoading, setShuffleLoading] = useState(false);
+  const [shuffleError, setShuffleError] = useState(null);
+  const [shuffleFeedback, setShuffleFeedback] = useState(null);
+  const theme = useTheme();
+  const { hasChannelRole } = useAuth();
 
   const {
     connectToChannel,
@@ -166,8 +343,282 @@ const ChannelQueue = () => {
     queue,
     currentlyPlaying,
     queueEnabled,
-    channelConnected
+    channelConnected,
+    topEight,
+    lastShuffle,
+    playNext,
+    skipCurrent,
+    playOverlay,
+    pauseOverlay,
+    seekOverlay,
+    addChannelListener,
+    removeChannelListener,
+    triggerShuffle,
+    settings,
+    cupStandings,
+    refreshCupStandings,
+    votingState,
+    startVotingSession,
+    cancelVotingSession,
+    revealNextJudge,
+    revealAverageScore,
+    revealSocialScore,
+    completeVotingSession
   } = useSocket();
+
+  const [activeCupId, setActiveCupId] = useState(null);
+  const [cupInfo, setCupInfo] = useState(null);
+  const [roleAssignments, setRoleAssignments] = useState([]);
+  const [owners, setOwners] = useState([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [rolesError, setRolesError] = useState(null);
+  const [roleSubmitting, setRoleSubmitting] = useState(false);
+  const [newRoleUsername, setNewRoleUsername] = useState('');
+  const [newRoleType, setNewRoleType] = useState('PRODUCER');
+  const [votingError, setVotingError] = useState(null);
+  const [votingAction, setVotingAction] = useState(null);
+  const [finalizeLoading, setFinalizeLoading] = useState(false);
+  const [forceLockLoading, setForceLockLoading] = useState(false);
+
+  const normalizedChannelId = channelName?.toLowerCase();
+
+  const {
+    containerRef,
+    playLocal,
+    pauseLocal,
+    seekLocal,
+    setVolume: setPlayerVolume,
+    toggleMute,
+    currentTime,
+    duration,
+    volume,
+    muted,
+    hasVideo
+  } = useSyncedYouTubePlayer({
+    videoId: currentlyPlaying?.videoId,
+    channelConnected,
+    addChannelListener,
+    removeChannelListener,
+    initialVolume: 0,
+    defaultMuted: true,
+    onLocalPlay: playOverlay,
+    onLocalPause: pauseOverlay,
+    onLocalSeek: seekOverlay
+  });
+
+  const currentCupId = useMemo(() => (
+    currentlyPlaying?.cupId
+    || votingState?.cupId
+    || settings?.activeCupId
+    || activeCupId
+    || null
+  ), [currentlyPlaying?.cupId, votingState?.cupId, settings?.activeCupId, activeCupId]);
+
+  const votingStageMeta = useMemo(() => (
+    VOTING_STAGE_META[votingState?.stage || 'collecting'] || VOTING_STAGE_META.collecting
+  ), [votingState?.stage]);
+
+  const votingJudges = useMemo(() => {
+    if (!votingState || !Array.isArray(votingState.judges)) {
+      return [];
+    }
+    return [...votingState.judges].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }, [votingState]);
+
+  const unrevealedJudges = useMemo(() => (
+    votingJudges.filter((judge) => !['revealed', 'skipped'].includes(judge.revealStatus))
+  ), [votingJudges]);
+
+  const revealReadyJudge = useMemo(() => (
+    unrevealedJudges.find((judge) => judge.locked && typeof judge.score === 'number') || null
+  ), [unrevealedJudges]);
+
+  const allScoredRevealed = useMemo(() => (
+    votingJudges
+      .filter((judge) => typeof judge.score === 'number')
+      .every((judge) => judge.revealStatus === 'revealed')
+  ), [votingJudges]);
+
+  const isVotingActive = Boolean(
+    votingState
+    && votingState.stage !== 'completed'
+    && votingState.stage !== 'cancelled'
+  );
+
+  const isVotingForCurrentItem = Boolean(
+    votingState && currentlyPlaying?.id && votingState.queueItemId === currentlyPlaying.id
+  );
+
+  const canRevealAverage = Boolean(
+    votingState
+    && !votingState.revealedAverage
+    && typeof votingState.computedAverage === 'number'
+    && allScoredRevealed
+    && votingJudges.length > 0
+  );
+
+  const canRevealSocial = Boolean(
+    votingState
+    && votingState.revealedAverage
+    && !votingState.revealedSocial
+  );
+
+  const canFinalizeScore = Boolean(
+    votingState
+    && votingState.revealedAverage
+    && votingState.revealedSocial
+  );
+
+  const canForceLockVotes = Boolean(
+    votingState && votingJudges.some((judge) => !judge.locked && typeof judge.score === 'number')
+  );
+
+  const handleStartVoting = useCallback(async () => {
+    if (!currentlyPlaying?.id) {
+      setVotingError('You need a video playing to start voting.');
+      return;
+    }
+
+    if (!currentCupId) {
+      setVotingError('Assign this video to a cup before starting voting.');
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('start');
+      await startVotingSession(currentlyPlaying.id, currentCupId);
+    } catch (error) {
+      setVotingError(error.message || 'Failed to start voting');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [currentlyPlaying, currentCupId, startVotingSession]);
+
+  const handleCancelVoting = useCallback(async () => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('cancel');
+      await cancelVotingSession(votingState.queueItemId, votingState.cupId, {
+        reason: 'cancelled'
+      });
+    } catch (error) {
+      setVotingError(error.message || 'Failed to cancel voting');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, cancelVotingSession]);
+
+  const handleRevealNext = useCallback(async () => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('reveal-next');
+      await revealNextJudge(votingState.queueItemId, votingState.cupId);
+    } catch (error) {
+      setVotingError(error.message || 'Failed to reveal judge');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, revealNextJudge]);
+
+  const handleRevealAverage = useCallback(async () => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('reveal-average');
+      await revealAverageScore(votingState.queueItemId, votingState.cupId);
+    } catch (error) {
+      setVotingError(error.message || 'Failed to reveal average');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, revealAverageScore]);
+
+  const handleRevealSocial = useCallback(async () => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('reveal-social');
+      await revealSocialScore(votingState.queueItemId, votingState.cupId);
+    } catch (error) {
+      setVotingError(error.message || 'Failed to reveal social score');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, revealSocialScore]);
+
+  const handleForceLock = useCallback(async () => {
+    if (!votingState || !normalizedChannelId) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setForceLockLoading(true);
+      const response = await fetch(
+        `/api/channels/${normalizedChannelId}/cups/${votingState.cupId}/items/${votingState.queueItemId}/force-lock`,
+        {
+          method: 'POST',
+          credentials: 'include'
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to force-lock votes');
+      }
+    } catch (error) {
+      setVotingError(error.message || 'Failed to force-lock votes');
+    } finally {
+      setForceLockLoading(false);
+    }
+  }, [votingState, normalizedChannelId]);
+
+  const handleFinalizeScore = useCallback(async () => {
+    if (!votingState || !normalizedChannelId) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setFinalizeLoading(true);
+      const response = await fetch(
+        `/api/channels/${normalizedChannelId}/cups/${votingState.cupId}/items/${votingState.queueItemId}/finalize`,
+        {
+          method: 'POST',
+          credentials: 'include'
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to finalize score');
+      }
+
+      // Ensure local state reflects completion even before socket echo
+      await completeVotingSession(votingState.queueItemId, votingState.cupId, {
+        reason: 'finalized'
+      }).catch(() => {});
+    } catch (error) {
+      setVotingError(error.message || 'Failed to finalize score');
+    } finally {
+      setFinalizeLoading(false);
+    }
+  }, [votingState, normalizedChannelId, completeVotingSession]);
+
+  const nextJudgeName = revealReadyJudge?.name || null;
 
   useEffect(() => {
     const loadChannel = async () => {
@@ -194,9 +645,350 @@ const ChannelQueue = () => {
     };
   }, [channelName, connectToChannel, disconnectFromChannel]);
 
+  // Get active cup from settings or queue items
+  useEffect(() => {
+    if (settings?.activeCupId) {
+      setActiveCupId(settings.activeCupId);
+    } else if (queue.length > 0) {
+      const cupId = queue.find(item => item.cupId)?.cupId;
+      if (cupId) {
+        setActiveCupId(cupId);
+      }
+    }
+  }, [settings, queue]);
+
+  // Fetch cup info when activeCupId changes
+  useEffect(() => {
+    if (!activeCupId) {
+      setCupInfo(null);
+      return;
+    }
+
+    const fetchCupInfo = async () => {
+      try {
+        // Refresh standings to get cup info (this works via socket)
+        await refreshCupStandings(activeCupId);
+        
+        // Cup title/theme will come from socket events or can be inferred from standings data
+        // No need to make a separate API call that might fail
+      } catch (error) {
+        console.error('Failed to fetch cup standings:', error);
+      }
+    };
+
+    fetchCupInfo();
+  }, [activeCupId, normalizedChannelId, refreshCupStandings]);
+
+  useEffect(() => {
+    setPendingSeek(null);
+    setIsSeeking(false);
+  }, [currentlyPlaying?.id]);
+
+  useEffect(() => {
+    if (!shuffleFeedback) return undefined;
+    const timer = setTimeout(() => setShuffleFeedback(null), 4000);
+    return () => clearTimeout(timer);
+  }, [shuffleFeedback]);
+
   const totalDuration = useMemo(() => {
     return queue.reduce((sum, item) => sum + (item.duration || 0), 0);
   }, [queue]);
+
+  const derivedTopEight = useMemo(() => {
+    if (Array.isArray(topEight) && topEight.length) {
+      return topEight;
+    }
+    return queue
+      .filter((item) => item.status === 'TOP_EIGHT')
+      .sort((a, b) => (a.position || 0) - (b.position || 0))
+      .slice(0, 8);
+  }, [topEight, queue]);
+
+  const lastShuffleDate = useMemo(() => {
+    if (!lastShuffle?.timestamp) {
+      return null;
+    }
+    const parsed = new Date(lastShuffle.timestamp);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [lastShuffle]);
+
+  const currentStandings = useMemo(() => {
+    return activeCupId ? cupStandings[activeCupId] : null;
+  }, [activeCupId, cupStandings]);
+
+  // Channel owners/managers and show producers/hosts can operate playback
+  const canOperatePlayback = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER', 'HOST']);
+  const canManageRoles = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER']);
+
+  const loadRoles = useCallback(async () => {
+    if (!canManageRoles || !normalizedChannelId) {
+      return;
+    }
+
+    try {
+      setRolesLoading(true);
+      setRolesError(null);
+
+      const response = await fetch(`/api/channels/${normalizedChannelId}/roles`, {
+        credentials: 'include'
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to load channel roles');
+      }
+
+      setRoleAssignments(Array.isArray(payload.roles) ? payload.roles : []);
+      setOwners(Array.isArray(payload.owners) ? payload.owners : []);
+    } catch (error) {
+      console.error('Failed to load channel roles:', error);
+      setRolesError(error.message || 'Failed to load channel roles');
+      setRoleAssignments([]);
+      setOwners([]);
+    } finally {
+      setRolesLoading(false);
+    }
+  }, [canManageRoles, normalizedChannelId]);
+
+  useEffect(() => {
+    if (!canManageRoles || !normalizedChannelId) {
+      setRoleAssignments([]);
+      setOwners([]);
+      return;
+    }
+
+    loadRoles();
+  }, [canManageRoles, normalizedChannelId, loadRoles]);
+
+  const handleAddRole = useCallback(async () => {
+    if (!canManageRoles || !normalizedChannelId) {
+      return;
+    }
+
+    const trimmed = newRoleUsername.trim();
+    if (!trimmed) {
+      setRolesError('Enter a username to assign a role');
+      return;
+    }
+
+    try {
+      setRoleSubmitting(true);
+      setRolesError(null);
+
+      const response = await fetch(`/api/channels/${normalizedChannelId}/roles`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: trimmed,
+          role: newRoleType
+        })
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to assign role');
+      }
+
+      setNewRoleUsername('');
+      await loadRoles();
+    } catch (error) {
+      console.error('Failed to assign channel role:', error);
+      setRolesError(error.message || 'Failed to assign role');
+    } finally {
+      setRoleSubmitting(false);
+    }
+  }, [canManageRoles, normalizedChannelId, newRoleUsername, newRoleType, loadRoles]);
+
+  const handleRemoveRole = useCallback(async (assignmentId) => {
+    if (!canManageRoles || !normalizedChannelId || !assignmentId) {
+      return;
+    }
+
+    try {
+      setRoleSubmitting(true);
+      setRolesError(null);
+
+      const response = await fetch(`/api/channels/${normalizedChannelId}/roles/${assignmentId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to remove role');
+      }
+
+      await loadRoles();
+    } catch (error) {
+      console.error('Failed to remove channel role:', error);
+      setRolesError(error.message || 'Failed to remove role');
+    } finally {
+      setRoleSubmitting(false);
+    }
+  }, [canManageRoles, normalizedChannelId, loadRoles]);
+
+  const handleRoleFormSubmit = useCallback((event) => {
+    event.preventDefault();
+    if (!roleSubmitting) {
+      void handleAddRole();
+    }
+  }, [handleAddRole, roleSubmitting]);
+
+  const votingMetrics = votingState?.metrics || {
+    totalJudges: votingJudges.length,
+    submitted: 0,
+    locked: 0
+  };
+
+  const startDisabled = votingAction === 'start'
+    || !canOperatePlayback
+    || !currentlyPlaying?.id
+    || !currentCupId
+    || (isVotingActive && !isVotingForCurrentItem);
+
+  const cancelDisabled = votingAction === 'cancel'
+    || !canOperatePlayback
+    || !isVotingActive;
+
+  const revealNextDisabled = votingAction === 'reveal-next'
+    || !canOperatePlayback
+    || !revealReadyJudge;
+
+  const revealAverageDisabled = votingAction === 'reveal-average'
+    || !canOperatePlayback
+    || !canRevealAverage;
+
+  const revealSocialDisabled = votingAction === 'reveal-social'
+    || !canOperatePlayback
+    || !canRevealSocial;
+
+  const finalizeDisabled = finalizeLoading
+    || !canOperatePlayback
+    || !canFinalizeScore;
+
+  const forceLockDisabled = forceLockLoading
+    || !canOperatePlayback
+    || !canForceLockVotes;
+
+  const showVotingPanel = canOperatePlayback || Boolean(votingState);
+
+  const resolvedDuration = typeof duration === 'number' && duration > 0 ? duration : 0;
+  const sliderDisabled = !channelConnected || !hasVideo || resolvedDuration === 0 || !canOperatePlayback;
+  const displayTime = isSeeking && typeof pendingSeek === 'number'
+    ? pendingSeek
+    : (typeof currentTime === 'number' ? currentTime : 0);
+  const sliderValue = resolvedDuration > 0
+    ? Math.min(Math.max(displayTime, 0), resolvedDuration)
+    : 0;
+
+  const handleSeekChange = (_, value) => {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== 'number' || Number.isNaN(next)) {
+      return;
+    }
+    if (sliderDisabled || !canOperatePlayback) {
+      return;
+    }
+    setIsSeeking(true);
+    setPendingSeek(Math.max(0, next));
+  };
+
+  const handleSeekCommit = (_, value) => {
+    const next = Array.isArray(value) ? value[0] : value;
+    setIsSeeking(false);
+    setPendingSeek(null);
+
+    if (sliderDisabled || !canOperatePlayback || typeof next !== 'number' || Number.isNaN(next)) {
+      return;
+    }
+
+    const targetTime = Math.min(Math.max(next, 0), resolvedDuration);
+    seekLocal(targetTime);
+  };
+
+  const volumeSliderDisabled = !channelConnected || !hasVideo || !canOperatePlayback;
+  const normalizedVolume = typeof volume === 'number' ? volume : 0;
+  const volumeSliderValue = muted ? 0 : normalizedVolume;
+  const volumeLabel = muted ? 'Muted' : `${Math.round(normalizedVolume)}%`;
+  const playDisabled = !canOperatePlayback || !channelConnected || !hasVideo;
+  const pauseDisabled = playDisabled;
+
+  const handleVolumeChange = (_, value) => {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== 'number' || Number.isNaN(next)) {
+      return;
+    }
+    if (!canOperatePlayback) {
+      return;
+    }
+    setPlayerVolume(next);
+  };
+
+  const handleVolumeToggle = () => {
+    if (!canOperatePlayback) {
+      return;
+    }
+    toggleMute();
+  };
+
+  const handlePlay = () => {
+    if (!canOperatePlayback || !hasVideo) {
+      return;
+    }
+    const time = typeof currentTime === 'number' && !Number.isNaN(currentTime) ? currentTime : 0;
+    playLocal(time);
+  };
+
+  const handlePause = () => {
+    if (!canOperatePlayback || !hasVideo) {
+      return;
+    }
+    const time = typeof currentTime === 'number' && !Number.isNaN(currentTime) ? currentTime : 0;
+    pauseLocal(time);
+  };
+
+  const handlePlayNext = () => {
+    if (!canOperatePlayback) {
+      return;
+    }
+    playNext();
+  };
+
+  const handleSkip = () => {
+    if (!canOperatePlayback) {
+      return;
+    }
+    skipCurrent();
+  };
+
+  const handleShuffle = async () => {
+    if (!canOperatePlayback) {
+      return;
+    }
+
+    try {
+      setShuffleLoading(true);
+      setShuffleError(null);
+      setShuffleFeedback(null);
+
+      const shuffleResult = await triggerShuffle();
+      const count = shuffleResult?.count ?? shuffleResult?.finalOrder?.length ?? 0;
+      const lockedCount = count || Math.min(8, queue.length || 8);
+      const initiator = shuffleResult?.initiatedBy || 'host';
+      setShuffleFeedback(`Top ${lockedCount} locked by ${initiator}`);
+    } catch (err) {
+      console.error('Failed to trigger shuffle:', err);
+      setShuffleError(err.message || 'Failed to trigger shuffle');
+    } finally {
+      setShuffleLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -250,7 +1042,94 @@ const ChannelQueue = () => {
 
         <Grid container spacing={4}>
           <Grid item xs={12} md={7}>
-            <VideoPlayer video={currentlyPlaying} queueEnabled={queueEnabled} />
+            {canOperatePlayback && (
+              <Box
+                sx={{
+                  position: 'relative',
+                  paddingTop: '56.25%',
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  background: alpha(theme.palette.background.paper, 0.5),
+                  border: hasVideo ? 'none' : `1px solid ${alpha(theme.palette.primary.main, 0.2)}`
+                }}
+              >
+                <Box
+                  ref={containerRef}
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%'
+                  }}
+                />
+                {!hasVideo && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <QueueMusic sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary">
+                      No video currently playing
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Queue is {queueEnabled ? 'enabled' : 'disabled'}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {canOperatePlayback && (
+              <Box sx={{ mt: 3 }}>
+                <PlayerControlPanel
+                  statusChips={[
+                    {
+                      label: channelConnected ? 'Connected' : 'Connecting…',
+                      color: channelConnected ? 'success' : 'warning'
+                    },
+                    {
+                      label: queueEnabled ? 'Queue Open' : 'Queue Closed',
+                      color: queueEnabled ? 'success' : 'default'
+                    },
+                    {
+                      label: hasVideo ? 'Now Playing' : 'No Video',
+                      color: hasVideo ? 'info' : 'default'
+                    }
+                  ]}
+                  headerLabel="Playback Actions"
+                  currentTimeLabel={formatTimestamp(Math.max(displayTime, 0))}
+                  durationLabel={formatTimestamp(resolvedDuration)}
+                  sliderValue={sliderValue}
+                  sliderMax={resolvedDuration || 1}
+                  onSeekChange={handleSeekChange}
+                  onSeekCommit={handleSeekCommit}
+                  seekDisabled={sliderDisabled}
+                  onPlay={handlePlay}
+                  onPause={handlePause}
+                  onSkip={handleSkip}
+                  onVote={handleStartVoting}
+                  onPlayNext={handlePlayNext}
+                  playDisabled={playDisabled}
+                  pauseDisabled={pauseDisabled}
+                  skipDisabled={!canOperatePlayback || !currentlyPlaying}
+                  voteDisabled={startDisabled}
+                  playNextDisabled={!canOperatePlayback || !queue.length}
+                  volumeValue={volumeSliderValue}
+                  volumeLabel={volumeLabel}
+                  muted={muted}
+                  onVolumeChange={handleVolumeChange}
+                  onVolumeToggle={handleVolumeToggle}
+                  volumeDisabled={volumeSliderDisabled}
+                />
+              </Box>
+            )}
 
             <Paper sx={{ mt: 3, p: 3 }}>
               <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
@@ -284,7 +1163,13 @@ const ChannelQueue = () => {
               ) : (
                 <List>
                   {queue.map((video, index) => (
-                    <QueueItem key={video.id || index} video={video} index={index} />
+                    <QueueItem
+                      key={video.id || index}
+                      video={video}
+                      index={index}
+                      isPlaying={currentlyPlaying?.id === video.id}
+                      isTopEight={video.status === 'TOP_EIGHT'}
+                    />
                   ))}
                 </List>
               )}
@@ -292,67 +1177,677 @@ const ChannelQueue = () => {
           </Grid>
 
           <Grid item xs={12} md={5}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" gap={2} mb={2}>
-                  <LiveTv color="primary" />
-                  <Typography variant="h6" fontWeight={600}>
-                    Channel Status
-                  </Typography>
-                  <Chip
-                    label={queueEnabled ? 'Queue Open' : 'Queue Closed'}
-                    color={queueEnabled ? 'success' : 'default'}
-                    size="small"
-                    sx={{ ml: 'auto' }}
-                  />
-                </Box>
+            <Box display="flex" flexDirection="column" gap={3}>
+              {showVotingPanel && (
+                <Card>
+                  <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'row' },
+                        justifyContent: 'space-between',
+                        alignItems: { xs: 'flex-start', sm: 'center' },
+                        gap: 1.5
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="h6" fontWeight={600}>
+                          Voting Control
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Manage judge lock-ins and reveal the scores when you&apos;re ready.
+                        </Typography>
+                      </Box>
+                      <Chip
+                        label={votingState ? votingStageMeta.label : 'Idle'}
+                        size="small"
+                        sx={{
+                          bgcolor: votingState
+                            ? alpha(votingStageMeta.accent, 0.15)
+                            : alpha('#9ea7b8', 0.2),
+                          color: votingState ? votingStageMeta.accent : 'text.secondary',
+                          fontWeight: 600,
+                          letterSpacing: 0.6
+                        }}
+                      />
+                    </Box>
 
-                <Alert severity={queueEnabled ? 'success' : 'warning'} sx={{ mb: 2 }}>
-                  Queue is {queueEnabled ? 'OPEN' : 'CLOSED'}
-                </Alert>
+                    {votingError && (
+                      <Alert
+                        severity="error"
+                        onClose={() => setVotingError(null)}
+                        sx={{ pointerEvents: 'auto' }}
+                      >
+                        {votingError}
+                      </Alert>
+                    )}
 
-                <Divider sx={{ my: 2 }} />
+                    <Stack spacing={1.5}>
+                      <Typography variant="subtitle2" color="text.secondary">
+                        Scoring Flow
+                      </Typography>
+                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap">
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="small"
+                          startIcon={
+                            votingAction === 'start'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <PlayArrow fontSize="small" />
+                          }
+                          disabled={startDisabled}
+                          onClick={handleStartVoting}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Start Voting
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="warning"
+                          size="small"
+                          startIcon={
+                            votingAction === 'cancel'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <Cancel fontSize="small" />
+                          }
+                          disabled={cancelDisabled}
+                          onClick={handleCancelVoting}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="secondary"
+                          size="small"
+                          startIcon={
+                            forceLockLoading
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <LockIcon fontSize="small" />
+                          }
+                          disabled={forceLockDisabled}
+                          onClick={handleForceLock}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Force Lock All
+                        </Button>
+                      </Stack>
+                    </Stack>
 
-                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Live Metrics
-                </Typography>
-                <List dense>
-                  <ListItem>
-                    <ListItemText
-                      primary="Socket Connection"
-                      secondary={channelConnected ? 'Connected' : 'Connecting...'}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText
-                      primary="Videos in Queue"
-                      secondary={queue.length}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText
-                      primary="Total Duration"
-                      secondary={formatDuration(totalDuration)}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText
-                      primary="Now Playing"
-                      secondary={currentlyPlaying?.title || 'Nothing playing'}
-                    />
-                  </ListItem>
-                </List>
+                    <Stack spacing={1.5}>
+                      <Typography variant="subtitle2" color="text.secondary">
+                        Reveal Sequence
+                      </Typography>
+                      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} flexWrap="wrap">
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          size="small"
+                          startIcon={
+                            votingAction === 'reveal-next'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <Visibility fontSize="small" />
+                          }
+                          disabled={revealNextDisabled}
+                          onClick={handleRevealNext}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Reveal Next{nextJudgeName ? ` (${nextJudgeName})` : ''}
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="success"
+                          size="small"
+                          startIcon={
+                            votingAction === 'reveal-average'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <TimelineIcon fontSize="small" />
+                          }
+                          disabled={revealAverageDisabled}
+                          onClick={handleRevealAverage}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Reveal Average
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="warning"
+                          size="small"
+                          startIcon={
+                            votingAction === 'reveal-social'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <Equalizer fontSize="small" />
+                          }
+                          disabled={revealSocialDisabled}
+                          onClick={handleRevealSocial}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Reveal Social
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="small"
+                          startIcon={
+                            finalizeLoading
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <CheckCircle fontSize="small" />
+                          }
+                          disabled={finalizeDisabled}
+                          onClick={handleFinalizeScore}
+                          sx={{ pointerEvents: 'auto' }}
+                        >
+                          Submit Final Score
+                        </Button>
+                      </Stack>
+                    </Stack>
 
-                <Divider sx={{ my: 2 }} />
+                    {votingState ? (
+                      <Stack spacing={1.5} mt={1}>
+                        <Divider sx={{ my: 1 }} />
+                        <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center">
+                          <Chip
+                            size="small"
+                            label={`Submitted: ${votingMetrics.submitted}/${votingMetrics.totalJudges}`}
+                            sx={{ bgcolor: alpha(votingStageMeta.accent, 0.12), color: votingStageMeta.accent }}
+                          />
+                          <Chip
+                            size="small"
+                            label={`Locked: ${votingMetrics.locked}/${votingMetrics.totalJudges}`}
+                            sx={{ bgcolor: alpha('#7dffb3', 0.12), color: '#3ddf94' }}
+                          />
+                          {typeof votingState.revealedAverage === 'number' && (
+                            <Chip
+                              size="small"
+                              icon={<EmojiEvents fontSize="small" />}
+                              label={`Average ${formatScoreValue(votingState.revealedAverage)}`}
+                              color="success"
+                            />
+                          )}
+                          {typeof votingState.revealedSocial === 'number' && (
+                            <Chip
+                              size="small"
+                              icon={<Equalizer fontSize="small" />}
+                              label={`Social ${formatScoreValue(votingState.revealedSocial)}`}
+                              color="warning"
+                            />
+                          )}
+                        </Stack>
 
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Refresh fontSize="small" />
-                  <Typography variant="caption" color="text.secondary">
-                    Data updates automatically in real time.
-                  </Typography>
-                </Box>
+                        <Stack spacing={1.2}>
+                          {votingJudges.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary">
+                              Judges will appear here as they connect to the control panel.
+                            </Typography>
+                          ) : (
+                            votingJudges.map((judge) => {
+                              const status = describeJudgeStatus(judge);
+                              const detail = (() => {
+                                if (judge.revealStatus === 'skipped') {
+                                  if (judge.skippedReason === 'not_locked') {
+                                    return 'Excluded (vote not locked)';
+                                  }
+                                  if (judge.skippedReason === 'no_score') {
+                                    return 'Excluded (no score submitted)';
+                                  }
+                                  return 'Excluded from round';
+                                }
+                                if (judge.connected === false) {
+                                  return 'Disconnected';
+                                }
+                                if (judge.locked) {
+                                  return 'Vote locked';
+                                }
+                                if (typeof judge.score === 'number') {
+                                  return 'Score submitted';
+                                }
+                                return 'Awaiting score';
+                              })();
+                              return (
+                                <Box
+                                  key={judge.id || judge.name}
+                                  sx={{
+                                    borderRadius: 2,
+                                    border: `1px solid ${alpha('#ffffff', 0.08)}`,
+                                    px: 1.5,
+                                    py: 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 1.5
+                                  }}
+                                >
+                                  <Box>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                                      {judge.name || 'Judge'}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {detail}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={1} alignItems="center">
+                                    <Chip
+                                      size="small"
+                                      label={formatScoreValue(judge.score)}
+                                      color={judge.revealStatus === 'revealed' ? 'primary' : 'default'}
+                                      variant={judge.revealStatus === 'revealed' ? 'filled' : 'outlined'}
+                                    />
+                                    <Chip size="small" label={status.label} color={status.color} variant={status.color === 'default' ? 'outlined' : 'filled'} />
+                                  </Stack>
+                                </Box>
+                              );
+                            })
+                          )}
+                        </Stack>
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        When you start voting, judges will appear here so you can monitor their lock-ins and reveals.
+                      </Typography>
+                    )}
               </CardContent>
             </Card>
+          )}
+
+          {canManageRoles && (
+            <Card>
+              <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: { xs: 'column', sm: 'row' },
+                    justifyContent: 'space-between',
+                    alignItems: { xs: 'flex-start', sm: 'center' },
+                    gap: 1.5
+                  }}
+                >
+                  <Box>
+                    <Typography variant="h6" fontWeight={600}>
+                      Access &amp; Roles
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Grant producers or hosts the ability to control the show. Owners and managers can edit this list.
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {owners.length > 0 && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Channel owners &amp; managers
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                      {owners.map((owner) => {
+                        const name = owner.account?.displayName || owner.account?.username || owner.accountId;
+                        return (
+                          <Chip
+                            key={owner.id}
+                            label={`${name} • ${owner.role}`}
+                            size="small"
+                            color="default"
+                            variant="outlined"
+                          />
+                        );
+                      })}
+                    </Stack>
+                  </Box>
+                )}
+
+                {rolesError && (
+                  <Alert severity="error" onClose={() => setRolesError(null)} sx={{ pointerEvents: 'auto' }}>
+                    {rolesError}
+                  </Alert>
+                )}
+
+                <Box
+                  component="form"
+                  onSubmit={handleRoleFormSubmit}
+                  sx={{ pointerEvents: 'auto' }}
+                >
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                    <TextField
+                      label="Twitch username"
+                      value={newRoleUsername}
+                      onChange={(event) => setNewRoleUsername(event.target.value)}
+                      size="small"
+                      fullWidth
+                      disabled={roleSubmitting}
+                      autoComplete="off"
+                    />
+                    <TextField
+                      select
+                      label="Role"
+                      size="small"
+                      value={newRoleType}
+                      onChange={(event) => setNewRoleType(event.target.value)}
+                      sx={{ minWidth: { xs: '100%', sm: 160 } }}
+                      disabled={roleSubmitting}
+                    >
+                      {ROLE_OPTIONS.map((option) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      disabled={roleSubmitting || !newRoleUsername.trim()}
+                    >
+                      Assign
+                    </Button>
+                  </Stack>
+                </Box>
+
+                {rolesLoading ? (
+                  <LinearProgress />
+                ) : (
+                  <Stack spacing={1.2}>
+                    {roleAssignments.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">
+                        No additional show roles yet. Add a username to grant producer or host controls.
+                      </Typography>
+                    ) : (
+                      roleAssignments.map((assignment) => {
+                        const name = assignment.account?.displayName || assignment.account?.username || assignment.accountId;
+                        const roleLabel = ROLE_LABELS[assignment.role] || assignment.role;
+                        return (
+                          <Paper
+                            key={assignment.id}
+                            variant="outlined"
+                            sx={{
+                              p: 1.5,
+                              borderRadius: 2,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 1.5
+                            }}
+                          >
+                            <Box>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                                {name}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {roleLabel}{assignment.cup ? ` • ${assignment.cup.title}` : ''}
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={1} alignItems="center" sx={{ pointerEvents: 'auto' }}>
+                              {assignment.cup && (
+                                <Chip
+                                  size="small"
+                                  label={assignment.cup.title}
+                                  variant="outlined"
+                                  color="default"
+                                />
+                              )}
+                              <Tooltip title="Remove role">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    disabled={roleSubmitting}
+                                    onClick={() => handleRemoveRole(assignment.id)}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Stack>
+                          </Paper>
+                        );
+                      })
+                    )}
+                  </Stack>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Cup Standings */}
+          {currentStandings && currentStandings.length > 0 && (
+            <Card>
+              <CardContent>
+                <Box display="flex" alignItems="center" gap={1.5} mb={2}>
+                      <EmojiEvents color="warning" />
+                      <Typography variant="h6" fontWeight={600}>
+                        {cupInfo?.title || 'Cup'} Standings
+                      </Typography>
+                    </Box>
+                    
+                    {cupInfo && (
+                      <Box mb={2}>
+                        {cupInfo.theme && (
+                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Theme: {cupInfo.theme}
+                          </Typography>
+                        )}
+                        <Typography variant="body2" color="text.secondary">
+                          Rankings by social score (aggregate performance)
+                        </Typography>
+                      </Box>
+                    )}
+                    
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 600, p: 1 }}>Rank</TableCell>
+                            <TableCell sx={{ fontWeight: 600, p: 1 }}>User</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 600, p: 1 }}>Score</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 600, p: 1 }}>Videos</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {currentStandings
+                            .sort((a, b) => {
+                              if (a.rank && b.rank) return a.rank - b.rank;
+                              const scoreA = a.averageScore || a.totalScore || 0;
+                              const scoreB = b.averageScore || b.totalScore || 0;
+                              return scoreB - scoreA;
+                            })
+                            .map((standing, index) => {
+                              const socialScore = standing.averageScore || standing.totalScore;
+                              return (
+                                <TableRow key={standing.id || `${standing.submitterUsername}-${index}`}>
+                                  <TableCell sx={{ p: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                      {standing.rank || index + 1}
+                                      {index === 0 && <EmojiEvents sx={{ fontSize: 16, color: 'gold' }} />}
+                                      {index === 1 && <EmojiEvents sx={{ fontSize: 16, color: 'silver' }} />}
+                                      {index === 2 && <EmojiEvents sx={{ fontSize: 16, color: '#CD7F32' }} />}
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell sx={{ p: 1 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                      {standing.submitterUsername || 'Anonymous'}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ p: 1 }}>
+                                    <Chip 
+                                      label={socialScore ? Number(socialScore).toFixed(5) : '—'}
+                                      size="small"
+                                      color={index < 3 ? 'primary' : 'default'}
+                                      sx={{ fontWeight: 600, height: 20, fontSize: '0.75rem' }}
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ p: 1 }}>
+                                    <Typography variant="body2">
+                                      {standing.judgeCount || 0}
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              )}
+
+              <Card>
+                <CardContent>
+                  <Box display="flex" alignItems="center" gap={1.5} mb={2}>
+                    <EmojiEvents color="secondary" />
+                    <Typography variant="h6" fontWeight={600}>
+                      Top Eight
+                    </Typography>
+                    <Chip
+                      label={lastShuffleDate ? `${lastShuffle?.initiatedBy || 'host'} • ${lastShuffleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting shuffle'}
+                      size="small"
+                      color={lastShuffleDate ? 'secondary' : 'default'}
+                      variant={lastShuffleDate ? 'filled' : 'outlined'}
+                      sx={{ ml: 'auto' }}
+                    />
+                  </Box>
+
+                  {canOperatePlayback && (
+                    <Box display="flex" alignItems="center" justifyContent="space-between" gap={2} mb={2}>
+                      <Typography variant="body2" color="text.secondary">
+                        {derivedTopEight.length
+                          ? 'Shuffle again to remix the Top 8 bracket.'
+                          : 'Trigger a shuffle to lock in tonight’s Top 8.'}
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        startIcon={<Shuffle />}
+                        onClick={handleShuffle}
+                        disabled={shuffleLoading || !queue.length}
+                      >
+                        {shuffleLoading ? 'Shuffling…' : 'Shuffle'}
+                      </Button>
+                    </Box>
+                  )}
+
+                  {shuffleError && (
+                    <Alert severity="error" onClose={() => setShuffleError(null)} sx={{ mb: 2 }}>
+                      {shuffleError}
+                    </Alert>
+                  )}
+
+                  {shuffleFeedback && (
+                    <Alert severity="success" onClose={() => setShuffleFeedback(null)} sx={{ mb: 2 }}>
+                      {shuffleFeedback}
+                    </Alert>
+                  )}
+
+                  {derivedTopEight.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      No Top 8 bracket yet. Once a shuffle is triggered the selected entries will appear here.
+                    </Typography>
+                  ) : (
+                    <Grid container spacing={1.5}>
+                      {derivedTopEight.map((item, index) => (
+                        <Grid item xs={12} sm={6} key={item.id || index}>
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              p: 1.5,
+                              borderRadius: 1.5,
+                              borderColor: alpha(theme.palette.secondary.main, 0.5),
+                              bgcolor: alpha(theme.palette.secondary.main, 0.07)
+                            }}
+                          >
+                            <Typography variant="overline" color="secondary" fontWeight={700}>
+                              #{index + 1}
+                            </Typography>
+                            <Typography variant="subtitle2" fontWeight={600} noWrap>
+                              {item.title || 'Untitled Video'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" noWrap>
+                              {getQueueAlias(item)}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent>
+                  <Box display="flex" alignItems="center" gap={2} mb={2}>
+                    <LiveTv color="primary" />
+                    <Typography variant="h6" fontWeight={600}>
+                      Channel Status
+                    </Typography>
+                    <Chip
+                      label={queueEnabled ? 'Queue Open' : 'Queue Closed'}
+                      color={queueEnabled ? 'success' : 'default'}
+                      size="small"
+                      sx={{ ml: 'auto' }}
+                    />
+                  </Box>
+
+                  {canOperatePlayback && (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<LiveTv />}
+                      sx={{ mb: 2 }}
+                      onClick={() => window.open(`/player/${channel.id}`, '_blank', 'noopener,noreferrer')}
+                    >
+                      Open Overlay Player
+                    </Button>
+                  )}
+
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    {canOperatePlayback
+                      ? (channelConnected
+                        ? 'Control palette is live and syncing updates to all connected players.'
+                        : 'Waiting for channel connection to enable live controls.')
+                      : 'You are viewing the live queue in read-only mode. Sign in as a producer or host to control playback.'}
+                  </Typography>
+
+                  <Divider sx={{ my: 2 }} />
+
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Live Metrics
+                  </Typography>
+                  <List dense>
+                    <ListItem>
+                      <ListItemText
+                        primary="Socket Connection"
+                        secondary={channelConnected ? 'Connected' : 'Connecting...'}
+                      />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText
+                        primary="Videos in Queue"
+                        secondary={queue.length}
+                      />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText
+                        primary="Total Duration"
+                        secondary={formatDuration(totalDuration)}
+                      />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText
+                        primary="Now Playing"
+                        secondary={currentlyPlaying?.title || 'Nothing playing'}
+                      />
+                    </ListItem>
+                  </List>
+
+                  <Divider sx={{ my: 2 }} />
+
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Refresh fontSize="small" />
+                    <Typography variant="caption" color="text.secondary">
+                      Data updates automatically in real time.
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
           </Grid>
         </Grid>
       </Container>

@@ -13,7 +13,7 @@ class VideoService {
     // YouTube patterns
     const youtubePatterns = [
       /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/
+      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/(?:watch\?.*v=|live\/|shorts\/)([a-zA-Z0-9_-]{11})/
     ];
 
     // TikTok patterns
@@ -68,7 +68,7 @@ class VideoService {
   }
 
   // Get video metadata based on platform
-  async getVideoMetadata(url) {
+  async getVideoMetadata(url, options = {}) {
     try {
       const videoInfo = this.extractVideoInfo(url);
       
@@ -91,7 +91,7 @@ class VideoService {
       let metadata;
       switch (videoInfo.platform) {
         case 'YOUTUBE':
-          metadata = await this.getYouTubeMetadata(videoInfo.videoId);
+          metadata = await this.getYouTubeMetadata(videoInfo.videoId, options);
           break;
         case 'TIKTOK':
           metadata = await this.getTikTokMetadata(videoInfo.url);
@@ -123,7 +123,7 @@ class VideoService {
   }
 
   // YouTube API integration
-  async getYouTubeMetadata(videoId) {
+  async getYouTubeMetadata(videoId, options = {}) {
     if (!this.youtubeApiKey) {
       throw new Error('YouTube API key not configured');
     }
@@ -150,7 +150,12 @@ class VideoService {
       const duration = this.parseYouTubeDuration(contentDetails.duration);
 
       // Check duration limit
-      const maxDuration = parseInt(process.env.MAX_VIDEO_DURATION || '600');
+      const envMaxDuration = Number.parseInt(process.env.MAX_VIDEO_DURATION || '600', 10);
+      const requestedMaxDuration = options?.maxDuration ?? envMaxDuration;
+      const parsedRequested = Number.parseInt(String(requestedMaxDuration), 10);
+      const maxDuration = Number.isFinite(parsedRequested) && parsedRequested > 0
+        ? parsedRequested
+        : (Number.isFinite(envMaxDuration) && envMaxDuration > 0 ? envMaxDuration : 600);
       if (duration > maxDuration) {
         throw new Error(`Video too long (${Math.floor(duration / 60)}m ${duration % 60}s). Max allowed: ${Math.floor(maxDuration / 60)}m ${maxDuration % 60}s`);
       }

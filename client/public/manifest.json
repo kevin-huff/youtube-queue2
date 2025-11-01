@@ -1,0 +1,15 @@
+{
+  "short_name": "FREE*",
+  "name": "FREE* Mediashare",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#09090B",
+  "background_color": "#09090B"
+}

@@ -1,6 +1,6 @@
-# TwitchQueue - Multi-Channel YouTube Queue Bot
+# FREE* Mediashare – Multi-Channel YouTube Queue Bot
 
-A Twitch bot that manages YouTube video queues for multiple streamers. Each streamer gets their own isolated queue with real-time updates and channel-specific settings.
+Brought to you by KevNetCloud in collaboration with ChatGPT. FREE* Mediashare manages YouTube video queues for multiple streamers—asterisk and all—giving every channel its own isolated queue with real-time updates and channel-specific settings.
 
 ## Features
 

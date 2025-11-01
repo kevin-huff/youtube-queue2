@@ -17,6 +17,7 @@ const socketHandler = require('./socket');
 const TwitchBot = require('./bot/TwitchBot');
 const ChannelManager = require('./services/ChannelManager');
 const VideoService = require('./services/VideoService');
+const RoleService = require('./services/RoleService');
 require('./auth/passport'); // Initialize passport strategies
 
 class Server {
@@ -34,6 +35,7 @@ class Server {
     this.bot = null;
     this.channelManager = null;
     this.videoService = null;
+    this.roleService = null;
   }
 
   async initialize() {
@@ -46,11 +48,13 @@ class Server {
       logger.info('Initializing services...');
       this.videoService = new VideoService();
       this.channelManager = new ChannelManager(this.io);
+      this.roleService = new RoleService();
       await this.channelManager.initialize();
 
       // Register services with Express app for API access
       this.app.set('channelManager', this.channelManager);
       this.app.set('videoService', this.videoService);
+      this.app.set('roleService', this.roleService);
 
       // Setup middleware
       this.setupMiddleware();
@@ -72,6 +76,11 @@ class Server {
   }
 
   setupMiddleware() {
+    // Disable ETag to avoid 304 caching issues on auth endpoints
+    this.app.set('etag', false);
+    // Honor proxy headers (required for rate limiter / deployments behind proxy)
+    this.app.set('trust proxy', process.env.TRUST_PROXY || 1);
+
     // Security middleware
     this.app.use(helmet({
       contentSecurityPolicy: {
@@ -112,6 +121,14 @@ class Server {
     // Body parsing
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+    // Prevent caching for API responses (important for auth state)
+    this.app.use('/api', (req, res, next) => {
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      next();
+    });
 
     // Session configuration
     this.app.use(session({
@@ -200,6 +217,12 @@ class Server {
     this.server.listen(this.port, () => {
       logger.info(`Server running on port ${this.port}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    }).on('error', (err) => {
+      logger.error('Failed to start server:', err);
+      if (err.code === 'EADDRINUSE') {
+        logger.error(`Port ${this.port} is already in use`);
+      }
+      process.exit(1);
     });
 
     // Graceful shutdown
