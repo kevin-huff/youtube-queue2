@@ -521,21 +521,51 @@ const JudgePage = () => {
       )}
 
       {!currentlyPlaying ? (
-        <Card>
-          <CardContent>
-            <Typography variant="h6" align="center" color="text.secondary">
-              Waiting for video...
-            </Typography>
-            <Typography variant="body2" align="center" color="text.secondary" sx={{ mt: 1 }}>
-              The host will start the next video soon.
-            </Typography>
-            {!channelConnected && (
-              <Typography variant="caption" display="block" align="center" color="warning.main" sx={{ mt: 2 }}>
-                Connecting to channel...
+        <Stack spacing={3}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" align="center" color="text.secondary">
+                Waiting for video...
               </Typography>
-            )}
-          </CardContent>
-        </Card>
+              <Typography variant="body2" align="center" color="text.secondary" sx={{ mt: 1 }}>
+                The host will start the next video soon.
+              </Typography>
+              {!channelConnected && (
+                <Typography variant="caption" display="block" align="center" color="warning.main" sx={{ mt: 2 }}>
+                  Connecting to channel...
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Soundboard (Judges can trigger) */}
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                <Typography variant="h6">Soundboard</Typography>
+                <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>Refresh</Button>
+              </Box>
+              {sbError && (
+                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
+                  {sbError}
+                </Alert>
+              )}
+              {sbItems.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
+                </Typography>
+              ) : (
+                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                  {sbItems.map((it) => (
+                    <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
+                      {it.name}
+                    </Button>
+                  ))}
+                </Stack>
+              )}
+            </CardContent>
+          </Card>
+        </Stack>
       ) : (
         <Stack spacing={3}>
           {/* Video Player */}

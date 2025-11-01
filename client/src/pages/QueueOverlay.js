@@ -180,15 +180,13 @@ const QueueOverlay = () => {
     lastShuffle,
     votingState,
     settings,
-    cupStandings,
-    refreshCupStandings,
     addChannelListener,
     removeChannelListener
   } = useSocket();
   const [shuffleVisual, setShuffleVisual] = useState(null);
   const [progress, setProgress] = useState(0);
   const [audioError, setAudioError] = useState(false);
-  const [activeCupId, setActiveCupId] = useState(null);
+  // Removed predicted placement feature; no active cup tracking needed
   const [socialRevealActive, setSocialRevealActive] = useState(false);
   const shuffleSignatureRef = useRef(null);
   const audioRef = useRef(null);
@@ -198,7 +196,7 @@ const QueueOverlay = () => {
   const lockSoundCtxRef = useRef(null);
   const lockedJudgeIdsRef = useRef(new Set());
   const previousVotingItemRef = useRef(null);
-  const requestedCupIdsRef = useRef(new Set());
+  // removed: requestedCupIdsRef (no standings prefetch)
   const socialRevealItemRef = useRef(null);
   const elapsedMs = useMemo(() => (progress / 100) * SHUFFLE_DURATION_MS, [progress]);
   const shuffleStage = useMemo(() => {
@@ -217,48 +215,7 @@ const QueueOverlay = () => {
   const isStarStage = shuffleStage === 'star';
   const isSettleStage = shuffleStage === 'settle';
 
-  const derivedCupId = useMemo(() => {
-    const directCandidates = [
-      votingState?.cupId,
-      currentlyPlaying?.cupId,
-      settings?.activeCupId
-    ];
-
-    const directMatch = directCandidates.find(
-      (value) => typeof value === 'string' && value.trim().length
-    );
-    if (directMatch) {
-      return directMatch;
-    }
-
-    const fromTopEight = Array.isArray(topEight)
-      ? topEight.find((entry) => (entry?.cupId || entry?.cup?.id))
-      : null;
-    if (fromTopEight) {
-      return fromTopEight.cupId || fromTopEight.cup?.id || null;
-    }
-
-    const fromQueue = Array.isArray(queue)
-      ? queue.find((entry) => (entry?.cupId || entry?.cup?.id))
-      : null;
-    if (fromQueue) {
-      return fromQueue.cupId || fromQueue.cup?.id || null;
-    }
-
-    const availableIds = Object.keys(cupStandings || {});
-    if (availableIds.length > 0) {
-      return availableIds[0];
-    }
-
-    return null;
-  }, [votingState?.cupId, currentlyPlaying?.cupId, settings?.activeCupId, topEight, queue, cupStandings]);
-
-  useEffect(() => {
-    setActiveCupId((prev) => {
-      const next = derivedCupId || null;
-      return prev === next ? prev : next;
-    });
-  }, [derivedCupId]);
+  // removed: derivedCupId/activeCupId logic used only for predictions
 
   const shuffleAudioSrc = useMemo(() => {
     const raw = settings?.shuffle_audio_url;
@@ -268,113 +225,9 @@ const QueueOverlay = () => {
     return DEFAULT_SHUFFLE_AUDIO_SRC;
   }, [settings?.shuffle_audio_url]);
 
-  useEffect(() => {
-    if (!activeCupId || !channelConnected) {
-      return;
-    }
+  // removed: standings prefetch effect (no predictions)
 
-    const standingsForCup = cupStandings?.[activeCupId];
-    if (Array.isArray(standingsForCup) && standingsForCup.length > 0) {
-      return;
-    }
-
-    if (requestedCupIdsRef.current.has(activeCupId)) {
-      return;
-    }
-
-    requestedCupIdsRef.current.add(activeCupId);
-    let isMounted = true;
-
-    const loadStandings = async () => {
-      try {
-        await refreshCupStandings(activeCupId, { publicAccess: true });
-      } catch (error) {
-        console.warn('Failed to refresh cup standings for queue overlay:', error);
-        if (isMounted) {
-          requestedCupIdsRef.current.delete(activeCupId);
-        }
-      }
-    };
-
-    void loadStandings();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [activeCupId, channelConnected, refreshCupStandings, cupStandings]);
-
-  const predictedPlacementLookup = useMemo(() => {
-    if (!activeCupId) {
-      return new Map();
-    }
-
-    const entries = cupStandings?.[activeCupId];
-    if (!Array.isArray(entries) || entries.length === 0) {
-      return new Map();
-    }
-
-    const map = new Map();
-    entries.forEach((entry) => {
-      const numericRank = Number(entry?.rank);
-      if (!Number.isFinite(numericRank) || numericRank <= 0) {
-        return;
-      }
-
-      const candidates = [
-        entry?.submitterUsername,
-        entry?.submitterAlias,
-        entry?.publicSubmitterName,
-        entry?.submitter?.twitchUsername,
-        entry?.submitter?.alias
-      ];
-
-      candidates.forEach((candidate) => {
-        if (typeof candidate !== 'string') {
-          return;
-        }
-        const normalized = candidate.trim().toLowerCase();
-        if (!normalized.length) {
-          return;
-        }
-        if (!map.has(normalized)) {
-          map.set(normalized, numericRank);
-        }
-      });
-    });
-
-    return map;
-  }, [activeCupId, cupStandings]);
-
-  const getPredictedPlacement = useCallback((item) => {
-    if (!item || predictedPlacementLookup.size === 0) {
-      return null;
-    }
-
-    const candidates = [
-      item?.submitterUsername,
-      item?.submitterAlias,
-      item?.publicSubmitterName,
-      item?.submitter?.twitchUsername,
-      item?.submitter?.alias
-    ];
-
-    for (const candidate of candidates) {
-      if (typeof candidate !== 'string') {
-        continue;
-      }
-      const normalized = candidate.trim().toLowerCase();
-      if (!normalized.length) {
-        continue;
-      }
-
-      const rank = predictedPlacementLookup.get(normalized);
-      if (Number.isFinite(rank)) {
-        return rank;
-      }
-    }
-
-    return null;
-  }, [predictedPlacementLookup]);
+  // removed: predicted placement logic entirely
 
   const playLockTone = useCallback(async () => {
     try {
@@ -828,7 +681,6 @@ const ringLayout = useMemo(() => {
                   return ringItems.map(({ item, globalIndex, indexWithin }) => {
                     const angle = (360 / ringCount) * indexWithin;
                     const rank = finalRankMap.get(item.id);
-                    const predictedPlacement = getPredictedPlacement(item);
                     const seed = computeCardSeed(item, globalIndex);
                     const scatter = getScatterTransform(seed);
                     const finalTransform = `rotateZ(${angle}deg) translateY(-${radius}px) rotateZ(${-angle}deg) rotateX(${-RING_TILT_DEG}deg)`;
@@ -996,19 +848,7 @@ const ringLayout = useMemo(() => {
                             >
                               {getQueueAlias(item)}
                             </Typography>
-                            {Number.isFinite(predictedPlacement) && (
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  color: alpha('#ffd166', 0.85),
-                                  letterSpacing: 1.2,
-                                  textTransform: 'uppercase',
-                                  fontWeight: 600
-                                }}
-                              >
-                                Predicted #{predictedPlacement}
-                              </Typography>
-                            )}
+                            
                           </Box>
                         </Box>
                       </Box>
@@ -1160,7 +1000,7 @@ const ringLayout = useMemo(() => {
           sortedQueue.slice(0, 20).map((item, index) => {
             const isCurrent = currentlyPlaying?.id === item.id;
             const isTop = item.status === 'TOP_EIGHT';
-            const predictedPlacement = getPredictedPlacement(item);
+            
 
             return (
               <Grid item xs={12} sm={6} md={3} key={item.id || index}>
@@ -1241,18 +1081,7 @@ const ringLayout = useMemo(() => {
                           letterSpacing: 1
                         }}
                       />
-                      {Number.isFinite(predictedPlacement) && (
-                        <Chip
-                          size="small"
-                          label={`Predicted #${predictedPlacement}`}
-                          sx={{
-                            bgcolor: alpha('#ffd166', 0.18),
-                            color: alpha('#ffd166', 0.95),
-                            fontWeight: 600,
-                            borderRadius: '999px'
-                          }}
-                        />
-                      )}
+                      
                       {isCurrent && (
                         <Chip
                           size="small"
@@ -1318,14 +1147,7 @@ const ringLayout = useMemo(() => {
                     >
                       {getQueueAlias(item)}
                     </Typography>
-                    {Number.isFinite(predictedPlacement) && (
-                      <Typography
-                        variant="caption"
-                        sx={{ color: alpha('#ffd166', 0.82), letterSpacing: 0.8, textTransform: 'uppercase', fontWeight: 600 }}
-                      >
-                        Predicted #{predictedPlacement}
-                      </Typography>
-                    )}
+                    
                     <Typography
                       variant="caption"
                       sx={{ color: alpha('#ffffff', 0.45), letterSpacing: 0.6 }}

@@ -182,6 +182,8 @@ const Dashboard = () => {
   const [sbUploading, setSbUploading] = useState(false);
   const [sbError, setSbError] = useState(null);
   const [sbName, setSbName] = useState('');
+  const [sbBusyId, setSbBusyId] = useState(null);
+  const [sbToast, setSbToast] = useState(null);
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
@@ -499,11 +501,30 @@ const Dashboard = () => {
   const handlePlaySound = useCallback(async (itemId) => {
     if (!channel?.id || !itemId) return;
     try {
-      await axios.post(`/api/channels/${channel.id}/soundboard/play`, { itemId }, { withCredentials: true });
+      setSbBusyId(itemId);
+      const res = await axios.post(`/api/channels/${channel.id}/soundboard/play`, { itemId }, { withCredentials: true });
+      const name = soundboardItems.find((it) => it.id === itemId)?.name || 'Sound';
+      if (res?.data?.ok) {
+        setSbToast(`Sent “${name}” to all clients`);
+      } else {
+        setSbToast(`Triggered “${name}”`);
+      }
+      // Optional: local preview (comment out if undesired)
+      try {
+        const url = soundboardItems.find((it) => it.id === itemId)?.url;
+        if (url) {
+          const a = new Audio(url);
+          a.volume = 1;
+          a.play().catch(() => {});
+        }
+      } catch(_) {}
     } catch (err) {
       console.warn('Failed to play soundboard item:', err);
+      setSbToast('Failed to send sound');
+    } finally {
+      setSbBusyId(null);
     }
-  }, [channel?.id]);
+  }, [channel?.id, soundboardItems]);
 
   const handleDeleteSound = useCallback(async (itemId) => {
     if (!channel?.id || !itemId) return;
@@ -905,6 +926,17 @@ const Dashboard = () => {
               </Alert>
             </Snackbar>
 
+            <Snackbar
+              open={Boolean(sbToast)}
+              autoHideDuration={2000}
+              onClose={() => setSbToast(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+            >
+              <Alert onClose={() => setSbToast(null)} severity="info" sx={{ width: '100%' }}>
+                {sbToast}
+              </Alert>
+            </Snackbar>
+
             {!channel && !loading && (
               <Paper
                 sx={{
@@ -1288,7 +1320,9 @@ const Dashboard = () => {
                             <ListItem key={it.id}
                               secondaryAction={
                                 <Stack direction="row" spacing={1}>
-                                  <Button size="small" onClick={() => handlePlaySound(it.id)}>Play</Button>
+                                  <Button size="small" onClick={() => handlePlaySound(it.id)} disabled={sbBusyId === it.id}>
+                                    {sbBusyId === it.id ? 'Playing…' : 'Play'}
+                                  </Button>
                                   <Button size="small" color="error" onClick={() => handleDeleteSound(it.id)}>Delete</Button>
                                 </Stack>
                               }
