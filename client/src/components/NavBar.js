@@ -134,6 +134,15 @@ const NavBar = () => {
                       Moderation
                     </Button>
                   )}
+                  {!canModerate && (
+                    <Button
+                      startIcon={<Security />}
+                      onClick={() => navigate('/onboarding')}
+                      sx={{ mr: 2 }}
+                    >
+                      Get Started
+                    </Button>
+                  )}
                 </>
               )}
               

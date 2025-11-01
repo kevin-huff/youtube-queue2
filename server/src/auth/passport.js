@@ -188,59 +188,8 @@ passport.use(new TwitchStrategy({
       });
     }
 
-    const channelId = username;
-
-    // Ensure the channel exists and is up to date
-    let channel = await prisma.channel.findUnique({ where: { id: channelId } });
-
-    if (!channel) {
-      channel = await prisma.channel.create({
-        data: {
-          id: channelId,
-          twitchUserId,
-          displayName,
-          profileImageUrl,
-          isActive: true,
-          settings: {
-            queue_enabled: false,
-            max_queue_size: 50,
-            submission_cooldown: 30,
-            max_video_duration: 600,
-            auto_play_next: true,
-            current_volume: 75
-          }
-        }
-      });
-
-      logger.info(`Created new channel: ${channelId}`);
-    } else {
-      channel = await prisma.channel.update({
-        where: { id: channelId },
-        data: {
-          twitchUserId,
-          displayName,
-          profileImageUrl
-        }
-      });
-    }
-
-    // Ensure ownership link exists
-    await prisma.channelOwner.upsert({
-      where: {
-        accountId_channelId: {
-          accountId: account.id,
-          channelId: channel.id
-        }
-      },
-      update: {
-        role: 'OWNER'
-      },
-      create: {
-        accountId: account.id,
-        channelId: channel.id,
-        role: 'OWNER'
-      }
-    });
+    // Note: Do not auto-create channels here. Ownership and channel creation
+    // now occur via explicit onboarding/API actions.
 
     const userData = await buildUserPayload(account.id);
 

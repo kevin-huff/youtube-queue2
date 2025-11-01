@@ -178,7 +178,7 @@ const LandingPage = () => {
           <Button 
             variant="contained" 
             size="large" 
-            onClick={login}
+            onClick={() => login({ redirectTo: '/onboarding' })}
             startIcon={<LiveTv />}
             sx={{ 
               py: 2, 
@@ -190,7 +190,7 @@ const LandingPage = () => {
               }
             }}
           >
-            Login with Twitch
+            Get Started
           </Button>
 
           <Button
@@ -303,7 +303,7 @@ const LandingPage = () => {
             <Button 
               variant="contained" 
               size="large" 
-              onClick={login}
+              onClick={() => login({ redirectTo: '/onboarding' })}
               sx={{ 
                 py: 2, 
                 px: 5,

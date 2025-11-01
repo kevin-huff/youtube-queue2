@@ -375,6 +375,8 @@ const ChannelQueue = () => {
   const [roleSubmitting, setRoleSubmitting] = useState(false);
   const [newRoleUsername, setNewRoleUsername] = useState('');
   const [newRoleType, setNewRoleType] = useState('PRODUCER');
+  const [newManagerUsername, setNewManagerUsername] = useState('');
+  const [managerSubmitting, setManagerSubmitting] = useState(false);
   const [votingError, setVotingError] = useState(null);
   const [votingAction, setVotingAction] = useState(null);
   const [finalizeLoading, setFinalizeLoading] = useState(false);
@@ -839,6 +841,62 @@ const ChannelQueue = () => {
       void handleAddRole();
     }
   }, [handleAddRole, roleSubmitting]);
+
+  const handleAddManager = useCallback(async () => {
+    if (!canManageRoles || !normalizedChannelId) {
+      return;
+    }
+    const trimmed = newManagerUsername.trim();
+    if (!trimmed) {
+      setRolesError('Enter a username to grant manager permissions');
+      return;
+    }
+    try {
+      setManagerSubmitting(true);
+      setRolesError(null);
+      const response = await fetch(`/api/channels/${normalizedChannelId}/owners`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: trimmed, role: 'MANAGER' })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to add manager');
+      }
+      setNewManagerUsername('');
+      await loadRoles();
+    } catch (error) {
+      console.error('Failed to add manager:', error);
+      setRolesError(error.message || 'Failed to add manager');
+    } finally {
+      setManagerSubmitting(false);
+    }
+  }, [canManageRoles, normalizedChannelId, newManagerUsername, loadRoles]);
+
+  const handleRemoveManager = useCallback(async (ownerId) => {
+    if (!canManageRoles || !normalizedChannelId || !ownerId) {
+      return;
+    }
+    try {
+      setManagerSubmitting(true);
+      setRolesError(null);
+      const response = await fetch(`/api/channels/${normalizedChannelId}/owners/${ownerId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to remove manager');
+      }
+      await loadRoles();
+    } catch (error) {
+      console.error('Failed to remove manager:', error);
+      setRolesError(error.message || 'Failed to remove manager');
+    } finally {
+      setManagerSubmitting(false);
+    }
+  }, [canManageRoles, normalizedChannelId, loadRoles]);
 
   const votingMetrics = votingState?.metrics || {
     totalJudges: votingJudges.length,
@@ -1493,6 +1551,66 @@ const ChannelQueue = () => {
                     </Stack>
                   </Box>
                 )}
+
+                {/* Manager Controls */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                    Managers
+                  </Typography>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 1 }}>
+                    <TextField
+                      label="Twitch username"
+                      value={newManagerUsername}
+                      onChange={(e) => setNewManagerUsername(e.target.value)}
+                      size="small"
+                      fullWidth
+                      disabled={managerSubmitting}
+                      autoComplete="off"
+                    />
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      disabled={managerSubmitting || !newManagerUsername.trim()}
+                      onClick={handleAddManager}
+                    >
+                      Add Manager
+                    </Button>
+                  </Stack>
+                  <Stack spacing={1}>
+                    {owners.filter((o) => o.role === 'MANAGER').length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">
+                        No managers yet. Add a username to grant manager access.
+                      </Typography>
+                    ) : (
+                      owners
+                        .filter((o) => o.role === 'MANAGER')
+                        .map((mgr) => {
+                          const name = mgr.account?.displayName || mgr.account?.username || mgr.accountId;
+                          return (
+                            <Paper
+                              key={mgr.id}
+                              variant="outlined"
+                              sx={{ p: 1, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}
+                            >
+                              <Typography variant="body2">{name}</Typography>
+                              <Tooltip title="Remove manager">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    disabled={managerSubmitting}
+                                    onClick={() => handleRemoveManager(mgr.id)}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Paper>
+                          );
+                        })
+                    )}
+                  </Stack>
+                </Box>
 
                 {rolesError && (
                   <Alert severity="error" onClose={() => setRolesError(null)} sx={{ pointerEvents: 'auto' }}>

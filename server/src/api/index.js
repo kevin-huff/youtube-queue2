@@ -65,6 +65,27 @@ const ensureOwnerOrManager = async (channelManager, accountId, channelId) => {
   return normalizedChannelId;
 };
 
+// Require that the current user is the OWNER of the channel
+const ensureOwnerOnly = async (channelManager, accountId, channelId) => {
+  const normalizedChannelId = await requireChannelOwnership(channelManager, accountId, channelId);
+  const ownership = await channelManager.prisma.channelOwner.findUnique({
+    where: {
+      accountId_channelId: {
+        accountId,
+        channelId: normalizedChannelId
+      }
+    }
+  });
+
+  if (!ownership || ownership.role !== 'OWNER') {
+    const error = new Error('Channel owner access required');
+    error.status = 403;
+    throw error;
+  }
+
+  return normalizedChannelId;
+};
+
 const formatRoleAssignment = (assignment) => ({
   id: assignment.id,
   channelId: assignment.channelId,
@@ -144,7 +165,9 @@ router.get('/auth/twitch/callback',
     }
 
     const redirectUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-    res.redirect(`${redirectUrl}/dashboard`);
+    const hasAnyChannel = Array.isArray(req.user?.channels) && req.user.channels.length > 0;
+    const targetPath = hasAnyChannel ? '/dashboard' : '/onboarding';
+    res.redirect(`${redirectUrl}${targetPath}`);
   }
 );
 
@@ -1584,6 +1607,130 @@ router.get('/channels/:channelId/roles',
     } catch (error) {
       logger.error('Error listing channel roles:', error);
       res.status(error.status || 500).json({ error: error.message || 'Failed to load channel roles' });
+    }
+  }
+);
+
+// Add a channel manager (owner-only)
+router.post('/channels/:channelId/owners',
+  requireAuth,
+  [
+    body('username').optional().isString().trim(),
+    body('accountId').optional().isString(),
+    body('role').optional().isString()
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await ensureOwnerOnly(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      const rawRole = (req.body.role || 'MANAGER').toString().trim().toUpperCase();
+      if (rawRole !== 'MANAGER') {
+        return res.status(400).json({ error: 'Only MANAGER role can be granted via this endpoint' });
+      }
+
+      let targetAccountId = (req.body.accountId || '').toString().trim();
+      const username = (req.body.username || '').toString().trim();
+
+      if (!targetAccountId && !username) {
+        return res.status(400).json({ error: 'Username or accountId is required' });
+      }
+
+      if (!targetAccountId) {
+        const account = await channelManager.prisma.account.findFirst({
+          where: {
+            OR: [
+              { username: { equals: username, mode: 'insensitive' } },
+              { displayName: { equals: username, mode: 'insensitive' } }
+            ]
+          }
+        });
+
+        if (!account) {
+          return res.status(404).json({ error: 'Account not found' });
+        }
+
+        targetAccountId = account.id;
+      }
+
+      // Prevent demoting an owner inadvertently
+      const existing = await channelManager.prisma.channelOwner.findUnique({
+        where: {
+          accountId_channelId: {
+            accountId: targetAccountId,
+            channelId: normalizedChannelId
+          }
+        }
+      });
+
+      if (existing && existing.role === 'OWNER') {
+        return res.status(400).json({ error: 'Target is already an owner; cannot change owner to manager' });
+      }
+
+      const ownerRecord = await channelManager.prisma.channelOwner.upsert({
+        where: {
+          accountId_channelId: {
+            accountId: targetAccountId,
+            channelId: normalizedChannelId
+          }
+        },
+        update: { role: 'MANAGER' },
+        create: {
+          accountId: targetAccountId,
+          channelId: normalizedChannelId,
+          role: 'MANAGER'
+        },
+        include: {
+          account: {
+            select: { id: true, username: true, displayName: true, profileImageUrl: true }
+          }
+        }
+      });
+
+      return res.status(201).json({ owner: formatChannelOwner(ownerRecord) });
+    } catch (error) {
+      logger.error('Error adding channel manager:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to add manager' });
+    }
+  }
+);
+
+// Remove a channel manager (owner-only). Only MANAGER records can be removed here.
+router.delete('/channels/:channelId/owners/:ownerId',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await ensureOwnerOnly(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      const ownerId = parseInt(req.params.ownerId, 10);
+      if (!Number.isInteger(ownerId)) {
+        return res.status(400).json({ error: 'Invalid owner record ID' });
+      }
+
+      const record = await channelManager.prisma.channelOwner.findUnique({ where: { id: ownerId } });
+      if (!record || record.channelId !== normalizedChannelId) {
+        return res.status(404).json({ error: 'Owner record not found' });
+      }
+
+      if (record.role !== 'MANAGER') {
+        return res.status(400).json({ error: 'Only MANAGER records can be removed via this endpoint' });
+      }
+
+      await channelManager.prisma.channelOwner.delete({ where: { id: ownerId } });
+      return res.json({ success: true });
+    } catch (error) {
+      logger.error('Error removing channel manager:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to remove manager' });
     }
   }
 );

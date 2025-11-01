@@ -19,6 +19,7 @@ import JudgePage from './pages/JudgePage';
 import JudgeOverlay from './pages/JudgeOverlay';
 import CupAdmin from './pages/CupAdmin';
 import ViewerHub from './pages/ViewerHub';
+import OnboardingPage from './pages/OnboardingPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -80,6 +81,14 @@ function App() {
               />
               
               {/* Protected Routes */}
+              <Route 
+                path="/onboarding" 
+                element={
+                  <ProtectedRoute>
+                    <OnboardingPage />
+                  </ProtectedRoute>
+                } 
+              />
               <Route 
                 path="/dashboard" 
                 element={

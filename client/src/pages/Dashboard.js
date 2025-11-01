@@ -47,6 +47,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
+import { MenuItem } from '@mui/material';
 import { useSocket } from '../contexts/SocketContext';
 
 const DEFAULT_CHANNEL_SETTINGS = {
@@ -155,6 +156,7 @@ const Dashboard = () => {
   const location = useLocation();
   const { clearQueue, connectToChannel, disconnectFromChannel } = useSocket();
   const [channel, setChannel] = useState(null);
+  const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [settings, setSettings] = useState({ ...DEFAULT_CHANNEL_SETTINGS });
@@ -181,6 +183,11 @@ const Dashboard = () => {
 
   const canModerate = useMemo(
     () => hasChannelRole(currentChannelId || undefined, ['OWNER', 'MANAGER', 'PRODUCER', 'MODERATOR']),
+    [currentChannelId, hasChannelRole]
+  );
+
+  const canManageSettings = useMemo(
+    () => hasChannelRole(currentChannelId || undefined, ['OWNER', 'MANAGER']),
     [currentChannelId, hasChannelRole]
   );
 
@@ -270,18 +277,28 @@ const Dashboard = () => {
     }
   }, []);
 
-  const fetchChannel = useCallback(async () => {
+  const fetchChannels = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await axios.get('/api/channels', {
         withCredentials: true
       });
-      const channels = response.data.channels || [];
-      if (channels.length > 0) {
-        const channelData = channels[0];
-        setChannel(channelData);
-        await fetchChannelSettings(channelData.id);
+      const fetched = response.data.channels || [];
+      setChannels(fetched);
+
+      // Keep current selection if still valid, else default to first
+      let next = null;
+      if (channel) {
+        next = fetched.find((c) => c.id === channel.id) || null;
+      }
+      if (!next) {
+        next = fetched[0] || null;
+      }
+
+      if (next) {
+        setChannel(next);
+        await fetchChannelSettings(next.id);
       } else {
         if (saveTimeoutRef.current) {
           clearTimeout(saveTimeoutRef.current);
@@ -299,7 +316,21 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, [fetchChannelSettings]);
+  }, [fetchChannelSettings, channel]);
+
+  const handleChannelSwitch = useCallback(async (nextId) => {
+    try {
+      const next = channels.find((c) => c.id === nextId) || null;
+      setChannel(next);
+      if (next) {
+        await fetchChannelSettings(next.id);
+      } else {
+        setSettings({ ...DEFAULT_CHANNEL_SETTINGS });
+      }
+    } catch (err) {
+      console.error('Failed to switch channel:', err);
+    }
+  }, [channels, fetchChannelSettings]);
 
   const handleSettingChange = useCallback((key, value) => {
     const normalizedValue = value === undefined || value === null ? '' : value.toString();
@@ -475,9 +506,9 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (user) {
-      fetchChannel();
+      fetchChannels();
     }
-  }, [user, fetchChannel]);
+  }, [user, fetchChannels]);
 
   useEffect(() => {
     if (authLoading || loading) {
@@ -630,6 +661,30 @@ const Dashboard = () => {
           <Typography variant="body1" color="text.secondary">
             Manage your YouTube queue and gameshow cups
           </Typography>
+
+          {Array.isArray(channels) && channels.length > 0 && (
+            <Box mt={2} display="flex" alignItems="center" gap={2}>
+              <Typography variant="body2" color="text.secondary">Channel:</Typography>
+              <TextField
+                select
+                size="small"
+                value={currentChannelId || ''}
+                onChange={(e) => handleChannelSwitch(e.target.value)}
+                sx={{ minWidth: 220 }}
+              >
+                {channels.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>{c.displayName || c.id}</MenuItem>
+                ))}
+              </TextField>
+              {roleLabels.length > 0 && (
+                <Box display="flex" alignItems="center" gap={1}>
+                  {roleLabels.map((r) => (
+                    <Chip key={r} size="small" label={r} />
+                  ))}
+                </Box>
+              )}
+            </Box>
+          )}
         </Box>
 
         {availableTabs.length > 1 && (
@@ -724,13 +779,15 @@ const Dashboard = () => {
                   >
                     Producer Console
                   </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Settings />}
-                    onClick={() => settingsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  >
-                    Queue Settings
-                  </Button>
+                  {canManageSettings && (
+                    <Button
+                      variant="outlined"
+                      startIcon={<Settings />}
+                      onClick={() => settingsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    >
+                      Queue Settings
+                    </Button>
+                  )}
                 </Box>
                 </Box>
               </CardContent>
@@ -892,16 +949,18 @@ const Dashboard = () => {
             </Grid>
 
             {/* Queue Settings */}
-            <Typography
-              variant="h5"
-              fontWeight={600}
-              gutterBottom
-              sx={{ mt: 4 }}
-              ref={settingsSectionRef}
-            >
-              Queue Settings
-            </Typography>
-            <Grid container spacing={3} sx={{ mb: 4 }}>
+            {canManageSettings ? (
+            <>
+              <Typography
+                variant="h5"
+                fontWeight={600}
+                gutterBottom
+                sx={{ mt: 4 }}
+                ref={settingsSectionRef}
+              >
+                Queue Settings
+              </Typography>
+              <Grid container spacing={3} sx={{ mb: 4 }}>
               <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
@@ -1120,7 +1179,19 @@ const Dashboard = () => {
                   </CardContent>
                 </Card>
               </Grid>
-            </Grid>
+              </Grid>
+            </>
+            ) : (
+              <Paper sx={{ p: 3, mt: 4 }} ref={settingsSectionRef}>
+                <Typography variant="h6" gutterBottom>
+                  Limited Access
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  You don&apos;t have owner or manager permissions for this channel, so queue settings are read-only.
+                  You can still use the Producer Console and Moderation tools based on your role.
+                </Typography>
+              </Paper>
+            )}
 
             {/* Auto-save indicator */}
             {saving && (
