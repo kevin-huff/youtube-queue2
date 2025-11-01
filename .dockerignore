@@ -1,0 +1,66 @@
+# Git files
+.git
+.gitignore
+
+# Node modules (will be installed in container)
+node_modules
+npm-debug.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Database files (runtime data, not needed for build)
+db/*.json
+!db/.gitkeep
+
+# Logs
+logs
+*.log
+
+# Test files
+*.test.js
+test/
+
+# CI/CD
+.github
+
+# Documentation
+README.md
+LICENSE
+
+# IDE
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Build artifacts
+dist/
+build/
+
+# Cache directories
+.cache
+.npm
+.eslintcache
+
+# Glitch specific files
+.glitch-assets
+.glitchdotcom.json
+.bash_history
+.config
+
+# Shrinkwrap (use package-lock.json instead)
+shrinkwrap.yaml
+
+# Audio and large media files that can be added at runtime
+public/audio/*.mp3
+public/countdown_theme.mp3
