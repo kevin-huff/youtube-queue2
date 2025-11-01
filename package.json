@@ -1,46 +1,79 @@
 {
-  "name": "youtube-queue",
-  "version": "0.0.1",
-  "description": "Youtube Queue Twitch Bot for Free media share",
-  "main": "server.js",
+  "name": "youtube-queue2",
+  "version": "1.0.0",
+  "description": "A real-time video queue system for Twitch streamers",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "dependencies": {
-    "axios": "^1.4.0",
-    "censor-sensor": "^1.0.6",
-    "dotenv": "^16.0.3",
-    "ejs": "^3.1.6",
-    "elevenlabs-node": "^2.0.3",
-    "express": "^4.17.2",
-    "express-basic-auth": "^1.2.1",
-    "fuse.js": "^6.6.2",
-    "googleapis": "^111.0.0",
-    "jsoning": "^0.13.23",
-    "openai": "3.2.1",
-    "request": "^2.88.2",
-    "socket.io": "^4.5.0",
-    "spoken": "^1.1.17",
-    "tmi.js": "^1.8.5",
-    "youtube-metadata-from-url": "^1.0.3"
-  },
-  "engines": {
-    "node": "16"
-  },
-  "nodemonConfig": {
-    "ignore": [
-      "*.json"
-    ]
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "build:client": "cd client && npm run build",
+    "start": "cd server && npm start",
+    "start:production": "cd server && npm run start:production",
+    "setup": "./start.sh",
+    "setup:production": "./start-production.sh",
+    "production:start": "./start-production.sh",
+    "production:stop": "./start-production.sh stop",
+    "production:restart": "./start-production.sh restart",
+    "production:status": "./start-production.sh status",
+    "test": "npm run test:server && npm run test:client",
+    "test:server": "cd server && npm test",
+    "test:client": "cd client && npm test",
+    "test:integration": "cd server && npm run test:integration",
+    "db:setup": "cd server && npm run db:setup",
+    "db:reset": "cd server && npm run db:reset",
+    "db:migrate": "cd server && npm run db:migrate",
+    "db:seed": "cd server && npm run db:seed",
+    "lint": "npm run lint:server && npm run lint:client",
+    "lint:server": "cd server && npm run lint",
+    "lint:client": "cd client && npm run lint",
+    "clean": "rm -rf node_modules server/node_modules client/node_modules",
+    "clean:all": "npm run clean && rm -rf client/build server/data logs production.log .server.pid .admin-credentials",
+    "postinstall": "command -v husky >/dev/null 2>&1 && husky install || echo 'Husky not found, skipping git hooks setup'",
+    "docker:build": "docker build -t youtube-queue .",
+    "docker:run": "docker run -p 3000:3000 -p 5000:5000 youtube-queue",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kevin-huff/youtube_queue.git"
+    "url": "git+https://github.com/kevin-huff/youtube-queue2.git"
   },
-  "license": "MIT",
   "keywords": [
-    "node",
-    "glitch",
-    "express"
+    "twitch",
+    "bot",
+    "queue",
+    "youtube",
+    "streaming",
+    "react",
+    "nodejs",
+    "socket.io"
+  ],
+  "author": "Kevin Huff",
+  "license": "Unlicense",
+  "bugs": {
+    "url": "https://github.com/kevin-huff/youtube-queue2/issues"
+  },
+  "homepage": "https://github.com/kevin-huff/youtube-queue2#readme",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,md}": [
+      "prettier --write"
+    ]
+  },
+  "workspaces": [
+    "server",
+    "client",
+    "shared"
   ]
 }

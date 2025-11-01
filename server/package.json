@@ -1,0 +1,66 @@
+{
+  "name": "youtube-queue-server",
+  "version": "1.0.0",
+  "description": "Backend server for YouTube queue bot",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "start:production": "NODE_ENV=production node src/index.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:integration": "jest --testPathPattern=tests/integration",
+    "db:setup": "npx prisma generate && npx prisma db push",
+    "db:reset": "npx prisma db push --force-reset",
+    "db:migrate": "npx prisma migrate dev",
+    "release": "npx prisma migrate deploy && npx prisma generate",
+    "db:seed": "node src/database/seed.js",
+    "db:studio": "npx prisma studio",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "axios": "^1.6.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-session": "^1.17.3",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "node-cron": "^3.0.3",
+    "passport": "^0.7.0",
+    "passport-twitch-new": "^0.0.3",
+    "puppeteer": "^21.5.2",
+    "socket.io": "^4.7.4",
+    "tmi.js": "^1.8.5",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.1.0",
+    "prisma": "^6.16.2",
+    "supertest": "^6.3.3"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/index.js",
+      "!src/database/seed.js"
+    ],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  },
+  "author": "Kevin Huff",
+  "license": "Unlicense"
+}

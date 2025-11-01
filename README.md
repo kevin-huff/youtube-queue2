@@ -1,126 +1,170 @@
-# Youtube Queue
+# FREE* Mediashare – Multi-Channel YouTube Queue Bot
 
-Youtube Queue is a Twitch Bot built for the purpose of free media sharing. It manages a YouTube video queue, interacts with users, and handles social scores. The bot is written in JavaScript and uses a variety of libraries including `tmi.js`, `socket.io`, `express`, `ejs`, and `dotenv` among others.
+Brought to you by KevNetCloud in collaboration with ChatGPT. FREE* Mediashare manages YouTube video queues for multiple streamers—asterisk and all—giving every channel its own isolated queue with real-time updates and channel-specific settings.
 
 ## Features
 
-- YouTube queue management: Open or close the queue, remove entries, and list queued videos.
-- Social scores: The streamer rates every video, and each user has their own Social Score based off these ratings.
-- AI capabilities: Toggles the AI functionality and uses AI to generate interactive responses.
-- Twitch interaction: Listens for specific commands in Twitch chat and performs corresponding actions.
-- When active watches chat messages for ratings in messages (any numbers 0-4 in any message in chat) and calculates chat's average rating. Each user's rating is only counted once.
-- Moderation queue: A simple dashboard for trusted moderators to upvote, downvote, or delete videos from the queue. Will update the streamer's dashboard in real-time.
+- **Multi-User Support**: Streamers log in with Twitch OAuth
+- **Multi-Channel Management**: Each user can manage multiple Twitch channels  
+- **Real-time Queue Updates**: Socket.IO provides live updates per channel
+- **Channel Isolation**: Each channel has its own queue and settings
+- **Beautiful Modern UI**: Dark theme with Twitch-inspired purple accents
+- **Public Queue Pages**: Viewers can see the queue at `/channel/{channelName}`
+- **Secure Management**: Only channel owners can manage their settings
 
-## Chat Commands
+## Quick Start
 
-The bot listens for the following commands in Twitch chat:
+### Prerequisites
 
-- `!open_yt` - Opens the YouTube queue. (Only available to moderators)
-- `!close_yt` - Closes the YouTube queue. (Only available to moderators)
-- `!clear_yt` - Clears the YouTube queue. (Only available to moderators)
-- `!max_vids $num` - Set's the max vids per user allowed in the queue to `$num` (Only available to moderators)
-- `!social_scores` - Shows the URL where users can see their social score.
-- `!list_yt` - Shows the URL where users can see the YouTube queue list.
-- `!myscore` - Shows the user's social score, rank, and rating based on the weighted score.
-- `!toggle_ai` - Toggles the AI functionality. (Only available to moderators)
-- `!chat_avg` - Shows the current avg rating found in chat.
+- Node.js v16 or higher
+- PostgreSQL or SQLite database
+- Twitch Application credentials
+- (Optional) YouTube API key for enhanced metadata
 
-## Prerequisites
+### Setup
 
-To use Youtube Queue, ensure that you have the following installed:
-
-- [Node.js](https://nodejs.org/) (version 16 or newer)
-
-You need the following creds:
-
-- [OpenAI API Key](https://platform.openai.com/account/api-keys) - For AI Responses
-- [Twitch OAuth](https://twitchapps.com/tmi/) - For Chatbot
-- [Youtube Data API Key](https://developers.google.com/youtube/registering_an_application) - To get video information
-
-## Quickstart
-
-If you want to get started quickly feel free to remix my [glitch app](https://glitch.com/edit/#!/youtube-queue).
-
-## Installation
-
-Clone the repository to your local machine:
-
-```
-git clone https://github.com/kevin-huff/youtube_queue.git
+1. Clone the repository:
+```bash
+git clone https://github.com/kevin-huff/youtube-queue2.git
+cd youtube-queue2
 ```
 
-Change to the project directory:
-
-```
-cd youtube_queue
-```
-
-Install the dependencies:
-
-```
-npm install
+2. Run the setup script:
+```bash
+./setup.sh
 ```
 
-## Usage
+3. Create a Twitch Application:
+   - Go to [Twitch Developer Console](https://dev.twitch.tv/console/apps)
+   - Create a new application
+   - Set OAuth Redirect URL to: `http://localhost:5000/api/auth/twitch/callback`
+   - Note your Client ID and Client Secret
 
-Rename `.env.example` file in the root directory of your project to `.env`. Add the required environment-specific variables.
+4. Create a Twitch Bot Account:
+   - Create a separate Twitch account for your bot
+   - Get OAuth token from [twitchapps.com/tmi](https://twitchapps.com/tmi/)
 
-Run the application:
+5. Configure your credentials in `server/.env`:
+```env
+# Required
+TWITCH_CLIENT_ID=your_twitch_client_id
+TWITCH_CLIENT_SECRET=your_twitch_client_secret
+TWITCH_BOT_USERNAME=your_bot_username
+TWITCH_BOT_OAUTH_TOKEN=oauth:your_bot_token
 
+# Optional
+YOUTUBE_API_KEY=your_youtube_api_key
 ```
-npm start
+
+6. Start the application:
+```bash
+./start.sh
 ```
 
-- Visit `http://localhost:3000/youtube` and use the credntials you provided in your environment variables to interact with the application.
-- Use `!open_yt` to open the youtube queue
-- Any valid youtube link sent in chat will automaticlly get added to the queue.
-- Use the `/youtube` page to shuffle, sort, play, delete, and rate the user's videos
+7. Access the application:
+   - Main app: http://localhost:3000
+   - API: http://localhost:5000
 
-## Web Pages
+## Architecture
 
-The application includes several pages:
+### Multi-Channel Support
+- Each streamer logs in with their Twitch account
+- Streamers can add/remove their channels from the dashboard
+- Bot automatically joins/leaves channels as they're managed
+- Each channel has isolated queue and settings
 
-- `/youtube` - Queue Management page - for viewing and rating videos
-- `/social_scores` - On Screen Leaderboard - use as browser source
-- `/user_social_scores` - User Accessable Leaderboard
-- `/youtube_queue` - User Accessable Queue List
-- `/moderate` - Moderation queue for trusted users to moderate videos in the queue.
-- `/chat_rating` - On screen element showing chat's average rating. Updates as vids are watched and when the streamer rates a video.
+### Authentication Flow
+1. User clicks "Login with Twitch"
+2. Redirected to Twitch OAuth
+3. After authorization, user is logged in
+4. User can manage their channels from dashboard
 
-## Helper Methods
+### Real-time Updates
+- Each channel has its own Socket.IO namespace
+- Queue updates broadcast only to relevant channel
+- Public viewers get read-only access
+- Channel owners get full control
 
-The code includes several helper methods, including:
+## Bot Commands
 
-- `removeURLs(text)`: Removes URLs from text.
-- `ordinal_suffix_of(i)`: Returns an ordinal (1st, 2nd, 3rd) format for a given integer.
-- `ytVidId(url)`: Extracts the video ID from a YouTube video URL.
-- `abbadabbabotSay(...)`: Generates AI-assisted responses using OpenAI's GPT-3.5 Turbo model to interact with users in the Twitch chat.
-- `formatDuration(duration)`: Formats a YouTube video duration string into a more human-readable format.
-- `weighted_rating(avgScore, numRatings, m, C)`: Calculates weighted ratings for social scores.
-- `average_rating_of_all_users(social_scores)`: Computes the average rating of all users.
+Commands work per channel with appropriate permissions:
+
+- `!queue on/off` - Enable/disable queue (broadcaster/mods only)
+- `!skip` - Skip current video (broadcaster/mods only)  
+- `!clear` - Clear queue (broadcaster/mods only)
+- `!remove <id>` - Remove specific video (broadcaster/mods only)
+- `!help` - Show available commands
+
+## API Endpoints
+
+### Authentication
+- `GET /api/auth/twitch` - Initiate Twitch OAuth
+- `GET /api/auth/twitch/callback` - OAuth callback
+- `GET /api/auth/user` - Get current user
+- `POST /api/auth/logout` - Logout
+
+### Channels
+- `GET /api/channels` - List user's channels
+- `POST /api/channels` - Add a channel
+- `GET /api/channels/:channelName` - Get channel info
+- `PUT /api/channels/:channelName` - Update channel settings
+- `DELETE /api/channels/:channelName` - Remove channel
+
+### Queue
+- `GET /api/queue/:channelName` - Get channel's queue
+- `POST /api/queue/:channelName` - Add video to queue
+- `DELETE /api/queue/:channelName/:videoId` - Remove video
+- `POST /api/queue/:channelName/skip` - Skip current video
+- `DELETE /api/queue/:channelName` - Clear queue
+
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions.
+
+## Development
+
+### Project Structure
+```
+youtube-queue2/
+├── client/                 # React frontend
+│   ├── src/
+│   │   ├── pages/         # Page components
+│   │   ├── components/    # Reusable components
+│   │   └── contexts/      # React contexts
+├── server/                # Node.js backend
+│   ├── src/
+│   │   ├── api/          # API routes
+│   │   ├── auth/         # Authentication
+│   │   ├── bot/          # Twitch bot
+│   │   ├── services/     # Business logic
+│   │   └── socket/       # Socket.IO handlers
+│   └── prisma/           # Database schema
+└── docker-compose.yml    # Docker configuration
+```
+
+### Environment Variables
+
+See `.env.example` for all available configuration options.
+
+### Scripts
+
+- `npm start` - Start both frontend and backend
+- `npm run dev` - Start in development mode
+- `npm run build` - Build for production
+- `npm test` - Run tests
 
 ## Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
-Please make sure to update tests as appropriate.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-[Unlicense](https://unlicense.org)
+This project is licensed under the Unlicense - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
-If you have any issues or enhancement requests, feel free to report them via the repository's issue tracker: [https://github.com/kevin-huff/youtube_queue/issues](https://github.com/kevin-huff/youtube_queue/issues).
-
-## Acknowledgements
-
-- [Google APIs](https://github.com/googleapis/googleapis)
-- [Express.js](https://expressjs.com/)
-- [Socket.IO](https://socket.io/)
-- [tmi.js](https://github.com/tmijs)
-- [OpenAI](https://github.com/openai/openai-node)
-
-## Authors
-
-- [Kevin Huff](https://github.com/kevin-huff)
+For issues and feature requests, please use the [GitHub Issues](https://github.com/kevin-huff/youtube-queue2/issues) page.

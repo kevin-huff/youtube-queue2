@@ -1,0 +1,379 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id              String   @id @default(cuid())
+  twitchId        String?  @unique @map("twitch_id")
+  username        String   @unique
+  displayName     String?  @map("display_name")
+  profileImageUrl String?  @map("profile_image_url")
+  email           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  channels           ChannelOwner[]
+  roleAssignments    ChannelRoleAssignment[]
+  assignedRoleGrants ChannelRoleAssignment[] @relation("RoleAssignmentsAssignedBy")
+  judgeScores        JudgeScore[]            @relation("JudgeScoresForAccount")
+  judgeSessions      JudgeSession[]          @relation("JudgeSessionsForAccount")
+
+  @@map("accounts")
+}
+
+model Channel {
+  id              String   @id // Twitch channel name (lowercase)
+  twitchUserId    String?  @unique @map("twitch_user_id")
+  displayName     String   @map("display_name")
+  profileImageUrl String?  @map("profile_image_url")
+  isActive        Boolean  @default(true) @map("is_active")
+  settings        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users           User[]
+  owners          ChannelOwner[]
+  queueItems      QueueItem[]
+  botSettings     BotSetting[]
+  submissionLogs  SubmissionLog[]
+  series          Series[]
+  cups            Cup[]
+  roleAssignments ChannelRoleAssignment[]
+  cupStandings    CupStanding[]
+  seriesStandings SeriesStanding[]
+
+  @@map("channels")
+}
+
+model ChannelOwner {
+  id        Int         @id @default(autoincrement())
+  accountId String      @map("account_id")
+  channelId String      @map("channel_id")
+  role      ChannelRole @default(OWNER)
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  account Account @relation(fields: [accountId], references: [id])
+  channel Channel @relation(fields: [channelId], references: [id])
+
+  @@unique([accountId, channelId])
+  @@map("channel_owners")
+}
+
+model User {
+  id              Int       @id @default(autoincrement())
+  twitchUsername  String    @map("twitch_username")
+  channelId       String    @map("channel_id")
+  role            Role      @default(VIEWER)
+  isBanned        Boolean   @default(false) @map("is_banned")
+  submissionCount Int       @default(0) @map("submission_count")
+  lastSubmission  DateTime? @map("last_submission")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  channel        Channel         @relation(fields: [channelId], references: [id])
+  queueItems     QueueItem[]
+  submissionLogs SubmissionLog[]
+
+  @@unique([twitchUsername, channelId])
+  @@map("users")
+}
+
+model QueueItem {
+  id                Int         @id @default(autoincrement())
+  channelId         String      @map("channel_id")
+  videoUrl          String      @map("video_url")
+  videoId           String      @map("video_id")
+  platform          Platform
+  title             String?
+  thumbnailUrl      String?     @map("thumbnail_url")
+  duration          Int? // Duration in seconds
+  submitterUsername String      @map("submitter_username")
+  submitterAlias    String?     @map("submitter_alias")
+  status            QueueStatus @default(PENDING)
+  position          Int
+  createdAt         DateTime    @default(now()) @map("created_at")
+  playedAt          DateTime?   @map("played_at")
+  cupId             String?     @map("cup_id")
+  moderationStatus  ModerationStatus @default(APPROVED) @map("moderation_status")
+  moderationNote    String?     @map("moderation_note")
+  moderatedBy       String?     @map("moderated_by")
+  moderatedByDisplayName String? @map("moderated_by_display_name")
+  moderatedAt       DateTime?   @map("moderated_at")
+
+  // Relations
+  channel     Channel      @relation(fields: [channelId], references: [id])
+  submitter   User         @relation(fields: [submitterUsername, channelId], references: [twitchUsername, channelId])
+  cup         Cup?         @relation(fields: [cupId], references: [id])
+  judgeScores JudgeScore[]
+
+  @@map("queue_items")
+}
+
+model BotSetting {
+  id        String   @id @default(cuid())
+  channelId String   @map("channel_id")
+  key       String
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  channel Channel @relation(fields: [channelId], references: [id])
+
+  @@unique([channelId, key])
+  @@map("bot_settings")
+}
+
+model SubmissionLog {
+  id        Int      @id @default(autoincrement())
+  channelId String   @map("channel_id")
+  username  String
+  action    String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  channel Channel @relation(fields: [channelId], references: [id])
+  user    User    @relation(fields: [username, channelId], references: [twitchUsername, channelId])
+
+  @@map("submission_logs")
+}
+
+model Series {
+  id          String       @id @default(cuid())
+  channelId   String       @map("channel_id")
+  title       String
+  slug        String
+  description String?
+  status      SeriesStatus @default(PLANNED)
+  startsAt    DateTime?    @map("starts_at")
+  endsAt      DateTime?    @map("ends_at")
+  metadata    Json         @default("{}")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  channel   Channel          @relation(fields: [channelId], references: [id])
+  cups      Cup[]
+  standings SeriesStanding[]
+
+  @@unique([channelId, slug])
+  @@map("series")
+}
+
+model Cup {
+  id        String    @id @default(cuid())
+  channelId String    @map("channel_id")
+  seriesId  String?   @map("series_id")
+  title     String
+  slug      String
+  theme     String?
+  status    CupStatus @default(DRAFT)
+  isActive  Boolean   @default(false) @map("is_active")
+  startsAt  DateTime? @map("starts_at")
+  endsAt    DateTime? @map("ends_at")
+  metadata  Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  channel         Channel                 @relation(fields: [channelId], references: [id])
+  series          Series?                 @relation(fields: [seriesId], references: [id])
+  queueItems      QueueItem[]
+  roleAssignments ChannelRoleAssignment[]
+  standings       CupStanding[]
+  judgeScores     JudgeScore[]
+  judgeSessions   JudgeSession[]
+
+  @@unique([channelId, slug])
+  @@map("cups")
+}
+
+model ChannelRoleAssignment {
+  id         Int       @id @default(autoincrement())
+  channelId  String    @map("channel_id")
+  accountId  String    @map("account_id")
+  role       ShowRole
+  cupId      String?   @map("cup_id")
+  assignedBy String?   @map("assigned_by")
+  expiresAt  DateTime? @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  channel           Channel  @relation(fields: [channelId], references: [id])
+  account           Account  @relation(fields: [accountId], references: [id])
+  cup               Cup?     @relation(fields: [cupId], references: [id])
+  assignedByAccount Account? @relation("RoleAssignmentsAssignedBy", fields: [assignedBy], references: [id])
+
+  @@unique([channelId, accountId, role, cupId])
+  @@map("channel_role_assignments")
+}
+
+model JudgeSession {
+  id             String             @id @default(cuid())
+  cupId          String             @map("cup_id")
+  judgeAccountId String?            @map("judge_account_id")
+  judgeTokenId   String?            @map("judge_token_id") // For token-based judges
+  judgeName      String?            @map("judge_name") // Display name for token judges
+  status         JudgeSessionStatus @default(ACTIVE)
+  startedAt      DateTime           @default(now()) @map("started_at")
+  endedAt        DateTime?          @map("ended_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  cup   Cup      @relation(fields: [cupId], references: [id])
+  judge Account? @relation("JudgeSessionsForAccount", fields: [judgeAccountId], references: [id])
+
+  @@unique([cupId, judgeAccountId])
+  @@unique([cupId, judgeTokenId])
+  @@index([judgeAccountId])
+  @@index([judgeTokenId])
+  @@map("judge_sessions")
+}
+
+model JudgeScore {
+  id             Int       @id @default(autoincrement())
+  cupId          String    @map("cup_id")
+  queueItemId    Int       @map("queue_item_id")
+  judgeAccountId String?   @map("judge_account_id")
+  judgeTokenId   String?   @map("judge_token_id") // For token-based judges
+  judgeName      String?   @map("judge_name") // Display name for token judges
+  score          Decimal   @db.Decimal(12, 5)
+  comment        String?
+  isLocked       Boolean   @default(false) @map("is_locked")
+  lockType       LockType? @map("lock_type")
+  lockedAt       DateTime? @map("locked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  cup       Cup        @relation(fields: [cupId], references: [id])
+  queueItem QueueItem  @relation(fields: [queueItemId], references: [id])
+  judge     Account?   @relation("JudgeScoresForAccount", fields: [judgeAccountId], references: [id])
+
+  @@unique([cupId, queueItemId, judgeAccountId])
+  @@unique([cupId, queueItemId, judgeTokenId])
+  @@index([judgeAccountId])
+  @@map("judge_scores")
+}
+
+model CupStanding {
+  id                Int      @id @default(autoincrement())
+  cupId             String   @map("cup_id")
+  channelId         String   @map("channel_id")
+  submitterUsername String   @map("submitter_username")
+  averageScore      Decimal? @map("average_score") @db.Decimal(12, 5)
+  totalScore        Decimal? @map("total_score") @db.Decimal(12, 5)
+  judgeCount        Int      @default(0) @map("judge_count")
+  rank              Int?
+  metadata          Json?    @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  cup     Cup     @relation(fields: [cupId], references: [id])
+  channel Channel @relation(fields: [channelId], references: [id])
+
+  @@unique([cupId, submitterUsername])
+  @@index([channelId])
+  @@map("cup_standings")
+}
+
+model SeriesStanding {
+  id                Int      @id @default(autoincrement())
+  seriesId          String   @map("series_id")
+  channelId         String   @map("channel_id")
+  submitterUsername String   @map("submitter_username")
+  totalPoints       Decimal? @map("total_points") @db.Decimal(12, 5)
+  cupsPlayed        Int      @default(0) @map("cups_played")
+  metadata          Json?    @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  series  Series  @relation(fields: [seriesId], references: [id])
+  channel Channel @relation(fields: [channelId], references: [id])
+
+  @@unique([seriesId, submitterUsername])
+  @@index([channelId])
+  @@map("series_standings")
+}
+
+enum Role {
+  ADMIN
+  MODERATOR
+  PRODUCER
+  HOST
+  JUDGE
+  CONTESTANT
+  VIEWER
+}
+
+enum ChannelRole {
+  OWNER
+  MANAGER
+}
+
+enum ShowRole {
+  PRODUCER
+  HOST
+  JUDGE
+  MODERATOR
+}
+
+enum Platform {
+  YOUTUBE
+  TIKTOK
+  INSTAGRAM
+}
+
+enum QueueStatus {
+  PENDING
+  APPROVED
+  TOP_EIGHT
+  PLAYING
+  SCORED
+  PLAYED
+  SKIPPED
+  REJECTED
+  REMOVED
+  ELIMINATED
+}
+
+enum CupStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum SeriesStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum ModerationStatus {
+  APPROVED
+  WARNING
+}
+
+enum JudgeSessionStatus {
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+enum LockType {
+  MANUAL
+  FORCED
+}
