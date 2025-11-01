@@ -13,6 +13,7 @@
     "db:setup": "npx prisma generate && npx prisma db push",
     "db:reset": "npx prisma db push --force-reset",
     "db:migrate": "npx prisma migrate dev",
+    "release": "npx prisma migrate deploy && npx prisma generate",
     "db:seed": "node src/database/seed.js",
     "db:studio": "npx prisma studio",
     "lint": "eslint src/",
