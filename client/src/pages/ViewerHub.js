@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -16,12 +16,15 @@ import {
   Paper,
   CircularProgress,
   Alert,
-  Stack
+  Stack,
+  IconButton
 } from '@mui/material';
 import {
   EmojiEvents as TrophyIcon,
   Queue as QueueIcon,
-  CalendarToday as CalendarIcon
+  CalendarToday as CalendarIcon,
+  OpenInNew as OpenInNewIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -36,9 +39,21 @@ function ViewerHub() {
   const [queue, setQueue] = useState([]);
   const [standings, setStandings] = useState([]);
   const [cupVideos, setCupVideos] = useState([]);
+  const [vipQueue, setVipQueue] = useState([]);
 
-  useEffect(() => {
-    const fetchData = async () => {
+  // Section anchors for quick navigation
+  const vipRef = useRef(null);
+  const cupRef = useRef(null);
+  const queueRef = useRef(null);
+  const cupsRef = useRef(null);
+
+  const scrollTo = (ref) => {
+    if (ref && ref.current) {
+      ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const fetchData = useCallback(async () => {
       try {
         setLoading(true);
         setError(null);
@@ -88,17 +103,30 @@ function ViewerHub() {
           console.log('Queue not available');
         }
 
+        // Fetch VIP queue (FIFO list of queue item IDs)
+        try {
+          const vipRes = await fetch(`${API_URL}/channels/public/${channelName}/vip`);
+          if (vipRes.ok) {
+            const vipData = await vipRes.json();
+            const ids = Array.isArray(vipData.vipQueue) ? vipData.vipQueue : [];
+            setVipQueue(ids);
+          }
+        } catch (err) {
+          console.log('VIP list not available');
+        }
+
         setLoading(false);
       } catch (err) {
         setError(err.message);
         setLoading(false);
       }
-    };
+  }, [channelName]);
 
+  useEffect(() => {
     if (channelName) {
       fetchData();
     }
-  }, [channelName]);
+  }, [channelName, fetchData]);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -192,6 +220,91 @@ function ViewerHub() {
           >
             VIEWER HUB
           </Typography>
+
+          {/* Quick Nav + Links */}
+          <Paper
+            elevation={0}
+            sx={{
+              mt: 4,
+              px: 2,
+              py: 1.5,
+              mx: 'auto',
+              maxWidth: 900,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 3,
+              position: 'sticky',
+              top: 8,
+              backdropFilter: 'blur(8px)'
+            }}
+          >
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1.5}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+              justifyContent="space-between"
+            >
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Chip
+                  size="small"
+                  label="VIP Queue"
+                  onClick={() => scrollTo(vipRef)}
+                  disabled={!vipQueue || vipQueue.length === 0}
+                  color={vipQueue && vipQueue.length > 0 ? 'warning' : 'default'}
+                  variant={vipQueue && vipQueue.length > 0 ? 'filled' : 'outlined'}
+                />
+                <Chip
+                  size="small"
+                  label="Current Cup"
+                  onClick={() => scrollTo(cupRef)}
+                  disabled={!currentCup}
+                  color={currentCup ? 'primary' : 'default'}
+                  variant={currentCup ? 'filled' : 'outlined'}
+                />
+                <Chip
+                  size="small"
+                  label={`Queue${queue && queue.length ? ` (${queue.length})` : ''}`}
+                  onClick={() => scrollTo(queueRef)}
+                  disabled={!queue || queue.length === 0}
+                  color={queue && queue.length > 0 ? 'secondary' : 'default'}
+                  variant={queue && queue.length > 0 ? 'filled' : 'outlined'}
+                />
+                <Chip
+                  size="small"
+                  label={`All Cups${allCups && allCups.length ? ` (${allCups.length})` : ''}`}
+                  onClick={() => scrollTo(cupsRef)}
+                  disabled={!allCups || allCups.length === 0}
+                  color={allCups && allCups.length > 0 ? 'success' : 'default'}
+                  variant={allCups && allCups.length > 0 ? 'filled' : 'outlined'}
+                />
+              </Stack>
+              <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  endIcon={<OpenInNewIcon />}
+                  href={`/overlay/${channelName}/leaderboard`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Leaderboard
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  endIcon={<OpenInNewIcon />}
+                  href={`/overlay/${channelName}/queue`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Queue Overlay
+                </Button>
+                <IconButton aria-label="refresh" size="small" onClick={fetchData}>
+                  <RefreshIcon sx={{ color: 'rgba(255,255,255,0.9)' }} />
+                </IconButton>
+              </Stack>
+            </Stack>
+          </Paper>
         </Box>
 
 
@@ -219,9 +332,117 @@ function ViewerHub() {
         </style>
 
         <Grid container spacing={3}>
+          {/* VIP Queue Section */}
+          {Array.isArray(vipQueue) && vipQueue.length > 0 && (
+            <Grid item xs={12} ref={vipRef}>
+              <Card
+                elevation={0}
+                sx={{
+                  background: 'linear-gradient(135deg, rgba(255, 193, 7, 0.12) 0%, rgba(255, 87, 34, 0.12) 100%)',
+                  backdropFilter: 'blur(10px)',
+                  border: '1px solid rgba(255, 193, 7, 0.25)',
+                  borderRadius: 4,
+                  overflow: 'visible',
+                  position: 'relative',
+                  '&::before': {
+                    content: '""',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: '4px',
+                    background: 'linear-gradient(90deg, #ffc107 0%, #ff5722 50%, #ff9800 100%)',
+                    borderRadius: '4px 4px 0 0'
+                  }
+                }}
+              >
+                <CardContent sx={{ p: 4 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                    <Box
+                      sx={{
+                        background: 'linear-gradient(135deg, #ffc107 0%, #ff5722 100%)',
+                        borderRadius: '50%',
+                        p: 1.5,
+                        mr: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <QueueIcon sx={{ color: 'white', fontSize: 28 }} />
+                    </Box>
+                    <Typography 
+                      variant="h4" 
+                      sx={{ fontWeight: 700, color: 'white', flex: 1 }}
+                    >
+                      VIP Queue
+                    </Typography>
+                    <Chip 
+                      label={`${vipQueue.length} VIP${vipQueue.length === 1 ? '' : 's'}`}
+                      sx={{
+                        background: 'linear-gradient(135deg, #ffc107 0%, #ff5722 100%)',
+                        color: 'white',
+                        fontWeight: 'bold',
+                        height: 36
+                      }}
+                    />
+                  </Box>
+                  <Grid container spacing={3}>
+                    {vipQueue
+                      .map((id) => queue.find((q) => q.id === id))
+                      .filter(Boolean)
+                      .map((item, index) => (
+                        <Grid item xs={12} sm={6} md={4} lg={3} key={`vip-${item.id}`}>
+                          <Card
+                            elevation={0}
+                            sx={{
+                              height: '100%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              background: 'rgba(0, 0, 0, 0.4)',
+                              backdropFilter: 'blur(10px)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: 3
+                            }}
+                          >
+                            <Box sx={{ position: 'relative', p: 2 }}>
+                              <Chip
+                                label={`#${index + 1}`}
+                                size="small"
+                                sx={{
+                                  position: 'absolute',
+                                  top: 8,
+                                  left: 8,
+                                  backgroundColor: 'rgba(0,0,0,0.7)',
+                                  color: 'white',
+                                  fontWeight: 'bold'
+                                }}
+                              />
+                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'white', pr: 1 }}>
+                                {item.title || 'Untitled Video'}
+                              </Typography>
+                              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                                by {item.submitterAlias || item.submitterUsername}
+                              </Typography>
+                              {item.duration && (
+                                <Chip
+                                  label={`${Math.floor(item.duration / 60)}:${String(item.duration % 60).padStart(2, '0')}`}
+                                  size="small"
+                                  sx={{ mt: 1, backgroundColor: 'rgba(0,0,0,0.7)', color: 'white' }}
+                                />
+                              )}
+                            </Box>
+                          </Card>
+                        </Grid>
+                      ))}
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
           {/* Current Cup Section */}
           {currentCup && (
-            <Grid item xs={12}>
+            <Grid item xs={12} ref={cupRef}>
               <Card 
                 elevation={0}
                 sx={{
@@ -321,19 +542,31 @@ function ViewerHub() {
                   {/* Top 5 Standings */}
                   {standings.length > 0 && (
                     <Box sx={{ mt: 4 }}>
-                      <Typography 
-                        variant="h5" 
-                        gutterBottom
-                        sx={{
-                          fontWeight: 700,
-                          color: 'white',
-                          mb: 3,
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}
-                      >
-                        🏆 Top 5 Standings
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                        <Typography 
+                          variant="h5" 
+                          gutterBottom
+                          sx={{
+                            fontWeight: 700,
+                            color: 'white',
+                            mb: 0,
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}
+                        >
+                          🏆 Top 5 Standings
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          endIcon={<OpenInNewIcon />}
+                          href={`/overlay/${channelName}/leaderboard`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open Leaderboard Overlay
+                        </Button>
+                      </Box>
                       <List sx={{ p: 0 }}>
                         {standings.slice(0, 5).map((entry, index) => (
                           <React.Fragment key={entry.submitterUsername}>
@@ -664,7 +897,7 @@ function ViewerHub() {
 
           {/* Current Queue Section */}
           {queue.length > 0 && (
-            <Grid item xs={12}>
+            <Grid item xs={12} ref={queueRef}>
               <Card
                 elevation={0}
                 sx={{
@@ -914,7 +1147,7 @@ function ViewerHub() {
 
           {/* All Cups Section */}
           {allCups.length > 0 && (
-            <Grid item xs={12}>
+            <Grid item xs={12} ref={cupsRef}>
               <Card
                 elevation={0}
                 sx={{

@@ -11,6 +11,11 @@ function socketHandler(io, channelManager) {
 
     namespace._queueListenersAttached = true;
 
+    // Ensure overlay state exists per namespace
+    if (!namespace._overlayState) {
+      namespace._overlayState = { showPlayer: null, lastUpdate: Date.now() };
+    }
+
     namespace.on('connection', (socket) => {
       logger.info(`Client connected to channel ${channelId}: ${socket.id}`);
 
@@ -24,16 +29,20 @@ function socketHandler(io, channelManager) {
       // Allow clients to request the current queue state
       socket.on('queue:join', async () => {
         try {
-          const [queue, enabled] = await Promise.all([
+          const [queue, enabled, vipQueue] = await Promise.all([
             queueService.getCurrentQueue(),
-            queueService.isQueueEnabled()
+            queueService.isQueueEnabled(),
+            // Provide initial VIP list to clients
+            queueService._getVipList()
           ]);
 
           socket.emit('queue:initial_state', {
             queue,
             enabled,
             currentlyPlaying: queueService.currentlyPlaying,
-            votingState: queueService.getVotingState()
+            votingState: queueService.getVotingState(),
+            overlayState: namespace._overlayState || { showPlayer: null },
+            vipQueue
           });
 
           logger.debug(`Sent initial queue state for channel ${channelId} to ${socket.id}`);
@@ -232,6 +241,47 @@ function socketHandler(io, channelManager) {
         logger.info(`player:state_request from socket ${socket.id} for channel ${channelId}`);
         const state = namespace._playerState || { playing: false, time: 0 };
         socket.emit('player:state_response', state);
+      });
+
+      // Overlay player visibility controls
+      socket.on('overlay:show_player', () => {
+        try {
+          if (!namespace._overlayState) {
+            namespace._overlayState = { showPlayer: null };
+          }
+          namespace._overlayState.showPlayer = true;
+          namespace._overlayState.lastUpdate = Date.now();
+          logger.info(`overlay:show_player for channel ${channelId} by ${socket.id}`);
+          namespace.emit('overlay:player_visibility', { showPlayer: true, reason: 'manual' });
+        } catch (error) {
+          logger.error('Error handling overlay:show_player:', error);
+          socket.emit('error', { message: 'Failed to show overlay player' });
+        }
+      });
+
+      socket.on('overlay:hide_player', () => {
+        try {
+          if (!namespace._overlayState) {
+            namespace._overlayState = { showPlayer: null };
+          }
+          namespace._overlayState.showPlayer = false;
+          namespace._overlayState.lastUpdate = Date.now();
+          logger.info(`overlay:hide_player for channel ${channelId} by ${socket.id}`);
+          namespace.emit('overlay:player_visibility', { showPlayer: false, reason: 'manual' });
+        } catch (error) {
+          logger.error('Error handling overlay:hide_player:', error);
+          socket.emit('error', { message: 'Failed to hide overlay player' });
+        }
+      });
+
+      socket.on('overlay:state_request', () => {
+        try {
+          const current = namespace._overlayState || { showPlayer: null };
+          socket.emit('overlay:state_response', current);
+        } catch (error) {
+          logger.error('Error handling overlay:state_request:', error);
+          socket.emit('error', { message: 'Failed to return overlay state' });
+        }
       });
 
       socket.on('status:request', async () => {

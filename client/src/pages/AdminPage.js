@@ -492,6 +492,57 @@ const AdminPage = () => {
           </Card>
         </Grid>
 
+        {/* VIP Queue */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <QueueIcon sx={{ mr: 1, color: 'secondary.main' }} />
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  VIP Queue
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                <Chip
+                  label={`${Array.isArray(vipQueue) ? vipQueue.length : 0} VIP${Array.isArray(vipQueue) && vipQueue.length === 1 ? '' : 's'}`}
+                  size="small"
+                  color="secondary"
+                  variant="outlined"
+                />
+              </Box>
+
+              {(!Array.isArray(vipQueue) || vipQueue.length === 0) ? (
+                <Alert severity="info">No VIP items right now.</Alert>
+              ) : (
+                <List dense>
+                  {vipQueue.map((id, index) => {
+                    const item = queue.find((q) => q.id === id) || null;
+                    return (
+                      <ListItem key={`vip-${id}`} divider>
+                        <ListItemText
+                          primary={item ? (item.title || 'Untitled Video') : `Queue Item #${id}`}
+                          secondary={item ? `#${index + 1} • by ${formatSubmitterLabel(item, { includeReal: true })}` : `#${index + 1}`}
+                        />
+                        <ListItemSecondaryAction>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Chip label={`#${index + 1}`} size="small" color="secondary" variant="outlined" />
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              onClick={() => handleSubmissionAction(id, 'UNVIP')}
+                            >
+                              Un-VIP
+                            </Button>
+                          </Stack>
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                    );
+                  })}
+                </List>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
         {/* Settings */}
         <Grid item xs={12}>
           <Card>

@@ -1490,6 +1490,13 @@ class QueueService {
 
       this.io.emit('queue:video_removed', { id: itemId });
 
+      // Ensure VIP list no longer references this item
+      try {
+        await this._removeVipEntry(itemId);
+      } catch (err) {
+        logger.warn('Failed to remove VIP entry during markAsPlayed', { channelId: this.channelId, itemId, error: err });
+      }
+
       // Auto-play next if enabled
       const autoPlay = await this.getSetting('auto_play_next', 'true');
       if (autoPlay === 'true') {
@@ -1526,6 +1533,14 @@ class QueueService {
       });
 
       this.currentlyPlaying = null;
+
+      // Clear VIP queue since all active items were removed
+      try {
+        await this._setVipList([]);
+        this.io.emit('queue:vip_updated', { channelId: this.channelId, vipQueue: [] });
+      } catch (err) {
+        logger.warn('Failed to clear VIP queue during clearQueue', { channelId: this.channelId, error: err });
+      }
 
       // Log clear
       await this.logSubmission(clearedBy, 'CLEAR_QUEUE', {});
@@ -2244,7 +2259,24 @@ class QueueService {
   async addVipForItem(queueItemId) {
     try {
       const id = Number(queueItemId);
-      if (!Number.isInteger(id)) return false;
+      if (!Number.isInteger(id)) {
+        throw new Error('Invalid queue item id');
+      }
+
+      // Validate item exists, belongs to this channel, and is eligible
+      const item = await this.db.queueItem.findUnique({
+        where: { id },
+        select: { id: true, channelId: true, status: true }
+      });
+      if (!item) {
+        throw new Error('Queue item not found');
+      }
+      if (item.channelId !== this.channelId) {
+        throw new Error('Queue item does not belong to this channel');
+      }
+      if (!ORDERABLE_QUEUE_STATUSES.includes(item.status)) {
+        throw new Error('Queue item is not eligible for VIP');
+      }
       const list = await this._getVipList();
       if (!list.includes(id)) {
         list.push(id);
@@ -2254,7 +2286,7 @@ class QueueService {
       return true;
     } catch (error) {
       logger.error('Failed to add VIP item:', { channelId: this.channelId, error });
-      return false;
+      throw error;
     }
   }
 

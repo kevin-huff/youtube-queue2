@@ -324,8 +324,9 @@ const describeJudgeStatus = (judge) => {
   return { label: 'Waiting', color: 'default' };
 };
 
-const ChannelQueue = () => {
-  const { channelName } = useParams();
+const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
+  const { channelName: channelNameParam } = useParams();
+  const channelName = channelNameProp || channelNameParam;
   const [channel, setChannel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -363,7 +364,10 @@ const ChannelQueue = () => {
     revealNextJudge,
     revealAverageScore,
     revealSocialScore,
-    completeVotingSession
+    completeVotingSession,
+    showOverlayPlayer,
+    hideOverlayPlayer,
+    overlayShowPlayer
   } = useSocket();
 
   const [activeCupId, setActiveCupId] = useState(null);
@@ -976,6 +980,8 @@ const ChannelQueue = () => {
   const volumeLabel = muted ? 'Muted' : `${Math.round(normalizedVolume)}%`;
   const playDisabled = !canOperatePlayback || !channelConnected || !hasVideo;
   const pauseDisabled = playDisabled;
+  const showOverlayDisabled = !canOperatePlayback || !hasVideo || isVotingActive;
+  const hideOverlayDisabled = !canOperatePlayback || !hasVideo;
 
   const handleVolumeChange = (_, value) => {
     const next = Array.isArray(value) ? value[0] : value;
@@ -1078,25 +1084,27 @@ const ChannelQueue = () => {
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Box display="flex" alignItems="center" mb={4}>
-          <Avatar
-            src={channel.profileImageUrl || undefined}
-            alt={channel.displayName}
-            sx={{ width: 72, height: 72, mr: 2 }}
-          >
-            {channel.displayName?.charAt(0)?.toUpperCase() || channel.id?.charAt(0)?.toUpperCase()}
-          </Avatar>
-          <Box>
-            <Typography variant="h4" fontWeight={700}>
-              {channel.displayName || channel.id}
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Live queue for {channel.id}
-            </Typography>
+    <Box sx={{ minHeight: embedded ? 'auto' : '100vh', bgcolor: 'background.default' }}>
+      <Container maxWidth="lg" sx={{ py: embedded ? 2 : 4 }}>
+        {!embedded && (
+          <Box display="flex" alignItems="center" mb={4}>
+            <Avatar
+              src={channel.profileImageUrl || undefined}
+              alt={channel.displayName}
+              sx={{ width: 72, height: 72, mr: 2 }}
+            >
+              {channel.displayName?.charAt(0)?.toUpperCase() || channel.id?.charAt(0)?.toUpperCase()}
+            </Avatar>
+            <Box>
+              <Typography variant="h4" fontWeight={700}>
+                {channel.displayName || channel.id}
+              </Typography>
+              <Typography variant="body1" color="text.secondary">
+                Live queue for {channel.id}
+              </Typography>
+            </Box>
           </Box>
-        </Box>
+        )}
 
         <Grid container spacing={4}>
           <Grid item xs={12} md={7}>
@@ -1173,11 +1181,15 @@ const ChannelQueue = () => {
                   onPause={handlePause}
                   onSkip={handleSkip}
                   onVote={handleStartVoting}
+                  onShowOverlay={showOverlayPlayer}
+                  onHideOverlay={hideOverlayPlayer}
                   onPlayNext={handlePlayNext}
                   playDisabled={playDisabled}
                   pauseDisabled={pauseDisabled}
                   skipDisabled={!canOperatePlayback || !currentlyPlaying}
                   voteDisabled={startDisabled}
+                  showOverlayDisabled={showOverlayDisabled}
+                  hideOverlayDisabled={hideOverlayDisabled}
                   playNextDisabled={!canOperatePlayback || !queue.length}
                   volumeValue={volumeSliderValue}
                   volumeLabel={volumeLabel}

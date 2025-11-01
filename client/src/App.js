@@ -41,10 +41,10 @@ function App() {
   const isPlayerRoute = location.pathname.startsWith('/player/');
   const isJudgeRoute = location.pathname.startsWith('/judge/');
   const isOverlayRoute = location.pathname.includes('/overlay');
-  const controlsQuery = new URLSearchParams(location.search).get('controls');
-  const playerControlsVisible = controlsQuery === 'show';
-  const shouldRenderNavBar = (!isPlayerRoute && !isJudgeRoute && !isOverlayRoute) || playerControlsVisible;
-  const isPureOverlayView = isOverlayRoute || (isPlayerRoute && !playerControlsVisible);
+  // Always hide NavBar on player overlay routes (even with controls=show)
+  const shouldRenderNavBar = !isPlayerRoute && !isJudgeRoute && !isOverlayRoute;
+  // Treat player overlay routes as pure overlays for styling
+  const isPureOverlayView = isOverlayRoute || isPlayerRoute;
 
   return (
     <ThemeProvider theme={theme}>

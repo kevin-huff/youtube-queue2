@@ -18,7 +18,9 @@ import {
   VolumeUp as VolumeUpIcon,
   HowToVote as HowToVoteIcon,
   PlayArrow as PlayIcon,
-  Pause as PauseIcon
+  Pause as PauseIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
 
 const noop = () => {};
@@ -69,9 +71,13 @@ export const PlayerControlPanel = ({
   onPause,
   onSkip,
   onVote,
+  onShowOverlay,
+  onHideOverlay,
   playNextDisabled = false,
   skipDisabled = false,
   voteDisabled = false,
+  showOverlayDisabled = false,
+  hideOverlayDisabled = false,
   playDisabled = false,
   pauseDisabled = false,
   volumeValue = 0,
@@ -235,6 +241,24 @@ export const PlayerControlPanel = ({
                 onClick={onVote}
                 disabled={voteDisabled}
                 color="primary"
+              />
+            )}
+            {onShowOverlay && (
+              <IconAction
+                title="Show video on overlay"
+                icon={<VisibilityIcon />}
+                onClick={onShowOverlay}
+                disabled={showOverlayDisabled}
+                color="info"
+              />
+            )}
+            {onHideOverlay && (
+              <IconAction
+                title="Hide video on overlay"
+                icon={<VisibilityOffIcon />}
+                onClick={onHideOverlay}
+                disabled={hideOverlayDisabled}
+                color="warning"
               />
             )}
             {onPlayNext && (

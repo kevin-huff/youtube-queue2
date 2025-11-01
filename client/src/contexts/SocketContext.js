@@ -68,6 +68,7 @@ export const SocketProvider = ({ children }) => {
   const [vipQueue, setVipQueue] = useState([]);
   const [lastShuffle, setLastShuffle] = useState(null);
   const [votingState, setVotingState] = useState(null);
+  const [overlayShowPlayer, setOverlayShowPlayer] = useState(null); // null=auto, true=show, false=hide
 
   // Establish connection to the root namespace
   useEffect(() => {
@@ -126,6 +127,7 @@ export const SocketProvider = ({ children }) => {
     setTopEight([]);
     setLastShuffle(null);
     setVotingState(null);
+    setOverlayShowPlayer(null);
     setActiveChannelId(null);
   }, []);
 
@@ -144,6 +146,19 @@ export const SocketProvider = ({ children }) => {
     setQueueEnabled(Boolean(payload.enabled));
     setCurrentlyPlaying(payload.currentlyPlaying || null);
     setVotingState(payload.votingState || null);
+    const initialOverlay = payload.overlayState && typeof payload.overlayState.showPlayer === 'boolean'
+      ? payload.overlayState.showPlayer
+      : null;
+    setOverlayShowPlayer(initialOverlay);
+    // Initialize VIP queue if provided
+    try {
+      const initialVip = Array.isArray(payload.vipQueue)
+        ? payload.vipQueue.map((v) => Number(v)).filter((n) => Number.isInteger(n))
+        : [];
+      setVipQueue(initialVip);
+    } catch (_) {
+      setVipQueue([]);
+    }
     deriveTopEight(nextQueue);
   }, [deriveTopEight]);
 
@@ -416,6 +431,18 @@ export const SocketProvider = ({ children }) => {
     socket.on('cup:standings_updated', handleCupStandingsUpdated);
     socket.on('voting:update', handleVotingUpdate);
     socket.on('voting:ended', handleVotingEnded);
+
+    // Overlay visibility events
+    socket.on('overlay:player_visibility', (payload = {}) => {
+      if (typeof payload.showPlayer === 'boolean') {
+        setOverlayShowPlayer(payload.showPlayer);
+      }
+    });
+    socket.on('overlay:state_response', (payload = {}) => {
+      if (typeof payload.showPlayer === 'boolean') {
+        setOverlayShowPlayer(payload.showPlayer);
+      }
+    });
 
     socket.on('error', (error) => {
       console.error('Channel socket error:', error);
@@ -716,6 +743,9 @@ export const SocketProvider = ({ children }) => {
   const playOverlay = useCallback((time) => emitToChannel('player:play', { time }), [emitToChannel]);
   const pauseOverlay = useCallback((time) => emitToChannel('player:pause', { time }), [emitToChannel]);
   const seekOverlay = useCallback((time) => emitToChannel('player:seek', { time }), [emitToChannel]);
+  const showOverlayPlayer = useCallback(() => emitToChannel('overlay:show_player'), [emitToChannel]);
+  const hideOverlayPlayer = useCallback(() => emitToChannel('overlay:hide_player'), [emitToChannel]);
+  const requestOverlayState = useCallback(() => emitToChannel('overlay:state_request'), [emitToChannel]);
 
   const addChannelListener = useCallback((event, handler) => {
     if (!channelSocketRef.current) {
@@ -753,6 +783,7 @@ export const SocketProvider = ({ children }) => {
   vipQueue,
     lastShuffle,
     votingState,
+    overlayShowPlayer,
     
 
     // Controls
@@ -769,6 +800,9 @@ export const SocketProvider = ({ children }) => {
     playOverlay,
     pauseOverlay,
     seekOverlay,
+    showOverlayPlayer,
+    hideOverlayPlayer,
+    requestOverlayState,
     startVotingSession,
     cancelVotingSession,
     revealNextJudge,
@@ -801,6 +835,7 @@ export const SocketProvider = ({ children }) => {
     topEight,
     lastShuffle,
     votingState,
+    overlayShowPlayer,
     connectToChannel,
     cleanupChannelSocket,
     playNext,
@@ -814,6 +849,9 @@ export const SocketProvider = ({ children }) => {
     playOverlay,
     pauseOverlay,
     seekOverlay,
+    showOverlayPlayer,
+    hideOverlayPlayer,
+    requestOverlayState,
     startVotingSession,
     cancelVotingSession,
     revealNextJudge,

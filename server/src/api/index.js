@@ -316,6 +316,27 @@ router.get('/channels/public/:channelName/queue', async (req, res) => {
   }
 });
 
+// Public VIP list for a channel
+router.get('/channels/public/:channelName/vip', async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const normalizedChannelId = req.params.channelName.toLowerCase();
+    const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+
+    const vipQueue = await queueService._getVipList();
+    res.json({
+      channelId: normalizedChannelId,
+      vipQueue
+    });
+  } catch (error) {
+    if (error.status === 404) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+    logger.error('Error getting public VIP list:', error);
+    res.status(500).json({ error: 'Failed to get VIP list' });
+  }
+});
+
 // Get list of cups for a channel (public)
 router.get('/channels/public/:channelName/cups', async (req, res) => {
   try {
@@ -1087,8 +1108,11 @@ router.post('/channels/:channelId/submissions/:itemId/review',
           break;
         case 'VIP':
           // Grant VIP status to an existing queue item (producer/manager action)
-          await queueService.addVipForItem(itemId);
           try {
+            const ok = await queueService.addVipForItem(itemId);
+            if (!ok) {
+              return res.status(400).json({ error: 'Failed to add VIP for item' });
+            }
             const raw = await channelManager.prisma.queueItem.findUnique({
               where: { id: itemId },
               include: {
@@ -1098,8 +1122,8 @@ router.post('/channels/:channelId/submissions/:itemId/review',
             });
             result = await queueService._hydrateQueueItem(raw);
           } catch (err) {
-            logger.warn('Failed to hydrate VIP-updated item', { channelId: normalizedChannelId, itemId, error: err });
-            result = null;
+            logger.warn('Failed to hydrate or add VIP-updated item', { channelId: normalizedChannelId, itemId, error: err });
+            return res.status(400).json({ error: err.message || 'Failed to add VIP' });
           }
           break;
         case 'UNVIP':
@@ -1116,7 +1140,7 @@ router.post('/channels/:channelId/submissions/:itemId/review',
             result = await queueService._hydrateQueueItem(raw2);
           } catch (err) {
             logger.warn('Failed to remove VIP entry for item', { channelId: normalizedChannelId, itemId, error: err });
-            result = null;
+            return res.status(400).json({ error: err.message || 'Failed to remove VIP' });
           }
           break;
         case 'PENDING':
@@ -1164,6 +1188,21 @@ router.get('/channels/:channelId/settings', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Error getting settings:', error);
     res.status(error.status || 500).json({ error: error.message || 'Failed to get settings' });
+  }
+});
+
+// Authenticated VIP list for channel owners
+router.get('/channels/:channelId/vip', requireAuth, async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+
+    const vipQueue = await queueService._getVipList();
+    res.json({ channelId: normalizedChannelId, vipQueue });
+  } catch (error) {
+    logger.error('Error getting VIP list:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to get VIP list' });
   }
 });
 

@@ -49,6 +49,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { MenuItem } from '@mui/material';
 import { useSocket } from '../contexts/SocketContext';
+import ChannelQueue from './ChannelQueue';
 
 const DEFAULT_CHANNEL_SETTINGS = {
   queue_enabled: 'false',
@@ -171,6 +172,7 @@ const Dashboard = () => {
   const [warningDialogOpen, setWarningDialogOpen] = useState(false);
   const [warningNote, setWarningNote] = useState('');
   const [warningTarget, setWarningTarget] = useState(null);
+  const [producerAccessDenied, setProducerAccessDenied] = useState(false);
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
@@ -185,6 +187,11 @@ const Dashboard = () => {
 
   const canModerate = useMemo(
     () => hasChannelRole(currentChannelId || undefined, ['OWNER', 'MANAGER', 'PRODUCER', 'MODERATOR']),
+    [currentChannelId, hasChannelRole]
+  );
+
+  const canProduce = useMemo(
+    () => hasChannelRole(currentChannelId || undefined, ['OWNER', 'MANAGER', 'PRODUCER']),
     [currentChannelId, hasChannelRole]
   );
 
@@ -206,11 +213,12 @@ const Dashboard = () => {
 
   const availableTabs = useMemo(() => {
     const tabs = [{ value: 'overview', label: 'Overview' }];
-    if (canModerate) {
-      tabs.push({ value: 'moderation', label: 'Moderation' });
+    if (canProduce && Array.isArray(channels) && channels.length > 0) {
+      tabs.push({ value: 'producer', label: 'Producer' });
     }
+    if (canModerate) tabs.push({ value: 'moderation', label: 'Moderation' });
     return tabs;
-  }, [canModerate]);
+  }, [canProduce, canModerate, channels]);
 
   // Auto-save with debounce
   const autoSaveSettings = useCallback(async (settingsToSave) => {
@@ -550,10 +558,37 @@ const Dashboard = () => {
       if (activeTab !== 'moderation') {
         setActiveTab('moderation');
       }
-    } else if (activeTab !== 'overview') {
+      return;
+    }
+
+    if (requestedTab === 'producer') {
+      if (!canProduce) {
+        if (activeTab !== 'overview') {
+          setActiveTab('overview');
+        }
+        setProducerAccessDenied(true);
+        params.delete('tab');
+        const nextSearch = params.toString();
+        navigate(
+          {
+            pathname: location.pathname,
+            search: nextSearch ? `?${nextSearch}` : ''
+          },
+          { replace: true }
+        );
+        return;
+      }
+
+      if (activeTab !== 'producer') {
+        setActiveTab('producer');
+      }
+      return;
+    }
+
+    if (activeTab !== 'overview') {
       setActiveTab('overview');
     }
-  }, [location.pathname, location.search, canModerate, navigate, activeTab, authLoading, loading]);
+  }, [location.pathname, location.search, canModerate, canProduce, navigate, activeTab, authLoading, loading]);
 
   // Connect to channel socket when channel is loaded
   useEffect(() => {
@@ -597,11 +632,32 @@ const Dashboard = () => {
     }
   }, [activeTab, warningDialogOpen, closeWarningDialog]);
 
+  // Ensure active tab is valid if tabs change (e.g., no channels → hide Producer)
+  useEffect(() => {
+    const exists = availableTabs.some((t) => t.value === activeTab);
+    if (!exists) {
+      setActiveTab('overview');
+      const params = new URLSearchParams(location.search);
+      params.delete('tab');
+      const nextSearch = params.toString();
+      navigate(
+        {
+          pathname: location.pathname,
+          search: nextSearch ? `?${nextSearch}` : ''
+        },
+        { replace: true }
+      );
+    }
+  }, [availableTabs, activeTab, navigate, location.pathname, location.search]);
+
   const handleTabChange = useCallback((event, newValue) => {
     if (newValue === activeTab) {
       return;
     }
     if (newValue === 'moderation' && !canModerate) {
+      return;
+    }
+    if (newValue === 'producer' && !canProduce) {
       return;
     }
 
@@ -621,7 +677,7 @@ const Dashboard = () => {
       },
       { replace: true }
     );
-  }, [activeTab, canModerate, navigate, location.pathname, location.search]);
+  }, [activeTab, canModerate, canProduce, navigate, location.pathname, location.search]);
 
   const warningCount = useMemo(
     () => moderationItems.filter((item) => item.moderationStatus === 'WARNING').length,
@@ -719,6 +775,17 @@ const Dashboard = () => {
                 {error}
               </Alert>
             )}
+
+            <Snackbar
+              open={producerAccessDenied}
+              autoHideDuration={3000}
+              onClose={() => setProducerAccessDenied(false)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+            >
+              <Alert onClose={() => setProducerAccessDenied(false)} severity="warning" sx={{ width: '100%' }}>
+                Access required: Producer tab is limited to Owner, Manager, or Producer.
+              </Alert>
+            </Snackbar>
 
             {!channel && !loading && (
               <Paper
@@ -853,15 +920,15 @@ const Dashboard = () => {
                     transition: 'all 0.2s',
                     '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
                   }}
-                  onClick={() => navigate(`/channel/${channel.id}`)}
+                  onClick={() => window.open(`/viewer/${channel.id}`, '_blank')}
                 >
                   <CardContent>
                     <Box display="flex" alignItems="center" gap={2}>
-                      <QueueMusic color="primary" />
+                      <LiveTv color="primary" />
                       <Box>
-                        <Typography variant="h6">Producer Console</Typography>
+                        <Typography variant="h6">Viewer Hub</Typography>
                         <Typography variant="body2" color="text.secondary">
-                          Control playback and manage queue
+                          Public page for viewers (standings, queue)
                         </Typography>
                       </Box>
                     </Box>
@@ -952,6 +1019,28 @@ const Dashboard = () => {
                         <Typography variant="h6">Player Overlay</Typography>
                         <Typography variant="body2" color="text.secondary">
                           Open synced video player source
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={4} lg={3}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
+                  }}
+                  onClick={() => window.open(`/overlay/${channel.id}/leaderboard`, '_blank')}
+                >
+                  <CardContent>
+                    <Box display="flex" alignItems="center" gap={2}>
+                      <LiveTv color="primary" />
+                      <Box>
+                        <Typography variant="h6">Leaderboard Overlay</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Show cup standings as a browser source
                         </Typography>
                       </Box>
                     </Box>
@@ -1282,9 +1371,158 @@ const Dashboard = () => {
                   </Button>
                 </Box>
               </Box>
+
+              <Divider sx={{ my: 3 }} />
+
+              <Box mb={3}>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Viewer Hub - Public hub for standings, queue, and cups
+                </Typography>
+                <Box display="flex" alignItems="center" gap={2} mt={1}>
+                  <Typography 
+                    variant="body1" 
+                    sx={{ 
+                      flex: 1, 
+                      fontFamily: 'monospace',
+                      bgcolor: 'action.hover',
+                      p: 1.5,
+                      borderRadius: 1
+                    }}
+                  >
+                    {window.location.origin}/viewer/{channel.id}
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<ContentCopy />}
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/viewer/${channel.id}`);
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </Box>
+              </Box>
+
+              <Divider sx={{ mb: 3 }} />
+
+              <Box mb={3}>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Queue Overlay - Display Top 8 and queue as a browser source
+                </Typography>
+                <Box display="flex" alignItems="center" gap={2} mt={1}>
+                  <Typography 
+                    variant="body1" 
+                    sx={{ 
+                      flex: 1, 
+                      fontFamily: 'monospace',
+                      bgcolor: 'action.hover',
+                      p: 1.5,
+                      borderRadius: 1
+                    }}
+                  >
+                    {window.location.origin}/overlay/{channel.id}/queue
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<ContentCopy />}
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/overlay/${channel.id}/queue`);
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </Box>
+              </Box>
+
+              <Divider sx={{ mb: 3 }} />
+
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Leaderboard Overlay - Display current cup standings as a browser source
+                </Typography>
+                <Box display="flex" alignItems="center" gap={2} mt={1}>
+                  <Typography 
+                    variant="body1" 
+                    sx={{ 
+                      flex: 1, 
+                      fontFamily: 'monospace',
+                      bgcolor: 'action.hover',
+                      p: 1.5,
+                      borderRadius: 1
+                    }}
+                  >
+                    {window.location.origin}/overlay/{channel.id}/leaderboard
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<ContentCopy />}
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/overlay/${channel.id}/leaderboard`);
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </Box>
+              </Box>
             </Paper>
           </>
         )}
+          </>
+        )}
+
+        {activeTab === 'producer' && canProduce && (
+          <>
+            {!channel && !loading && (
+              <Paper
+                sx={{
+                  p: 6,
+                  textAlign: 'center',
+                  background: alpha(theme.palette.primary.main, 0.05),
+                  border: `2px dashed ${alpha(theme.palette.primary.main, 0.3)}`
+                }}
+              >
+                <LiveTv sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  Channel Not Found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Select a channel above to open the Producer Console.
+                </Typography>
+              </Paper>
+            )}
+
+            {channel && (
+              <>
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2}>
+                      <Box>
+                        <Typography variant="h6" gutterBottom>
+                          Producer Console
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Control playback, manage the queue, and monitor submissions for {channel.displayName}.
+                        </Typography>
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        <Button
+                          variant="outlined"
+                          onClick={() => window.open(`/channel/${channel.id}`, '_blank')}
+                        >
+                          Open in New Tab
+                        </Button>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+                <Box sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
+                  <ChannelQueue channelName={channel.id} embedded />
+                </Box>
+              </>
+            )}
           </>
         )}
 

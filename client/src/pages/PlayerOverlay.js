@@ -160,7 +160,8 @@ const PlayerOverlay = () => {
     removeChannelListener,
     channelConnected,
     votingState,
-    startVotingSession
+    startVotingSession,
+    overlayShowPlayer
   } = useSocket();
 
   const [pendingSeek, setPendingSeek] = useState(null);
@@ -234,21 +235,20 @@ const PlayerOverlay = () => {
   }, [currentlyPlaying?.id]);
 
   // Track video changes and show/hide player
-  // Hide player when voting is active, show when video is playing and voting is not active
+  // Hide player when voting is active; otherwise honor manual override if present
   useEffect(() => {
-    const currentVideoId = currentlyPlaying?.videoId;
+    const vidId = currentlyPlaying?.videoId;
+    const autoShow = Boolean(vidId) && !votingActive;
+    const manual = (overlayShowPlayer === true || overlayShowPlayer === false) ? overlayShowPlayer : null;
+    const finalShow = !votingActive && (manual !== null ? manual : Boolean(vidId));
 
-    // Show player only when there's a video AND voting is not active
-    if (currentVideoId && !votingActive) {
-      setShouldShowPlayer(true);
-      setPreviousVideoId(currentVideoId);
-    } else {
-      setShouldShowPlayer(false);
-      if (!currentVideoId) {
-        setPreviousVideoId(null);
-      }
+    setShouldShowPlayer(finalShow);
+    if (finalShow && vidId) {
+      setPreviousVideoId(vidId);
+    } else if (!vidId) {
+      setPreviousVideoId(null);
     }
-  }, [currentlyPlaying?.videoId, votingActive]);
+  }, [currentlyPlaying?.videoId, votingActive, overlayShowPlayer]);
 
   const {
     containerRef,
