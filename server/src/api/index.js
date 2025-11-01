@@ -26,11 +26,18 @@ const validate = (req, res, next) => {
 const UPLOADS_ROOT = process.env.UPLOADS_DIR
   ? path.resolve(process.env.UPLOADS_DIR)
   : path.join(__dirname, '../../uploads');
+// Log the resolved uploads root once when this module loads
+try {
+  logger.info('Uploads root resolved', { env: process.env.UPLOADS_DIR || null, path: UPLOADS_ROOT });
+} catch (_) {}
 const ensureDir = (dir) => {
   try {
-    fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      logger.info('Created uploads directory', { dir });
+    }
   } catch (e) {
-    // ignore if exists or race
+    logger.error('Failed to create uploads directory', { dir, error: e?.message });
   }
 };
 ensureDir(UPLOADS_ROOT);
@@ -40,12 +47,23 @@ const storage = multer.diskStorage({
     const channelId = (req.params.channelId || 'default').toString().toLowerCase();
     const channelDir = path.join(UPLOADS_ROOT, channelId);
     ensureDir(channelDir);
+    try {
+      logger.info('Upload destination (shuffle)', {
+        channelId,
+        channelDir,
+        uploadsRoot: UPLOADS_ROOT,
+        route: req.originalUrl
+      });
+    } catch (_) {}
     cb(null, channelDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || '') || '.mp3';
     const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
     const name = `shuffle-${Date.now()}${safeExt}`;
+    try {
+      logger.info('Assigned filename (shuffle)', { original: file.originalname, assigned: name, mime: file.mimetype });
+    } catch (_) {}
     cb(null, name);
   }
 });
@@ -68,12 +86,23 @@ const sbStorage = multer.diskStorage({
     const channelId = (req.params.channelId || 'default').toString().toLowerCase();
     const channelDir = path.join(UPLOADS_ROOT, channelId);
     ensureDir(channelDir);
+    try {
+      logger.info('Upload destination (soundboard)', {
+        channelId,
+        channelDir,
+        uploadsRoot: UPLOADS_ROOT,
+        route: req.originalUrl
+      });
+    } catch (_) {}
     cb(null, channelDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || '') || '.mp3';
     const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
     const name = `sound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExt}`;
+    try {
+      logger.info('Assigned filename (soundboard)', { original: file.originalname, assigned: name, mime: file.mimetype });
+    } catch (_) {}
     cb(null, name);
   }
 });
@@ -1331,6 +1360,15 @@ router.post(
       // Store relative path to avoid mixed-content issues behind HTTPS
       await queueService.updateSetting('shuffle_audio_url', publicRel);
 
+      try {
+        logger.info('Shuffle audio saved', {
+          channelId: normalizedChannelId,
+          filename: req.file.filename,
+          destination: req.file.destination,
+          diskPath: req.file.path || null,
+          size: req.file.size
+        });
+      } catch (_) {}
       logger.info(`Uploaded shuffle audio for ${normalizedChannelId}: ${publicUrl}`);
       return res.status(201).json({ url: publicRel, absoluteUrl: publicUrl, filename: req.file.filename, channelId: normalizedChannelId });
     } catch (error) {
@@ -1390,6 +1428,18 @@ router.post('/channels/:channelId/soundboard/upload', requireAuth, requireChanne
     const next = [item, ...items].slice(0, 100); // cap to 100
     await setSoundboardItems(queueService, next);
 
+    try {
+      logger.info('Soundboard item saved', {
+        channelId,
+        id: item.id,
+        name: item.name,
+        filename: req.file.filename,
+        destination: req.file.destination,
+        diskPath: req.file.path || null,
+        size: req.file.size,
+        urlRel
+      });
+    } catch (_) {}
     res.status(201).json({ item });
   } catch (error) {
     logger.error('Error uploading soundboard item:', error);

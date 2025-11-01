@@ -207,6 +207,9 @@ class Server {
       : path.join(__dirname, '../uploads');
     // Use fallthrough: false so missing files return 404 instead of SPA index.html
     this.app.use('/uploads', express.static(uploadsDir, { fallthrough: false }));
+    try {
+      logger.info('Serving /uploads from', { uploadsDir });
+    } catch (_) {}
 
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
