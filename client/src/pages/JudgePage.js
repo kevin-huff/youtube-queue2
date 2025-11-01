@@ -43,7 +43,8 @@ const JudgePage = () => {
     pauseOverlay,
     seekOverlay
   } = useSocket();
-  const sbAudioRef = useRef(null);
+  // Track multiple concurrent soundboard audio instances
+  const sbAudiosRef = useRef(new Set());
   const [sbAudioError, setSbAudioError] = useState(false);
   const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [session, setSession] = useState(null);
@@ -124,21 +125,36 @@ const JudgePage = () => {
         } catch (_) {}
         // eslint-disable-next-line no-console
         console.info('JudgePage: resolved audio url', url);
-        if (sbAudioRef.current) {
-          try { sbAudioRef.current.pause(); } catch (_) {}
-        }
         const audio = new Audio(url);
-        sbAudioRef.current = audio;
         audio.volume = 1;
         audio.play().catch((err) => {
           console.warn('Soundboard audio playback failed:', err);
           setSbAudioError(true);
         });
+        try {
+          sbAudiosRef.current.add(audio);
+          const cleanup = () => {
+            try { sbAudiosRef.current.delete(audio); } catch (_) {}
+          };
+          audio.addEventListener('ended', cleanup, { once: true });
+          audio.addEventListener('error', cleanup, { once: true });
+        } catch (_) {}
       } catch (_) {}
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
   }, [addChannelListener, removeChannelListener, channelConnected]);
+
+  // Cleanup all active soundboard audio on unmount
+  useEffect(() => () => {
+    try {
+      for (const a of sbAudiosRef.current) {
+        try { a.pause(); } catch (_) {}
+        try { a.currentTime = 0; } catch (_) {}
+      }
+      sbAudiosRef.current.clear?.();
+    } catch (_) {}
+  }, []);
 
   // Playback control handlers
   const handlePlayPause = () => {

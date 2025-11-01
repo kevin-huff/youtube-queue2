@@ -30,7 +30,9 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import {
   Settings,
@@ -45,7 +47,8 @@ import {
   Person,
   Delete,
   ThumbUp,
-  WarningAmber
+  WarningAmber,
+  OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -536,6 +539,25 @@ const Dashboard = () => {
       setSbBusyId(null);
     }
   }, [channel?.id, soundboardItems]);
+
+  const resolveItemUrl = useCallback((item) => {
+    const base = (SERVER_BASE || '').replace(/\/$/, '');
+    const rel = item?.url || item?.absoluteUrl || '';
+    if (!rel) return '';
+    return rel.startsWith('/') ? `${base}${rel}` : rel;
+  }, [SERVER_BASE]);
+
+  const handleCopyUrl = useCallback(async (item) => {
+    try {
+      const url = resolveItemUrl(item);
+      if (!url) return;
+      await navigator.clipboard.writeText(url);
+      setSbToast('Copied URL');
+    } catch (err) {
+      console.warn('Copy failed', err);
+      setSbToast('Copy failed');
+    }
+  }, [resolveItemUrl]);
 
   const handleDeleteSound = useCallback(async (itemId) => {
     if (!channel?.id || !itemId) return;
@@ -1070,145 +1092,100 @@ const Dashboard = () => {
             </Grid>
 
             {/* Quick Actions */}
-            <Typography variant="h5" fontWeight={600} gutterBottom>
+            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
               Quick Actions
             </Typography>
-            <Grid container spacing={2} sx={{ mb: 4 }}>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card 
-                  sx={{ 
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
-                  }}
-                  onClick={() => window.open(`/viewer/${channel.id}`, '_blank')}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <LiveTv color="primary" />
-                      <Box>
-                        <Typography variant="h6">Viewer Hub</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Public page for viewers (standings, queue)
+            {(() => {
+              const base = window.location.origin.replace(/\/$/, '');
+              const rows = [
+                { icon: <LiveTv color="primary" />, label: 'Viewer Hub', desc: 'Public page (standings + queue)', url: `${base}/viewer/${channel.id}` },
+                { icon: <TrendingUp color="primary" />, label: 'Manage Cups', desc: 'Create & manage gameshow events', onOpen: () => navigate(`/channel/${channel.id}/cups`) },
+                { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
+                { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
+                { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
+              ];
+              return (
+                <Stack spacing={1.25} sx={{ mb: 4 }}>
+                  {rows.map((row, idx) => (
+                    <Box
+                      key={`${row.label}-${idx}`}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        border: '1px solid',
+                        borderColor: row.danger ? 'error.light' : 'divider',
+                        bgcolor: row.danger ? alpha(theme.palette.error.main, 0.05) : 'background.paper',
+                        borderRadius: 1.2,
+                        p: 1
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36 }}>{row.icon}</Box>
+                      <Box sx={{ minWidth: 220 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          {row.label}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {row.desc}
                         </Typography>
                       </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card 
-                  sx={{ 
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
-                  }}
-                  onClick={() => navigate(`/channel/${channel.id}/cups`)}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <TrendingUp color="primary" />
-                      <Box>
-                        <Typography variant="h6">Manage Cups</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Create and manage gameshow events
-                        </Typography>
+                      <Box sx={{ flex: 1 }}>
+                        {row.url && (
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: 'monospace',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              px: 1.25,
+                              py: 0.75,
+                              borderRadius: 1,
+                              bgcolor: 'action.hover'
+                            }}
+                            title={row.url}
+                          >
+                            {row.url}
+                          </Typography>
+                        )}
                       </Box>
+                      <Stack direction="row" spacing={0.5}>
+                        {row.url && (
+                          <Tooltip title="Open in new tab">
+                            <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
+                              <OpenInNewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.url && (
+                          <Tooltip title="Copy URL">
+                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(row.url)}>
+                              <ContentCopy fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.onOpen && (
+                          <Tooltip title={row.danger ? (clearingQueue ? 'Clearing…' : 'Clear Queue') : 'Open'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant={row.danger ? 'outlined' : 'contained'}
+                                color={row.danger ? 'error' : 'primary'}
+                                disabled={row.danger && clearingQueue}
+                                onClick={row.onOpen}
+                              >
+                                {row.danger ? (clearingQueue ? 'Clearing…' : 'Clear') : 'Open'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        )}
+                      </Stack>
                     </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card 
-                  sx={{ 
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 },
-                    borderColor: 'error.main',
-                    opacity: clearingQueue ? 0.6 : 1
-                  }}
-                  onClick={clearingQueue ? undefined : handleClearQueue}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <Delete color="error" />
-                      <Box>
-                        <Typography variant="h6">Clear Queue</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {clearingQueue ? 'Clearing...' : 'Remove all videos from queue'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card 
-                  sx={{ 
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
-                  }}
-                  onClick={() => window.open(`/overlay/${channel.id}/queue`, '_blank')}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <LiveTv color="primary" />
-                      <Box>
-                        <Typography variant="h6">Queue Overlay</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Launch Top 8 + queue browser source
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
-                  }}
-                  onClick={() => window.open(`/player/${channel.id}`, '_blank')}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <LiveTv color="primary" />
-                      <Box>
-                        <Typography variant="h6">Player Overlay</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Open synced video player source
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={4} lg={3}>
-                <Card
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
-                  }}
-                  onClick={() => window.open(`/overlay/${channel.id}/leaderboard`, '_blank')}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <LiveTv color="primary" />
-                      <Box>
-                        <Typography variant="h6">Leaderboard Overlay</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Show cup standings as a browser source
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
+                  ))}
+                </Stack>
+              );
+            })()}
 
             {/* Queue Settings */}
             {canManageSettings ? (
@@ -1321,39 +1298,44 @@ const Dashboard = () => {
                         {sbError && (
                           <Alert severity="error">{sbError}</Alert>
                         )}
-                        <List dense>
-                          {soundboardItems.length === 0 && (
-                            <Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>
+                        <List dense sx={{ borderTop: 1, borderColor: 'divider', mt: 1 }}>
+                          {soundboardItems.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>
                               No sounds uploaded yet.
                             </Typography>
-                          )}
-                          {soundboardItems.map((it) => (
-                            <ListItem key={it.id}
-                              secondaryAction={
-                                <Stack direction="row" spacing={1}>
-                                  <Button size="small" onClick={() => handlePlaySound(it.id)} disabled={sbBusyId === it.id}>
-                                    {sbBusyId === it.id ? 'Playing…' : 'Play'}
-                                  </Button>
-                                  <Button size="small" color="error" onClick={() => handleDeleteSound(it.id)}>Delete</Button>
-                                </Stack>
-                              }
-                            >
-                              <ListItemText
-                                primary={it.name}
-                                secondary={
-                                  <span>
-                                    <a
-                                      href={`${(SERVER_BASE || '').replace(/\/$/,'')}${it.url}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      {`${(SERVER_BASE || '').replace(/\/$/,'')}${it.url}`}
-                                    </a>
-                                  </span>
+                          ) : (
+                            soundboardItems.map((it) => (
+                              <ListItem
+                                key={it.id}
+                                sx={{
+                                  px: 1,
+                                  '& .MuiListItemText-primary': { fontWeight: 600 },
+                                  '& .MuiListItemText-secondary': { color: 'text.secondary' }
+                                }}
+                                secondaryAction={
+                                  <Stack direction="row" spacing={0.5} alignItems="center">
+                                    <IconButton size="small" aria-label="Play" onClick={() => handlePlaySound(it.id)} disabled={sbBusyId === it.id}>
+                                      <PlayArrow fontSize="small" />
+                                    </IconButton>
+                                    <IconButton size="small" aria-label="Open" component="a" href={resolveItemUrl(it)} target="_blank" rel="noreferrer">
+                                      <OpenInNewIcon fontSize="small" />
+                                    </IconButton>
+                                    <IconButton size="small" aria-label="Copy URL" onClick={() => handleCopyUrl(it)}>
+                                      <ContentCopy fontSize="small" />
+                                    </IconButton>
+                                    <IconButton size="small" aria-label="Delete" color="error" onClick={() => handleDeleteSound(it.id)}>
+                                      <Delete fontSize="small" />
+                                    </IconButton>
+                                  </Stack>
                                 }
-                              />
-                            </ListItem>
-                          ))}
+                              >
+                                <ListItemText
+                                  primary={it.name}
+                                  secondary={new Date(it.createdAt).toLocaleString()}
+                                />
+                              </ListItem>
+                            ))
+                          )}
                         </List>
                       </Stack>
                     </CardContent>
@@ -1636,164 +1618,76 @@ const Dashboard = () => {
               <Typography variant="h6" gutterBottom>
                 Share Your Channel
               </Typography>
-              
-              <Box mb={3}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Queue Page - Public view where viewers can see videos in queue
-                </Typography>
-                <Box display="flex" alignItems="center" gap={2} mt={1}>
-                  <Typography 
-                    variant="body1" 
-                    sx={{ 
-                      flex: 1, 
-                      fontFamily: 'monospace',
-                      bgcolor: 'action.hover',
-                      p: 1.5,
-                      borderRadius: 1
-                    }}
-                  >
-                    {window.location.origin}/channel/{channel.id}
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<ContentCopy />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/channel/${channel.id}`);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-              </Box>
 
-              <Divider sx={{ mb: 3 }} />
-              
-              <Box>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  OBS Overlay - Video player browser source for your stream
-                </Typography>
-                <Box display="flex" alignItems="center" gap={2} mt={1}>
-                  <Typography 
-                    variant="body1" 
-                    sx={{ 
-                      flex: 1, 
-                      fontFamily: 'monospace',
-                      bgcolor: 'action.hover',
-                      p: 1.5,
-                      borderRadius: 1
-                    }}
-                  >
-                    {window.location.origin}/player/{channel.id}
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<ContentCopy />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/player/${channel.id}`);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-              </Box>
+              {(() => {
+                const base = window.location.origin.replace(/\/$/, '');
+                const rows = [
+                  { label: 'Queue Page', desc: 'Public list of videos in queue', url: `${base}/channel/${channel.id}` },
+                  { label: 'OBS Overlay', desc: 'Video player browser source', url: `${base}/player/${channel.id}` },
+                  { label: 'Viewer Hub', desc: 'Standings, queue, and cups', url: `${base}/viewer/${channel.id}` },
+                  { label: 'Queue Overlay', desc: 'Top 8 + queue overlay', url: `${base}/overlay/${channel.id}/queue` },
+                  { label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` }
+                ];
 
-              <Divider sx={{ my: 3 }} />
-
-              <Box mb={3}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Viewer Hub - Public hub for standings, queue, and cups
-                </Typography>
-                <Box display="flex" alignItems="center" gap={2} mt={1}>
-                  <Typography 
-                    variant="body1" 
-                    sx={{ 
-                      flex: 1, 
-                      fontFamily: 'monospace',
-                      bgcolor: 'action.hover',
-                      p: 1.5,
-                      borderRadius: 1
-                    }}
-                  >
-                    {window.location.origin}/viewer/{channel.id}
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<ContentCopy />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/viewer/${channel.id}`);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-              </Box>
-
-              <Divider sx={{ mb: 3 }} />
-
-              <Box mb={3}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Queue Overlay - Display Top 8 and queue as a browser source
-                </Typography>
-                <Box display="flex" alignItems="center" gap={2} mt={1}>
-                  <Typography 
-                    variant="body1" 
-                    sx={{ 
-                      flex: 1, 
-                      fontFamily: 'monospace',
-                      bgcolor: 'action.hover',
-                      p: 1.5,
-                      borderRadius: 1
-                    }}
-                  >
-                    {window.location.origin}/overlay/{channel.id}/queue
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<ContentCopy />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/overlay/${channel.id}/queue`);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-              </Box>
-
-              <Divider sx={{ mb: 3 }} />
-
-              <Box>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Leaderboard Overlay - Display current cup standings as a browser source
-                </Typography>
-                <Box display="flex" alignItems="center" gap={2} mt={1}>
-                  <Typography 
-                    variant="body1" 
-                    sx={{ 
-                      flex: 1, 
-                      fontFamily: 'monospace',
-                      bgcolor: 'action.hover',
-                      p: 1.5,
-                      borderRadius: 1
-                    }}
-                  >
-                    {window.location.origin}/overlay/{channel.id}/leaderboard
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<ContentCopy />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/overlay/${channel.id}/leaderboard`);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-              </Box>
+                return (
+                  <Stack spacing={1.25} sx={{ mt: 1 }}>
+                    {rows.map((row) => (
+                      <Box
+                        key={row.label}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          borderRadius: 1.2,
+                          p: 1,
+                          bgcolor: 'background.paper'
+                        }}
+                      >
+                        <Box sx={{ minWidth: 180 }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            {row.label}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {row.desc}
+                          </Typography>
+                        </Box>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            flex: 1,
+                            fontFamily: 'monospace',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            px: 1.25,
+                            py: 0.75,
+                            borderRadius: 1,
+                            bgcolor: 'action.hover'
+                          }}
+                          title={row.url}
+                        >
+                          {row.url}
+                        </Typography>
+                        <Tooltip title="Open in new tab">
+                          <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Copy URL">
+                          <IconButton
+                            size="small"
+                            onClick={() => navigator.clipboard.writeText(row.url)}
+                          >
+                            <ContentCopy fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
+                    ))}
+                  </Stack>
+                );
+              })()}
             </Paper>
           </>
         )}

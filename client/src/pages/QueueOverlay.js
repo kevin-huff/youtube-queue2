@@ -191,7 +191,8 @@ const QueueOverlay = () => {
   const [socialRevealActive, setSocialRevealActive] = useState(false);
   const shuffleSignatureRef = useRef(null);
   const audioRef = useRef(null);
-  const sbAudioRef = useRef(null);
+  // Track multiple concurrent soundboard audio instances
+  const sbAudiosRef = useRef(new Set());
   const timerRef = useRef(null);
   const rafRef = useRef(null);
   const lockSoundCtxRef = useRef(null);
@@ -461,21 +462,37 @@ const QueueOverlay = () => {
         } catch (_) {
           // fallback to original
         }
-        if (sbAudioRef.current) {
-          try { sbAudioRef.current.pause(); } catch (_) {}
-        }
         const audio = new Audio(url);
-        sbAudioRef.current = audio;
         audio.volume = 1;
         audio.play().catch((err) => {
           console.warn('Soundboard audio playback failed:', err);
           setSbAudioError(true);
         });
+        // Keep track so multiple can overlap and we can clean up when they finish
+        try {
+          sbAudiosRef.current.add(audio);
+          const cleanup = () => {
+            try { sbAudiosRef.current.delete(audio); } catch (_) {}
+          };
+          audio.addEventListener('ended', cleanup, { once: true });
+          audio.addEventListener('error', cleanup, { once: true });
+        } catch (_) {}
       } catch (_) {}
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
   }, [addChannelListener, removeChannelListener, channelConnected]);
+
+  // Cleanup all active soundboard audio on unmount
+  useEffect(() => () => {
+    try {
+      for (const a of sbAudiosRef.current) {
+        try { a.pause(); } catch (_) {}
+        try { a.currentTime = 0; } catch (_) {}
+      }
+      sbAudiosRef.current.clear?.();
+    } catch (_) {}
+  }, []);
 
   const sortedQueue = useMemo(() => {
     const items = queue.slice();
