@@ -98,8 +98,13 @@ const JudgePage = () => {
 
   // Soundboard playback listener
   useEffect(() => {
+    if (!channelConnected) {
+      return () => {};
+    }
     const handler = (payload = {}) => {
       try {
+        // eslint-disable-next-line no-console
+        console.info('soundboard:play received (judge):', payload);
         if (!payload.url) return;
         let url = payload.url;
         try {
@@ -126,7 +131,7 @@ const JudgePage = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener]);
+  }, [addChannelListener, removeChannelListener, channelConnected]);
 
   // Playback control handlers
   const handlePlayPause = () => {

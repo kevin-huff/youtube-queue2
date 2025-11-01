@@ -1439,6 +1439,12 @@ router.post('/channels/:channelId/soundboard/play', requireAuth, requireChannelR
       return res.status(400).json({ error: 'itemId or url required' });
     }
     // Broadcast via channel namespace
+    try {
+      const sockets = await queueService.io.fetchSockets();
+      logger.info(`Emitting soundboard:play to /channel/${channelId} (listeners=${sockets.length})`, payload);
+    } catch (_) {
+      logger.info(`Emitting soundboard:play to /channel/${channelId}`);
+    }
     queueService.io.emit('soundboard:play', payload);
     res.json({ ok: true, payload });
   } catch (error) {
@@ -1475,6 +1481,12 @@ router.post('/channels/:channelId/cups/:cupId/soundboard/play', authenticateJudg
       payload = { id: null, name: 'Sound', url: req.body.url };
     } else {
       return res.status(400).json({ error: 'itemId or url required' });
+    }
+    try {
+      const sockets = await queueService.io.fetchSockets();
+      logger.info(`(judge) Emitting soundboard:play to /channel/${req.judgeAuth.channelId} (listeners=${sockets.length})`, payload);
+    } catch (_) {
+      logger.info(`(judge) Emitting soundboard:play to /channel/${req.judgeAuth.channelId}`);
     }
     queueService.io.emit('soundboard:play', payload);
     res.json({ ok: true, payload });

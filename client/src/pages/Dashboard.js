@@ -502,12 +502,18 @@ const Dashboard = () => {
     if (!channel?.id || !itemId) return;
     try {
       setSbBusyId(itemId);
+      // eslint-disable-next-line no-console
+      console.info('[soundboard] sending play', { channelId: channel.id, itemId });
       const res = await axios.post(`/api/channels/${channel.id}/soundboard/play`, { itemId }, { withCredentials: true });
       const name = soundboardItems.find((it) => it.id === itemId)?.name || 'Sound';
       if (res?.data?.ok) {
         setSbToast(`Sent “${name}” to all clients`);
+        // eslint-disable-next-line no-console
+        console.info('[soundboard] play acknowledged', res.data);
       } else {
         setSbToast(`Triggered “${name}”`);
+        // eslint-disable-next-line no-console
+        console.info('[soundboard] play response (no ok flag)', res.data);
       }
       // Optional: local preview (comment out if undesired)
       try {

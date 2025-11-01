@@ -427,8 +427,14 @@ const QueueOverlay = () => {
 
   // Soundboard playback: play sounds intended for overlay or all
   useEffect(() => {
+    if (!channelConnected) {
+      return () => {};
+    }
     const handler = (payload = {}) => {
       try {
+        // Debug: confirm event reception
+        // eslint-disable-next-line no-console
+        console.info('soundboard:play received (overlay):', payload);
         if (!payload.url) return;
         let url = payload.url;
         try {
@@ -459,7 +465,7 @@ const QueueOverlay = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener]);
+  }, [addChannelListener, removeChannelListener, channelConnected]);
 
   const sortedQueue = useMemo(() => {
     const items = queue.slice();
