@@ -32,7 +32,8 @@ import {
   DialogContent,
   DialogActions,
   IconButton,
-  Tooltip
+  Tooltip,
+  Collapse
 } from '@mui/material';
 import {
   Settings,
@@ -48,7 +49,9 @@ import {
   Delete,
   ThumbUp,
   WarningAmber,
-  OpenInNew as OpenInNewIcon
+  OpenInNew as OpenInNewIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -188,6 +191,7 @@ const Dashboard = () => {
   const [sbBusyId, setSbBusyId] = useState(null);
   const [sbToast, setSbToast] = useState(null);
   const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+  const [sbExpanded, setSbExpanded] = useState(false);
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
@@ -1055,6 +1059,135 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
+            {/* Queue Settings (compact) */}
+            {canManageSettings && (
+              <>
+                <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom ref={settingsSectionRef}>
+                  Queue Settings
+                </Typography>
+                {(() => {
+                  const rows = [
+                    {
+                      label: 'Queue Control',
+                      desc: 'Enable or disable queue submissions from chat',
+                      control: (
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={queueEnabledSetting}
+                              onChange={(e) => handleSettingChange('queue_enabled', e.target.checked)}
+                            />
+                          }
+                          label={queueEnabledSetting ? 'Queue Enabled' : 'Queue Disabled'}
+                        />
+                      )
+                    },
+                    {
+                      label: 'Default Volume',
+                      desc: 'Initial volume for synced playback clients',
+                      control: (
+                        <Box sx={{ px: 1, minWidth: 220 }}>
+                          <Slider
+                            value={defaultVolume}
+                            onChange={(e, value) => handleSettingChange('current_volume', value)}
+                            min={0}
+                            max={100}
+                            step={1}
+                            valueLabelDisplay="auto"
+                          />
+                        </Box>
+                      )
+                    },
+                    {
+                      label: 'Queue Size Limit',
+                      desc: 'Maximum videos allowed in the queue at once',
+                      control: (
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={maxQueueSizeSetting}
+                          onChange={(e) => updateNumericSetting('max_queue_size', e.target.value, { min: 0, max: 500 })}
+                          inputProps={{ min: 0, max: 500 }}
+                          helperText="Use 0 for unlimited entries."
+                        />
+                      )
+                    },
+                    {
+                      label: 'Submission Cooldown (sec)',
+                      desc: 'Minimum time between submissions from the same chatter',
+                      control: (
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={submissionCooldownSetting}
+                          onChange={(e) => updateNumericSetting('submission_cooldown', e.target.value, { min: 0, max: 1800 })}
+                          inputProps={{ min: 0, max: 1800 }}
+                          helperText="Set to 0 to disable rate limiting altogether."
+                        />
+                      )
+                    },
+                    {
+                      label: 'Max Videos Per User',
+                      desc: 'Prevents one chatter from flooding the queue',
+                      control: (
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={maxPerUserSetting}
+                          onChange={(e) => updateNumericSetting('max_per_user', e.target.value, { min: 0 })}
+                          inputProps={{ min: 0 }}
+                          helperText="Use 0 to allow unlimited videos per chatter."
+                        />
+                      )
+                    },
+                    {
+                      label: 'Max Video Duration (sec)',
+                      desc: `Hard cap for submitted clips (current ≈ ${Math.max(1, maxVideoDurationMinutes)} min)`,
+                      control: (
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={maxVideoDurationSetting}
+                          onChange={(e) => updateNumericSetting('max_video_duration', e.target.value, { min: 30, max: 5400 })}
+                          inputProps={{ min: 30, max: 5400, step: 30 }}
+                          helperText="Enter length in seconds (600 = 10 minutes)."
+                        />
+                      )
+                    }
+                  ];
+                  return (
+                    <Stack spacing={1.25} sx={{ mb: 4 }}>
+                      {rows.map((row) => (
+                        <Box
+                          key={row.label}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1.2,
+                            p: 1,
+                            bgcolor: 'background.paper'
+                          }}
+                        >
+                          <Box sx={{ minWidth: 220 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                              {row.label}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {row.desc}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ flex: 1 }}>{row.control}</Box>
+                        </Box>
+                      ))}
+                    </Stack>
+                  );
+                })()}
+              </>
+            )}
+
             {/* Stats Overview */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
               <Grid item xs={12} sm={6} md={3}>
@@ -1238,11 +1371,11 @@ const Dashboard = () => {
               </Grid>
 
               {/* Soundboard */}
-              <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={12}>
-                  <Card>
-                    <CardContent>
-                      <Box display="flex" alignItems="flex-start" mb={2}>
+              <Grid item xs={12}>
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box display="flex" alignItems="flex-start" justifyContent="space-between" mb={1}>
+                      <Box display="flex" alignItems="flex-start">
                         <Box
                           sx={{
                             mr: 2,
@@ -1254,15 +1387,20 @@ const Dashboard = () => {
                         >
                           <LiveTv />
                         </Box>
-                        <Box flex={1}>
-                          <Typography variant="h6" gutterBottom>
+                        <Box>
+                          <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
                             Soundboard (per-channel)
                           </Typography>
-                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                          <Typography variant="body2" color="text.secondary">
                             Upload short audio clips you can trigger for judges and the overlay.
                           </Typography>
                         </Box>
                       </Box>
+                      <IconButton size="small" onClick={() => setSbExpanded((v) => !v)} aria-label={sbExpanded ? 'Collapse' : 'Expand'}>
+                        {sbExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      </IconButton>
+                    </Box>
+                    <Collapse in={sbExpanded} timeout="auto" unmountOnExit>
                       <Stack spacing={2}>
                         <Box display="flex" alignItems="center" gap={1}>
                           <input
@@ -1338,9 +1476,9 @@ const Dashboard = () => {
                           )}
                         </List>
                       </Stack>
-                    </CardContent>
-                  </Card>
-                </Grid>
+                    </Collapse>
+                  </CardContent>
+                </Card>
               </Grid>
 
               <Grid item xs={12} md={6}>
@@ -1408,188 +1546,7 @@ const Dashboard = () => {
                 </Card>
               </Grid>
 
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={2}>
-                      <Box
-                        sx={{
-                          mr: 2,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: alpha(theme.palette.success.main, 0.1),
-                          color: 'success.main'
-                        }}
-                      >
-                        <Settings />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" gutterBottom>
-                          Default Volume
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Initial volume for synced playback clients
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Box sx={{ px: 2 }}>
-                      <Slider
-                        value={defaultVolume}
-                        onChange={(e, value) => handleSettingChange('current_volume', value)}
-                        min={0}
-                        max={100}
-                        step={1}
-                        valueLabelDisplay="auto"
-                      />
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={2}>
-                      <Box
-                        sx={{
-                          mr: 2,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: alpha(theme.palette.warning.main, 0.1),
-                          color: 'warning.main'
-                        }}
-                      >
-                        <QueueMusic />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" gutterBottom>
-                          Queue Size Limit
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Maximum videos allowed in the queue at once
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <TextField
-                      fullWidth
-                      type="number"
-                      value={maxQueueSizeSetting}
-                      onChange={(e) => updateNumericSetting('max_queue_size', e.target.value, { min: 0, max: 500 })}
-                      inputProps={{ min: 0, max: 500 }}
-                      helperText="Use 0 for unlimited entries."
-                    />
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={2}>
-                      <Box
-                        sx={{
-                          mr: 2,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: alpha(theme.palette.info.main, 0.1),
-                          color: 'info.main'
-                        }}
-                      >
-                        <Timer />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" gutterBottom>
-                          Submission Cooldown (sec)
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Minimum time between submissions from the same chatter
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <TextField
-                      fullWidth
-                      type="number"
-                      value={submissionCooldownSetting}
-                      onChange={(e) => updateNumericSetting('submission_cooldown', e.target.value, { min: 0, max: 1800 })}
-                      inputProps={{ min: 0, max: 1800 }}
-                      helperText="Set to 0 to disable rate limiting altogether."
-                    />
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={2}>
-                      <Box
-                        sx={{
-                          mr: 2,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: alpha(theme.palette.success.main, 0.1),
-                          color: 'success.main'
-                        }}
-                      >
-                        <Person />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" gutterBottom>
-                          Max Videos Per User
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Prevents one chatter from flooding the queue
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <TextField
-                      fullWidth
-                      type="number"
-                      value={maxPerUserSetting}
-                      onChange={(e) => updateNumericSetting('max_per_user', e.target.value, { min: 0 })}
-                      inputProps={{ min: 0 }}
-                      helperText="Use 0 to allow unlimited videos per chatter."
-                    />
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={2}>
-                      <Box
-                        sx={{
-                          mr: 2,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: alpha(theme.palette.secondary.main, 0.1),
-                          color: 'secondary.main'
-                        }}
-                      >
-                        <VideoLibrary />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" gutterBottom>
-                          Max Video Duration (sec)
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Hard cap for submitted clips (current ≈ {Math.max(1, maxVideoDurationMinutes)} min)
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <TextField
-                      fullWidth
-                      type="number"
-                      value={maxVideoDurationSetting}
-                      onChange={(e) => updateNumericSetting('max_video_duration', e.target.value, { min: 30, max: 5400 })}
-                      inputProps={{ min: 30, max: 5400, step: 30 }}
-                      helperText="Enter length in seconds (600 = 10 minutes)."
-                    />
-                  </CardContent>
-                </Card>
-              </Grid>
-              </Grid>
+              {/* removed bulky grid settings; replaced by compact rows above */}
             </>
             ) : (
               <Paper sx={{ p: 3, mt: 4 }} ref={settingsSectionRef}>
