@@ -11,7 +11,23 @@ import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
 const resolveServerUrl = () => {
-  if (process.env.REACT_APP_SERVER_URL) return process.env.REACT_APP_SERVER_URL;
+  const envUrl = process.env.REACT_APP_SERVER_URL;
+  if (envUrl) {
+    try {
+      // If the env URL points to localhost but the app is served over HTTPS,
+      // prefer the current origin to avoid mixed content / unreachable host.
+      if (typeof window !== 'undefined' && window.location) {
+        const isLocalEnv = /^(http:\/\/)?(localhost|127\.0\.0\.1)/i.test(envUrl);
+        const isHttpsPage = window.location.protocol === 'https:';
+        if (isHttpsPage && isLocalEnv) {
+          return window.location.origin;
+        }
+      }
+    } catch (e) {
+      // fall through to use envUrl
+    }
+    return envUrl;
+  }
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
     return window.location.origin;
   }
@@ -56,7 +72,9 @@ export const SocketProvider = ({ children }) => {
   // Establish connection to the root namespace
   useEffect(() => {
     const socket = io(DEFAULT_SERVER_URL, {
-      transports: ['websocket'],
+      // Allow polling fallback; many proxies require it before upgrade
+      // transports: ["websocket", "polling"], // default
+      path: '/socket.io',
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
@@ -437,7 +455,8 @@ export const SocketProvider = ({ children }) => {
     cleanupChannelSocket();
 
     const namespace = io(`${DEFAULT_SERVER_URL}/channel/${normalizedChannelId}`, {
-      transports: ['websocket'],
+      // Allow polling fallback and ensure path consistency
+      path: '/socket.io',
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,

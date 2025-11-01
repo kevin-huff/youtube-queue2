@@ -129,7 +129,6 @@ const formatChannelOwner = (owner) => ({
 
 const SUBMITTER_FIELDS = {
   twitchUsername: true,
-  alias: true,
   role: true
 };
 
@@ -445,21 +444,21 @@ router.get('/channels/public/:channelName/cups/:cupId/standings', async (req, re
     }
 
     const { standings, videos, cup } = await channelManager.rebuildCupStandings(normalizedChannelId, cupId);
-    const enrichedStandings = standings.map((entry) => ({
-      ...entry,
-      submitterAlias: entry.submitterAlias || entry.submitter?.alias || null,
-      publicSubmitterName:
-        entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
-    }));
-    const enrichedVideos = videos.map((video) => ({
-      ...video,
-      submitterAlias: video.submitterAlias || video.submitter?.alias || null,
-      publicSubmitterName:
-        video.publicSubmitterName ||
-        video.submitter?.alias ||
-        video.submitter?.twitchUsername ||
-        null
-    }));
+      const enrichedStandings = standings.map((entry) => ({
+        ...entry,
+        submitterAlias: entry.submitterAlias || null,
+        publicSubmitterName:
+          entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
+      }));
+      const enrichedVideos = videos.map((video) => ({
+        ...video,
+        submitterAlias: video.submitterAlias || null,
+        publicSubmitterName:
+          video.publicSubmitterName ||
+          video.submitterAlias ||
+          video.submitter?.twitchUsername ||
+          null
+      }));
 
     res.json({
       standings: enrichedStandings,
@@ -608,8 +607,8 @@ router.get('/channels/:channelId/cups/:cupId/videos',
 
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitter?.alias || null,
-        publicSubmitterName: (video.submitter?.alias || video.submitter?.twitchUsername) || null
+        submitterAlias: video.submitterAlias || null,
+        publicSubmitterName: video.submitterAlias || video.submitter?.twitchUsername || null
       }));
 
       res.json({ videos: enrichedVideos });
@@ -2133,16 +2132,16 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
 
       const enrichedItem = {
         ...updatedItem,
-        submitterAlias: updatedItem.submitter?.alias || null,
-        publicSubmitterName: (updatedItem.submitter?.alias || updatedItem.submitter?.twitchUsername) || null
+        submitterAlias: updatedItem.submitterAlias || null,
+        publicSubmitterName: (updatedItem.submitterAlias || updatedItem.submitter?.twitchUsername) || null
       };
 
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || video.submitter?.alias || null,
+        submitterAlias: video.submitterAlias || null,
         publicSubmitterName:
           video.publicSubmitterName ||
-          video.submitter?.alias ||
+          video.submitterAlias ||
           video.submitter?.twitchUsername ||
           null
       }));
@@ -2155,7 +2154,7 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
 
       const enrichedStandings = standings.map((entry) => ({
         ...entry,
-        submitterAlias: entry.submitterAlias || entry.submitter?.alias || null,
+        submitterAlias: entry.submitterAlias || null,
         publicSubmitterName:
           entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
       }));
@@ -2203,16 +2202,16 @@ router.get('/channels/:channelId/cups/:cupId/standings',
       const { standings, videos, cup } = await channelManager.rebuildCupStandings(normalizedChannelId, req.params.cupId);
       const enrichedStandings = standings.map((entry) => ({
         ...entry,
-        submitterAlias: entry.submitterAlias || entry.submitter?.alias || null,
+        submitterAlias: entry.submitterAlias || null,
         publicSubmitterName:
           entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
       }));
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || video.submitter?.alias || null,
+        submitterAlias: video.submitterAlias || null,
         publicSubmitterName:
           video.publicSubmitterName ||
-          video.submitter?.alias ||
+          video.submitterAlias ||
           video.submitter?.twitchUsername ||
           null
       }));

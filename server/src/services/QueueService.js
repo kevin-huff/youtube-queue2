@@ -473,7 +473,7 @@ class QueueService {
         duration: queueItem.duration,
         position: queueItem.position,
         thumbnailUrl: queueItem.thumbnailUrl,
-        submitterAlias: queueItem.submitter?.alias || null,
+        submitterAlias: queueItem.submitterAlias || null,
         submitterUsername: queueItem.submitter?.twitchUsername || queueItem.submitterUsername || null
       },
       stage: VOTING_STAGES.COLLECTING,
@@ -2298,7 +2298,7 @@ class QueueService {
 
   _formatBroadcastItem(item, rank) {
     const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
-    const submitterAlias = item.submitter?.alias || item.submitterAlias || null;
+    const submitterAlias = item.submitterAlias || null;
 
     return {
       id: item.id,

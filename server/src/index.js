@@ -24,9 +24,15 @@ class Server {
   constructor() {
     this.app = express();
     this.server = createServer(this.app);
+    const allowedOrigins = (process.env.CORS_ORIGIN || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const socketCorsOrigin = allowedOrigins.length ? allowedOrigins : true; // reflect request origin when not set
+
     this.io = new SocketIOServer(this.server, {
       cors: {
-        origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+        origin: socketCorsOrigin,
         methods: ["GET", "POST"],
         credentials: true
       }
@@ -119,8 +125,9 @@ class Server {
     }));
 
     // CORS
+    const expressCorsOrigin = allowedOrigins.length ? allowedOrigins : true;
     this.app.use(cors({
-      origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+      origin: expressCorsOrigin,
       credentials: true
     }));
 

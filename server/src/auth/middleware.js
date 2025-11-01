@@ -170,6 +170,21 @@ const requireChannelRole = (requiredRoles, options = {}) => {
     channelId
   } = options;
 
+  const expandRoles = (roleSet) => {
+    // Normalize to set of strings
+    const s = new Set(Array.from(roleSet || []).map((r) => (r ? r.toString().toUpperCase() : r)).filter(Boolean));
+    if (s.has('OWNER')) {
+      s.add('MANAGER');
+      s.add('PRODUCER');
+      s.add('HOST');
+    }
+    if (s.has('MANAGER')) {
+      s.add('PRODUCER');
+      s.add('HOST');
+    }
+    return s;
+  };
+
   return (req, res, next) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
       return res.status(401).json({
@@ -186,7 +201,7 @@ const requireChannelRole = (requiredRoles, options = {}) => {
       });
     }
 
-    const availableRoles = new Set(channelAccess.roles || []);
+    let availableRoles = new Set(channelAccess.roles || []);
 
     if (allowOwnership && channelAccess.ownershipRole) {
       availableRoles.add(channelAccess.ownershipRole);
@@ -198,6 +213,9 @@ const requireChannelRole = (requiredRoles, options = {}) => {
         ['PRODUCER', 'HOST'].forEach((role) => availableRoles.add(role));
       }
     }
+
+    // Also expand derived privileges when MANAGER/OWNER are present as non-ownership roles
+    availableRoles = expandRoles(availableRoles);
 
     const hasMatch =
       match === 'all'
@@ -226,6 +244,20 @@ const requireCupRole = (requiredRoles, options = {}) => {
     cupId: explicitCupId
   } = options;
 
+  const expandRoles = (roleSet) => {
+    const s = new Set(Array.from(roleSet || []).map((r) => (r ? r.toString().toUpperCase() : r)).filter(Boolean));
+    if (s.has('OWNER')) {
+      s.add('MANAGER');
+      s.add('PRODUCER');
+      s.add('HOST');
+    }
+    if (s.has('MANAGER')) {
+      s.add('PRODUCER');
+      s.add('HOST');
+    }
+    return s;
+  };
+
   return (req, res, next) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
       return res.status(401).json({
@@ -253,17 +285,19 @@ const requireCupRole = (requiredRoles, options = {}) => {
       });
     }
 
-    const cupRoles = new Set((channelAccess.cupRoles && channelAccess.cupRoles[cupId]) || []);
+    let cupRoles = new Set((channelAccess.cupRoles && channelAccess.cupRoles[cupId]) || []);
+    cupRoles = expandRoles(cupRoles);
     let hasMatch =
       match === 'all'
         ? normalizedRequiredRoles.every((role) => cupRoles.has(role))
         : normalizedRequiredRoles.some((role) => cupRoles.has(role));
 
     if (!hasMatch && allowChannelFallback) {
-      const availableRoles = new Set(channelAccess.roles || []);
+      let availableRoles = new Set(channelAccess.roles || []);
       if (channelAccess.ownershipRole) {
         availableRoles.add(channelAccess.ownershipRole);
       }
+      availableRoles = expandRoles(availableRoles);
 
       hasMatch =
         match === 'all'
