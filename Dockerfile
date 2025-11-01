@@ -1,49 +1,15 @@
-# YouTube Queue Bot - Dockerfile
-FROM node:18-alpine
+# YouTube Queue Bot - Dockerfile (Railway-friendly)
+#
+# This image uses a single builder + runner setup and skips Puppeteer's
+# Chromium download to drastically speed up builds on Railway.
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    && rm -rf /var/cache/apk/*
-
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-
-# Copy package files
-COPY package*.json ./
-COPY server/package*.json ./server/
-COPY client/package*.json ./client/
-
-# Install dependencies
-RUN npm ci --only=production
-RUN cd server && npm ci --only=production
-RUN cd client && npm ci --only=production
-
-# Copy source code
-COPY . .
-
-# Build client
-RUN cd client && npm run build
-
-# Copy built client into server public so the Express server can serve static files
-RUN mkdir -p server/public
-RUN cp -R client/build/* server/public/ || true
-
-# Multi-stage Dockerfile
 # Builder stage: install deps, build client, generate Prisma client
 FROM node:18-bullseye-slim AS builder
 
 WORKDIR /app
+
+# Avoid downloading ~100MB Chromium during install (we don't need it at build)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 
 # Copy package manifests for root and workspaces
 COPY package*.json ./
@@ -69,6 +35,10 @@ FROM node:18-bullseye-slim AS runner
 
 WORKDIR /app
 
+# Keep environment lean and production-focused
+ENV NODE_ENV=production \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+
 # Copy production node_modules and server code from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/server ./server
@@ -81,18 +51,13 @@ COPY --from=builder /app/start-production-container.sh ./start-production-contai
 COPY --from=builder /app/package*.json ./
 
 # Make entrypoint executable and set ownership
-RUN chmod +x ./start-production-container.sh \
-    && addgroup --system nodejs \
-    && adduser --system --ingroup nodejs nextjs \
-    && chown -R nextjs:nodejs /app
+RUN chmod +x ./start-production-container.sh
 
-USER nextjs
+# Expose server port (app also serves static client)
+EXPOSE 5000
 
-# Expose ports used by server
-EXPOSE 3000 5000
-
-# Health check (runs as non-root user)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 \
     CMD node server/src/health-check.js || exit 1
 
 # Start command (entrypoint will run migrations then start server)

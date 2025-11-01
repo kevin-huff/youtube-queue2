@@ -1,12 +1,13 @@
 // Health check script for Docker
 const http = require('http');
 
+const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
 const options = {
-  hostname: 'localhost',
-  port: 5000,
+  hostname: '127.0.0.1',
+  port,
   path: '/api/health',
   method: 'GET',
-  timeout: 3000
+  timeout: 5000
 };
 
 const req = http.request(options, (res) => {
