@@ -198,10 +198,6 @@ class Server {
     this.app.use('/api', apiRoutes);
 
     // Serve uploaded assets (audio, etc.).
-    // Use fallthrough: false so missing files return 404 instead of SPA index.html
-    this.app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { fallthrough: false }));
-
-    // Serve uploaded assets (audio, etc.).
     const uploadsDir = process.env.UPLOADS_DIR
       ? path.resolve(process.env.UPLOADS_DIR)
       : path.join(__dirname, '../uploads');
