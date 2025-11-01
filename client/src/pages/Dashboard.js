@@ -593,7 +593,7 @@ const Dashboard = () => {
   // Connect to channel socket when channel is loaded
   useEffect(() => {
     if (channel?.id) {
-      connectToChannel(channel.id);
+      connectToChannel(channel.id, { explicit: true });
       return () => {
         disconnectFromChannel();
       };

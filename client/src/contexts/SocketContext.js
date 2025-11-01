@@ -69,6 +69,9 @@ export const SocketProvider = ({ children }) => {
   const [lastShuffle, setLastShuffle] = useState(null);
   const [votingState, setVotingState] = useState(null);
   const [overlayShowPlayer, setOverlayShowPlayer] = useState(null); // null=auto, true=show, false=hide
+  // Track if a route/page explicitly requested a channel connection.
+  // When true, suppress provider auto-connect to the user's default channel.
+  const explicitConnectRef = useRef(false);
 
   // Establish connection to the root namespace
   useEffect(() => {
@@ -129,6 +132,8 @@ export const SocketProvider = ({ children }) => {
     setVotingState(null);
     setOverlayShowPlayer(null);
     setActiveChannelId(null);
+    // Reset explicit suppression once channel is torn down
+    explicitConnectRef.current = false;
   }, []);
 
   const deriveTopEight = useCallback((queueItems) => {
@@ -481,6 +486,10 @@ export const SocketProvider = ({ children }) => {
 
     cleanupChannelSocket();
 
+    if (options.explicit === true) {
+      explicitConnectRef.current = true;
+    }
+
     const namespace = io(`${DEFAULT_SERVER_URL}/channel/${normalizedChannelId}`, {
       // Allow polling fallback and ensure path consistency
       path: '/socket.io',
@@ -503,13 +512,27 @@ export const SocketProvider = ({ children }) => {
 
   useEffect(() => {
     if (!user || !Array.isArray(user.channels) || user.channels.length === 0) {
-      return;
+      return () => {};
     }
 
-    const defaultChannel = user.channels[0]?.id;
-    if (defaultChannel && defaultChannel.toLowerCase() !== activeChannelId) {
-      connectToChannel(defaultChannel);
+    // If an explicit route-driven connection is pending/active, skip auto-connect.
+    if (explicitConnectRef.current) {
+      return () => {};
     }
+
+    // Only auto-connect to a default channel if we don't already
+    // have an active channel. Use a micro-delay to give route effects
+    // a chance to call connectToChannel(explicit: true).
+    const defaultChannel = user.channels[0]?.id;
+    if (defaultChannel && !activeChannelId) {
+      const t = setTimeout(() => {
+        if (!activeChannelId && !explicitConnectRef.current) {
+          connectToChannel(defaultChannel);
+        }
+      }, 0);
+      return () => clearTimeout(t);
+    }
+    return () => {};
   }, [user, connectToChannel, activeChannelId]);
 
   const emitToChannel = useCallback((event, payload) => {

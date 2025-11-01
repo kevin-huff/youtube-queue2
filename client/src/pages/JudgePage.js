@@ -84,7 +84,7 @@ const JudgePage = () => {
   // Connect to channel socket
   useEffect(() => {
     if (channelName) {
-      connectToChannel(channelName);
+      connectToChannel(channelName, { explicit: true });
       return () => {
         disconnectFromChannel();
       };

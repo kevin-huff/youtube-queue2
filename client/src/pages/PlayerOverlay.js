@@ -225,7 +225,7 @@ const PlayerOverlay = () => {
 
   useEffect(() => {
     if (!channelName) return;
-    connectToChannel(channelName);
+    connectToChannel(channelName, { explicit: true });
     return () => disconnectFromChannel();
   }, [channelName, connectToChannel, disconnectFromChannel]);
 

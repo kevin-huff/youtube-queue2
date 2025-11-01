@@ -88,7 +88,7 @@ const LeaderboardOverlay = () => {
     if (!channelName) {
       return undefined;
     }
-    connectToChannel(channelName);
+    connectToChannel(channelName, { explicit: true });
     return () => disconnectFromChannel();
   }, [channelName, connectToChannel, disconnectFromChannel]);
 

@@ -645,7 +645,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
 
   useEffect(() => {
     if (!channelName) return;
-    connectToChannel(channelName);
+    connectToChannel(channelName, { explicit: true });
     return () => {
       disconnectFromChannel();
     };

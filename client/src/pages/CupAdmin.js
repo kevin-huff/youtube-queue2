@@ -142,7 +142,7 @@ const CupAdmin = () => {
       return;
     }
 
-    connectToChannel(channelName);
+    connectToChannel(channelName, { explicit: true });
     return () => {
       disconnectFromChannel();
     };
