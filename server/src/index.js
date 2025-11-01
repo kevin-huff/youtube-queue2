@@ -112,6 +112,9 @@ class Server {
           // Images may come from HTTPS and data URIs
           imgSrc: ["'self'", 'data:', 'https:'],
 
+          // Permit audio/media from same-origin and HTTPS (for hosted uploads/CDN)
+          mediaSrc: ["'self'", 'https:'],
+
           // Fonts from Google Fonts and data URIs
           fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
 
@@ -194,8 +197,9 @@ class Server {
     // API routes
     this.app.use('/api', apiRoutes);
 
-    // Serve uploaded assets (audio, etc.)
-    this.app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+    // Serve uploaded assets (audio, etc.).
+    // Use fallthrough: false so missing files return 404 instead of SPA index.html
+    this.app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { fallthrough: false }));
 
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
