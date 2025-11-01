@@ -22,22 +22,24 @@ elif [ -f ".env" ]; then
   set +a
 fi
 
-# Prisma helpers
-PRISMA_SCHEMA="server/prisma/schema.prisma"
-PRISMA_CMD="npx prisma --schema ${PRISMA_SCHEMA}"
+# Track app directory for cd back
+APP_DIR="$(pwd)"
 
 if [ -n "${DATABASE_URL}" ]; then
   echo "[entrypoint] DATABASE_URL detected — running prisma migrations"
   # Try migrate deploy; if it fails (no migrations) fall back to db push
-  if ${PRISMA_CMD} migrate deploy; then
-    echo "[entrypoint] Migrations deployed successfully"
-  else
-    echo "[entrypoint] migrate deploy failed, trying prisma db push"
-    ${PRISMA_CMD} db push
-  fi
-  # Ensure Prisma client is generated for runtime
-  echo "[entrypoint] Generating Prisma client"
-  ${PRISMA_CMD} generate
+  (
+    cd server
+    if npx prisma migrate deploy; then
+      echo "[entrypoint] Migrations deployed successfully"
+    else
+      echo "[entrypoint] migrate deploy failed, trying prisma db push"
+      npx prisma db push
+    fi
+    # Ensure Prisma client is generated for runtime
+    echo "[entrypoint] Generating Prisma client"
+    npx prisma generate
+  )
 else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"
 fi
