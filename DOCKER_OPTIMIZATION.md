@@ -71,8 +71,10 @@ docker build -t youtube-queue .
 
 To run locally:
 ```bash
-docker run -p 3000:3000 --env-file .env youtube-queue
+docker run -p 3000:3000 -e PORT=3000 --env-file .env youtube-queue
 ```
+
+Note: The application uses `process.env.PORT || 3000`, so the PORT environment variable can be set to any value.
 
 ## Notes
 

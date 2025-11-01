@@ -36,12 +36,13 @@ RUN mkdir -p db && \
     echo '{}' > db/moderation.json && \
     echo '{}' > db/giveaways.json && \
     echo '{}' > db/tokens.json && \
-    echo '{"open":false,"maxVidsPerUser":3}' > db/queue_settings.json
+    echo '{"last_turn_type":false,"deeze_nutz":0,"turn_count":0,"youtubes_watched":0,"total_youtubes_watched":0,"giveaway":{"isOpen":false,"tokens":30,"secretWord":""},"youtube_open":false}' > db/queue_settings.json
 
 # Set NODE_ENV to production
 ENV NODE_ENV=production
 
-# Expose port (Railway will use PORT env variable)
+# Expose default port (Railway will override via PORT env variable)
+# The application uses process.env.PORT || 3000
 EXPOSE 3000
 
 # Use non-root user for security
