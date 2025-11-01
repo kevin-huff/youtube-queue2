@@ -1,6 +1,9 @@
 const express = require('express');
 const passport = require('passport');
 const { body, param, validationResult } = require('express-validator');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const logger = require('../utils/logger');
 const { requireAuth, requireChannelRole } = require('../auth/middleware');
 const { authenticateJudgeToken, generateJudgeToken, verifyJudgeToken } = require('../auth/judgeToken');
@@ -17,6 +20,72 @@ const validate = (req, res, next) => {
   }
   return next();
 };
+
+// File upload handling for per-channel assets (e.g., shuffle audio)
+const UPLOADS_ROOT = path.join(__dirname, '../uploads');
+const ensureDir = (dir) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    // ignore if exists or race
+  }
+};
+ensureDir(UPLOADS_ROOT);
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const channelId = (req.params.channelId || 'default').toString().toLowerCase();
+    const channelDir = path.join(UPLOADS_ROOT, channelId);
+    ensureDir(channelDir);
+    cb(null, channelDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '') || '.mp3';
+    const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
+    const name = `shuffle-${Date.now()}${safeExt}`;
+    cb(null, name);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  fileFilter: (req, file, cb) => {
+    const ok = (file.mimetype || '').startsWith('audio/');
+    if (ok) return cb(null, true);
+    const err = new Error('Only audio files are allowed');
+    err.status = 400;
+    return cb(err);
+  }
+});
+
+// Separate storage for soundboard to distinguish filenames
+const sbStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const channelId = (req.params.channelId || 'default').toString().toLowerCase();
+    const channelDir = path.join(UPLOADS_ROOT, channelId);
+    ensureDir(channelDir);
+    cb(null, channelDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '') || '.mp3';
+    const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
+    const name = `sound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExt}`;
+    cb(null, name);
+  }
+});
+
+const sbUpload = multer({
+  storage: sbStorage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = (file.mimetype || '').startsWith('audio/');
+    if (ok) return cb(null, true);
+    const err = new Error('Only audio files are allowed');
+    err.status = 400;
+    return cb(err);
+  }
+});
 
 const getChannelManager = (req) => {
   const manager = req.app.get('channelManager');
@@ -1181,7 +1250,8 @@ router.get('/channels/:channelId/settings', requireAuth, async (req, res) => {
       max_video_duration: await queueService.getSetting('max_video_duration', '300'),
       auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
       current_volume: await queueService.getSetting('current_volume', '75'),
-      max_per_user: await queueService.getSetting('max_per_user', '3')
+      max_per_user: await queueService.getSetting('max_per_user', '3'),
+      shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', '')
     };
 
     res.json({ channelId: normalizedChannelId, settings });
@@ -1226,6 +1296,192 @@ router.put('/channels/:channelId/settings/:key', requireAuth, [
   } catch (error) {
     logger.error('Error updating setting:', error);
     res.status(error.status || 400).json({ error: error.message || 'Failed to update setting' });
+  }
+});
+
+// Upload shuffle audio and persist setting
+router.post(
+  '/channels/:channelId/uploads/shuffle-audio',
+  requireAuth,
+  requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await requireChannelOwnership(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const publicRel = `/uploads/${normalizedChannelId}/${req.file.filename}`;
+      const proto = req.protocol;
+      const host = req.get('host');
+      const publicUrl = `${proto}://${host}${publicRel}`;
+
+      // Persist as channel setting and notify clients
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+      await queueService.updateSetting('shuffle_audio_url', publicUrl);
+
+      logger.info(`Uploaded shuffle audio for ${normalizedChannelId}: ${publicUrl}`);
+      return res.status(201).json({ url: publicUrl, filename: req.file.filename, channelId: normalizedChannelId });
+    } catch (error) {
+      logger.error('Error uploading shuffle audio:', error);
+      const status = error.status || 500;
+      return res.status(status).json({ error: error.message || 'Upload failed' });
+    }
+  }
+);
+
+// Helpers for soundboard storage in settings
+const getSoundboardItems = async (queueService) => {
+  try {
+    const raw = await queueService.getSetting('soundboard_items', '[]');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) {
+    return [];
+  }
+};
+
+const setSoundboardItems = async (queueService, items) => {
+  await queueService.updateSetting('soundboard_items', JSON.stringify(items || []));
+};
+
+// List soundboard items
+router.get('/channels/:channelId/soundboard', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const queueService = getQueueServiceOrThrow(channelManager, channelId);
+    const items = await getSoundboardItems(queueService);
+    res.json({ items });
+  } catch (error) {
+    logger.error('Error listing soundboard items:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to load soundboard' });
+  }
+});
+
+// Upload a new soundboard item
+router.post('/channels/:channelId/soundboard/upload', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), sbUpload.single('file'), async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const queueService = getQueueServiceOrThrow(channelManager, channelId);
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const name = (req.body?.name || req.file.originalname || 'Sound').toString().slice(0, 100);
+    const proto = req.protocol;
+    const host = req.get('host');
+    const url = `${proto}://${host}/uploads/${channelId}/${req.file.filename}`;
+
+    const items = await getSoundboardItems(queueService);
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const item = { id, name, url, filename: req.file.filename, createdAt: new Date().toISOString() };
+    const next = [item, ...items].slice(0, 100); // cap to 100
+    await setSoundboardItems(queueService, next);
+
+    res.status(201).json({ item });
+  } catch (error) {
+    logger.error('Error uploading soundboard item:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to upload sound' });
+  }
+});
+
+// Delete a soundboard item
+router.delete('/channels/:channelId/soundboard/:itemId', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const queueService = getQueueServiceOrThrow(channelManager, channelId);
+    const items = await getSoundboardItems(queueService);
+    const idx = items.findIndex((it) => it.id === req.params.itemId);
+    if (idx < 0) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const [removed] = items.splice(idx, 1);
+    await setSoundboardItems(queueService, items);
+    // try to remove file if it's in our uploads folder
+    try {
+      if (removed?.filename) {
+        const filePath = path.join(UPLOADS_ROOT, channelId, removed.filename);
+        fs.unlink(filePath, () => {});
+      }
+    } catch(_) {}
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting soundboard item:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to delete sound' });
+  }
+});
+
+// Trigger playing a soundboard item to channel clients
+router.post('/channels/:channelId/soundboard/play', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const queueService = getQueueServiceOrThrow(channelManager, channelId);
+    const items = await getSoundboardItems(queueService);
+    let payload = null;
+    if (req.body?.itemId) {
+      const item = items.find((it) => it.id === req.body.itemId);
+      if (!item) return res.status(404).json({ error: 'Item not found' });
+      payload = { id: item.id, name: item.name, url: item.url };
+    } else if (req.body?.url) {
+      payload = { id: req.body.id || null, name: req.body.name || 'Sound', url: req.body.url };
+    } else {
+      return res.status(400).json({ error: 'itemId or url required' });
+    }
+    // Broadcast via channel namespace
+    queueService.io.emit('soundboard:play', payload);
+    res.json({ ok: true, payload });
+  } catch (error) {
+    logger.error('Error triggering soundboard play:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to play sound' });
+  }
+});
+
+// Judge-token: list soundboard
+router.get('/channels/:channelId/cups/:cupId/soundboard', authenticateJudgeToken, async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const queueService = getQueueServiceOrThrow(channelManager, req.judgeAuth.channelId);
+    const items = await getSoundboardItems(queueService);
+    res.json({ items });
+  } catch (error) {
+    logger.error('Error (judge) listing soundboard:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to load soundboard' });
+  }
+});
+
+// Judge-token: trigger play (always to all)
+router.post('/channels/:channelId/cups/:cupId/soundboard/play', authenticateJudgeToken, async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const queueService = getQueueServiceOrThrow(channelManager, req.judgeAuth.channelId);
+    const items = await getSoundboardItems(queueService);
+    let payload = null;
+    if (req.body?.itemId) {
+      const item = items.find((it) => it.id === req.body.itemId);
+      if (!item) return res.status(404).json({ error: 'Item not found' });
+      payload = { id: item.id, name: item.name, url: item.url };
+    } else if (req.body?.url) {
+      payload = { id: null, name: 'Sound', url: req.body.url };
+    } else {
+      return res.status(400).json({ error: 'itemId or url required' });
+    }
+    queueService.io.emit('soundboard:play', payload);
+    res.json({ ok: true, payload });
+  } catch (error) {
+    logger.error('Error (judge) triggering soundboard play:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to play sound' });
   }
 });
 

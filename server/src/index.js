@@ -194,6 +194,9 @@ class Server {
     // API routes
     this.app.use('/api', apiRoutes);
 
+    // Serve uploaded assets (audio, etc.)
+    this.app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
       this.app.use(express.static('public'));

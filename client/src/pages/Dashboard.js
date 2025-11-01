@@ -24,6 +24,9 @@ import {
   Tabs,
   Tab,
   Stack,
+  List,
+  ListItem,
+  ListItemText,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -173,11 +176,19 @@ const Dashboard = () => {
   const [warningNote, setWarningNote] = useState('');
   const [warningTarget, setWarningTarget] = useState(null);
   const [producerAccessDenied, setProducerAccessDenied] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [soundboardItems, setSoundboardItems] = useState([]);
+  const [sbUploading, setSbUploading] = useState(false);
+  const [sbError, setSbError] = useState(null);
+  const [sbName, setSbName] = useState('');
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
   // Track selected channel id across renders to avoid refetch loops
   const selectedChannelIdRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const sbFileInputRef = useRef(null);
   const currentChannelId = channel?.id || null;
 
   const channelAccess = useMemo(
@@ -396,6 +407,113 @@ const Dashboard = () => {
       setClearingQueue(false);
     }
   }, [clearQueue]);
+
+  const shuffleAudioUrl = settings.shuffle_audio_url || '';
+
+  const triggerShuffleAudioDialog = useCallback(() => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  }, []);
+
+  const handleShuffleAudioSelected = useCallback(async (event) => {
+    if (!channel?.id) return;
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+    setUploadingAudio(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await axios.post(`/api/channels/${channel.id}/uploads/shuffle-audio`, form, {
+        withCredentials: true,
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const url = res?.data?.url;
+      if (typeof url === 'string') {
+        handleSettingChange('shuffle_audio_url', url);
+      }
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to upload shuffle audio:', err);
+      const message = err?.response?.data?.error || err?.message || 'Upload failed';
+      setUploadError(message);
+    } finally {
+      setUploadingAudio(false);
+    }
+  }, [channel?.id, handleSettingChange]);
+
+  const handleResetShuffleAudio = useCallback(() => {
+    handleSettingChange('shuffle_audio_url', '');
+  }, [handleSettingChange]);
+
+  // Soundboard helpers
+  const refreshSoundboard = useCallback(async () => {
+    if (!channel?.id) return;
+    try {
+      const res = await axios.get(`/api/channels/${channel.id}/soundboard`, { withCredentials: true });
+      setSoundboardItems(Array.isArray(res.data.items) ? res.data.items : []);
+    } catch (err) {
+      console.warn('Failed to load soundboard:', err);
+      setSoundboardItems([]);
+    }
+  }, [channel?.id]);
+
+  useEffect(() => {
+    refreshSoundboard();
+  }, [refreshSoundboard]);
+
+  const triggerSbFilePicker = useCallback(() => {
+    if (sbFileInputRef.current) {
+      sbFileInputRef.current.value = '';
+      sbFileInputRef.current.click();
+    }
+  }, []);
+
+  const handleSbFileSelected = useCallback(async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file || !channel?.id) return;
+    setSbError(null);
+    setSbUploading(true);
+    try {
+      const form = new FormData();
+      if (sbName && sbName.trim()) form.append('name', sbName.trim());
+      form.append('file', file);
+      const res = await axios.post(`/api/channels/${channel.id}/soundboard/upload`, form, {
+        withCredentials: true,
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const item = res?.data?.item;
+      if (item) setSoundboardItems((prev) => [item, ...prev]);
+      setSbName('');
+    } catch (err) {
+      const message = err?.response?.data?.error || err?.message || 'Upload failed';
+      setSbError(message);
+    } finally {
+      setSbUploading(false);
+    }
+  }, [channel?.id, sbName]);
+
+  const handlePlaySound = useCallback(async (itemId) => {
+    if (!channel?.id || !itemId) return;
+    try {
+      await axios.post(`/api/channels/${channel.id}/soundboard/play`, { itemId }, { withCredentials: true });
+    } catch (err) {
+      console.warn('Failed to play soundboard item:', err);
+    }
+  }, [channel?.id]);
+
+  const handleDeleteSound = useCallback(async (itemId) => {
+    if (!channel?.id || !itemId) return;
+    try {
+      await axios.delete(`/api/channels/${channel.id}/soundboard/${itemId}`, { withCredentials: true });
+      setSoundboardItems((prev) => prev.filter((it) => it.id !== itemId));
+    } catch (err) {
+      console.warn('Failed to delete soundboard item:', err);
+    }
+  }, [channel?.id]);
 
   const loadPendingSubmissions = useCallback(async () => {
     if (!currentChannelId || !canModerate) {
@@ -1095,6 +1213,160 @@ const Dashboard = () => {
                       }
                       label={queueEnabledSetting ? 'Queue Enabled' : 'Queue Disabled'}
                     />
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Soundboard */}
+              <Grid container spacing={3} sx={{ mb: 4 }}>
+                <Grid item xs={12}>
+                  <Card>
+                    <CardContent>
+                      <Box display="flex" alignItems="flex-start" mb={2}>
+                        <Box
+                          sx={{
+                            mr: 2,
+                            p: 1,
+                            borderRadius: 1,
+                            bgcolor: alpha(theme.palette.info.main, 0.1),
+                            color: 'info.main'
+                          }}
+                        >
+                          <LiveTv />
+                        </Box>
+                        <Box flex={1}>
+                          <Typography variant="h6" gutterBottom>
+                            Soundboard (per-channel)
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Upload short audio clips you can trigger for judges and the overlay.
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Stack spacing={2}>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <input
+                            ref={sbFileInputRef}
+                            type="file"
+                            accept="audio/*"
+                            style={{ display: 'none' }}
+                            onChange={handleSbFileSelected}
+                          />
+                          <TextField
+                            size="small"
+                            label="Name"
+                            placeholder="e.g., Airhorn"
+                            value={sbName}
+                            onChange={(e) => setSbName(e.target.value)}
+                            sx={{ width: 260 }}
+                          />
+                          <Button
+                            variant="contained"
+                            onClick={triggerSbFilePicker}
+                            disabled={sbUploading || !channel?.id}
+                          >
+                            {sbUploading ? 'Uploading…' : 'Upload Sound'}
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            onClick={refreshSoundboard}
+                            disabled={sbUploading}
+                          >
+                            Refresh
+                          </Button>
+                        </Box>
+                        {sbError && (
+                          <Alert severity="error">{sbError}</Alert>
+                        )}
+                        <List dense>
+                          {soundboardItems.length === 0 && (
+                            <Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>
+                              No sounds uploaded yet.
+                            </Typography>
+                          )}
+                          {soundboardItems.map((it) => (
+                            <ListItem key={it.id}
+                              secondaryAction={
+                                <Stack direction="row" spacing={1}>
+                                  <Button size="small" onClick={() => handlePlaySound(it.id)}>Play</Button>
+                                  <Button size="small" color="error" onClick={() => handleDeleteSound(it.id)}>Delete</Button>
+                                </Stack>
+                              }
+                            >
+                              <ListItemText
+                                primary={it.name}
+                                secondary={it.url}
+                              />
+                            </ListItem>
+                          ))}
+                        </List>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Box display="flex" alignItems="flex-start" mb={2}>
+                      <Box
+                        sx={{
+                          mr: 2,
+                          p: 1,
+                          borderRadius: 1,
+                          bgcolor: alpha(theme.palette.info.main, 0.1),
+                          color: 'info.main'
+                        }}
+                      >
+                        <LiveTv />
+                      </Box>
+                      <Box flex={1}>
+                        <Typography variant="h6" gutterBottom>
+                          Shuffle Audio
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          Upload a custom audio track to play during queue shuffles.
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">
+                          Current: {shuffleAudioUrl ? shuffleAudioUrl : 'Default theme'}
+                        </Typography>
+                      </Box>
+                      <Box display="flex" alignItems="center" gap={1}>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="audio/*"
+                          style={{ display: 'none' }}
+                          onChange={handleShuffleAudioSelected}
+                        />
+                        <Button
+                          variant="contained"
+                          onClick={triggerShuffleAudioDialog}
+                          disabled={uploadingAudio || !channel?.id}
+                        >
+                          {uploadingAudio ? 'Uploading…' : 'Upload Audio'}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="warning"
+                          onClick={handleResetShuffleAudio}
+                          disabled={uploadingAudio}
+                        >
+                          Reset to Default
+                        </Button>
+                      </Box>
+                      {shuffleAudioUrl && (
+                        <audio controls src={shuffleAudioUrl} style={{ width: '100%' }} />
+                      )}
+                      {uploadError && (
+                        <Alert severity="error">{uploadError}</Alert>
+                      )}
+                    </Stack>
                   </CardContent>
                 </Card>
               </Grid>

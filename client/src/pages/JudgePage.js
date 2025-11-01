@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -43,6 +43,7 @@ const JudgePage = () => {
     pauseOverlay,
     seekOverlay
   } = useSocket();
+  const sbAudioRef = useRef(null);
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
   const [isLocked, setIsLocked] = useState(false);
@@ -54,6 +55,9 @@ const JudgePage = () => {
   const [pendingSeek, setPendingSeek] = useState(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [forceReloadKey, setForceReloadKey] = useState(0);
+  const [sbItems, setSbItems] = useState([]);
+  const [sbLoading, setSbLoading] = useState(false);
+  const [sbError, setSbError] = useState(null);
 
   // Synced YouTube player
   const {
@@ -90,6 +94,24 @@ const JudgePage = () => {
       };
     }
   }, [channelName, connectToChannel, disconnectFromChannel]);
+
+  // Soundboard playback listener
+  useEffect(() => {
+    const handler = (payload = {}) => {
+      try {
+        if (!payload.url) return;
+        if (sbAudioRef.current) {
+          try { sbAudioRef.current.pause(); } catch (_) {}
+        }
+        const audio = new Audio(payload.url);
+        sbAudioRef.current = audio;
+        audio.volume = 1;
+        audio.play().catch(() => {});
+      } catch (_) {}
+    };
+    addChannelListener('soundboard:play', handler);
+    return () => removeChannelListener('soundboard:play', handler);
+  }, [addChannelListener, removeChannelListener]);
 
   // Playback control handlers
   const handlePlayPause = () => {
@@ -206,6 +228,44 @@ const JudgePage = () => {
     }
     return headers;
   }, [judgeToken]);
+
+  // Load soundboard items for judges
+  const loadSoundboard = useCallback(async () => {
+    if (!channelName || !cupId) return;
+    try {
+      setSbLoading(true);
+      setSbError(null);
+      const response = await fetch(`/api/channels/${channelName}/cups/${cupId}/soundboard`, {
+        credentials: 'include',
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to load soundboard');
+      }
+      const data = await response.json();
+      setSbItems(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setSbError(err.message || 'Failed to load soundboard');
+      setSbItems([]);
+    } finally {
+      setSbLoading(false);
+    }
+  }, [channelName, cupId, getHeaders]);
+
+  useEffect(() => { loadSoundboard(); }, [loadSoundboard]);
+
+  const handlePlaySb = useCallback(async (itemId) => {
+    if (!channelName || !cupId || !itemId) return;
+    try {
+      await fetch(`/api/channels/${channelName}/cups/${cupId}/soundboard/play`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId })
+      });
+    } catch (_) {}
+  }, [channelName, cupId, getHeaders]);
 
   // Fetch or create session on mount
   useEffect(() => {
@@ -571,6 +631,34 @@ const JudgePage = () => {
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                 Submitter identity hidden until reveal
               </Typography>
+            </CardContent>
+          </Card>
+
+          {/* Soundboard (Judges can trigger) */}
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                <Typography variant="h6">Soundboard</Typography>
+                <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>Refresh</Button>
+              </Box>
+              {sbError && (
+                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
+                  {sbError}
+                </Alert>
+              )}
+              {sbItems.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
+                </Typography>
+              ) : (
+                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                  {sbItems.map((it) => (
+                    <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
+                      {it.name}
+                    </Button>
+                  ))}
+                </Stack>
+              )}
             </CardContent>
           </Card>
 

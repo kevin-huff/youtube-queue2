@@ -13,7 +13,7 @@ import { useSocket } from '../contexts/SocketContext';
 import VotingOverlay from '../components/VotingOverlay';
 
 const SHUFFLE_DURATION_MS = 30000;
-const SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
+const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
 const RING_TILT_DEG = 16;
 const STAR_PHASE_START_MS = 12000;
 const SCATTER_PHASE_MS = 20000;
@@ -181,7 +181,9 @@ const QueueOverlay = () => {
     votingState,
     settings,
     cupStandings,
-    refreshCupStandings
+    refreshCupStandings,
+    addChannelListener,
+    removeChannelListener
   } = useSocket();
   const [shuffleVisual, setShuffleVisual] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -190,6 +192,7 @@ const QueueOverlay = () => {
   const [socialRevealActive, setSocialRevealActive] = useState(false);
   const shuffleSignatureRef = useRef(null);
   const audioRef = useRef(null);
+  const sbAudioRef = useRef(null);
   const timerRef = useRef(null);
   const rafRef = useRef(null);
   const lockSoundCtxRef = useRef(null);
@@ -256,6 +259,14 @@ const QueueOverlay = () => {
       return prev === next ? prev : next;
     });
   }, [derivedCupId]);
+
+  const shuffleAudioSrc = useMemo(() => {
+    const raw = settings?.shuffle_audio_url;
+    if (typeof raw === 'string' && raw.trim().length) {
+      return raw.trim();
+    }
+    return DEFAULT_SHUFFLE_AUDIO_SRC;
+  }, [settings?.shuffle_audio_url]);
 
   useEffect(() => {
     if (!activeCupId || !channelConnected) {
@@ -407,7 +418,7 @@ const QueueOverlay = () => {
     if (!channelName) {
       return undefined;
     }
-    connectToChannel(channelName, { explicit: true });
+    connectToChannel(channelName, { explicit: true, loadSettings: true });
     return () => disconnectFromChannel();
   }, [channelName, connectToChannel, disconnectFromChannel]);
 
@@ -496,7 +507,7 @@ const QueueOverlay = () => {
 
     setAudioError(false);
 
-    const audio = new Audio(SHUFFLE_AUDIO_SRC);
+    const audio = new Audio(shuffleAudioSrc);
     audioRef.current = audio;
     audio.volume = 1;
 
@@ -547,7 +558,25 @@ const QueueOverlay = () => {
         audioRef.current = null;
       }
     };
-  }, [shuffleVisual]);
+  }, [shuffleVisual, shuffleAudioSrc]);
+
+  // Soundboard playback: play sounds intended for overlay or all
+  useEffect(() => {
+    const handler = (payload = {}) => {
+      try {
+        if (!payload.url) return;
+        if (sbAudioRef.current) {
+          try { sbAudioRef.current.pause(); } catch (_) {}
+        }
+        const audio = new Audio(payload.url);
+        sbAudioRef.current = audio;
+        audio.volume = 1;
+        audio.play().catch(() => {});
+      } catch (_) {}
+    };
+    addChannelListener('soundboard:play', handler);
+    return () => removeChannelListener('soundboard:play', handler);
+  }, [addChannelListener, removeChannelListener]);
 
   const sortedQueue = useMemo(() => {
     const items = queue.slice();
@@ -1090,7 +1119,7 @@ const ringLayout = useMemo(() => {
                 textTransform: 'uppercase'
               }}
             >
-              Shuffle audio blocked. Place a track at {SHUFFLE_AUDIO_SRC} or set REACT_APP_SHUFFLE_AUDIO.
+              Shuffle audio blocked. Current source: {shuffleAudioSrc}
             </Box>
           )}
         </Box>
