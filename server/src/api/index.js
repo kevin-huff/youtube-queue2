@@ -22,7 +22,10 @@ const validate = (req, res, next) => {
 };
 
 // File upload handling for per-channel assets (e.g., shuffle audio)
-const UPLOADS_ROOT = path.join(__dirname, '../uploads');
+// Use env-configurable absolute dir for deployments with volumes (e.g., Railway)
+const UPLOADS_ROOT = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(__dirname, '../../uploads');
 const ensureDir = (dir) => {
   try {
     fs.mkdirSync(dir, { recursive: true });

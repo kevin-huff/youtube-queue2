@@ -201,6 +201,13 @@ class Server {
     // Use fallthrough: false so missing files return 404 instead of SPA index.html
     this.app.use('/uploads', express.static(path.join(__dirname, '../uploads'), { fallthrough: false }));
 
+    // Serve uploaded assets (audio, etc.).
+    const uploadsDir = process.env.UPLOADS_DIR
+      ? path.resolve(process.env.UPLOADS_DIR)
+      : path.join(__dirname, '../uploads');
+    // Use fallthrough: false so missing files return 404 instead of SPA index.html
+    this.app.use('/uploads', express.static(uploadsDir, { fallthrough: false }));
+
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
       this.app.use(express.static('public'));
@@ -214,12 +221,17 @@ class Server {
       res.status(404).json({ error: 'Route not found' });
     });
 
-    // Error handler
+    // Error handler (respect status from upstream middleware like express.static)
     this.app.use((err, req, res, next) => {
-      logger.error('Unhandled error:', err);
-      res.status(500).json({
-        error: process.env.NODE_ENV === 'production' 
-          ? 'Internal server error' 
+      const status = err.status || err.statusCode || (err.code === 'ENOENT' ? 404 : 500);
+      if (status >= 500) {
+        logger.error('Unhandled error:', err);
+      } else {
+        logger.warn('Handled error:', { status, message: err.message, path: req.path });
+      }
+      res.status(status).json({
+        error: process.env.NODE_ENV === 'production' && status >= 500
+          ? 'Internal server error'
           : err.message
       });
     });
