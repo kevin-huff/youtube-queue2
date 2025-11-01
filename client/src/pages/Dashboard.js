@@ -184,6 +184,7 @@ const Dashboard = () => {
   const [sbName, setSbName] = useState('');
   const [sbBusyId, setSbBusyId] = useState(null);
   const [sbToast, setSbToast] = useState(null);
+  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
@@ -517,8 +518,12 @@ const Dashboard = () => {
       }
       // Optional: local preview (comment out if undesired)
       try {
-        const url = soundboardItems.find((it) => it.id === itemId)?.url;
+        let url = soundboardItems.find((it) => it.id === itemId)?.url;
         if (url) {
+          const base = (SERVER_BASE || '').replace(/\/$/, '');
+          if (url.startsWith('/')) {
+            url = `${base}${url}`;
+          }
           const a = new Audio(url);
           a.volume = 1;
           a.play().catch(() => {});
@@ -1335,7 +1340,17 @@ const Dashboard = () => {
                             >
                               <ListItemText
                                 primary={it.name}
-                                secondary={it.url}
+                                secondary={
+                                  <span>
+                                    <a
+                                      href={`${(SERVER_BASE || '').replace(/\/$/,'')}${it.url}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {`${(SERVER_BASE || '').replace(/\/$/,'')}${it.url}`}
+                                    </a>
+                                  </span>
+                                }
                               />
                             </ListItem>
                           ))}

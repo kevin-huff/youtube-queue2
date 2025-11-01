@@ -45,6 +45,7 @@ const JudgePage = () => {
   } = useSocket();
   const sbAudioRef = useRef(null);
   const [sbAudioError, setSbAudioError] = useState(false);
+  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
   const [isLocked, setIsLocked] = useState(false);
@@ -107,6 +108,10 @@ const JudgePage = () => {
         console.info('soundboard:play received (judge):', payload);
         if (!payload.url) return;
         let url = payload.url;
+        const base = (SERVER_BASE || '').replace(/\/$/, '');
+        if (url.startsWith('/')) {
+          url = `${base}${url}`;
+        }
         try {
           const u = new URL(url, window.location.origin);
           if (window.location.protocol === 'https:' && u.protocol === 'http:') {
@@ -117,6 +122,8 @@ const JudgePage = () => {
             url = u.toString();
           }
         } catch (_) {}
+        // eslint-disable-next-line no-console
+        console.info('JudgePage: resolved audio url', url);
         if (sbAudioRef.current) {
           try { sbAudioRef.current.pause(); } catch (_) {}
         }

@@ -218,13 +218,17 @@ const QueueOverlay = () => {
 
   // removed: derivedCupId/activeCupId logic used only for predictions
 
+  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const shuffleAudioSrc = useMemo(() => {
     const raw = settings?.shuffle_audio_url;
+    const base = (SERVER_BASE || '').replace(/\/$/, '');
     if (typeof raw === 'string' && raw.trim().length) {
-      return raw.trim();
+      const val = raw.trim();
+      if (val.startsWith('/')) return `${base}${val}`;
+      return val;
     }
     return DEFAULT_SHUFFLE_AUDIO_SRC;
-  }, [settings?.shuffle_audio_url]);
+  }, [settings?.shuffle_audio_url, SERVER_BASE]);
 
   // removed: standings prefetch effect (no predictions)
 
@@ -372,6 +376,8 @@ const QueueOverlay = () => {
         shuffleUrl = u.toString();
       }
     } catch (_) {}
+    // eslint-disable-next-line no-console
+    console.info('QueueOverlay: attempting to play shuffle audio', shuffleUrl);
     const audio = new Audio(shuffleUrl);
     audioRef.current = audio;
     audio.volume = 1;
@@ -437,6 +443,10 @@ const QueueOverlay = () => {
         console.info('soundboard:play received (overlay):', payload);
         if (!payload.url) return;
         let url = payload.url;
+        const base = (SERVER_BASE || '').replace(/\/$/, '');
+        if (url.startsWith('/')) {
+          url = `${base}${url}`;
+        }
         try {
           const u = new URL(url, window.location.origin);
           if (window.location.protocol === 'https:' && u.protocol === 'http:') {
