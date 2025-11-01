@@ -1,45 +1,6 @@
 # YouTube Queue Bot - Dockerfile
-FROM node:18-alpine
+# Multi-stage build for optimized Docker image size and build speed
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    && rm -rf /var/cache/apk/*
-
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-
-# Copy package files
-COPY package*.json ./
-COPY server/package*.json ./server/
-COPY client/package*.json ./client/
-
-# Install dependencies
-RUN npm ci --only=production
-RUN cd server && npm ci --only=production
-RUN cd client && npm ci --only=production
-
-# Copy source code
-COPY . .
-
-# Build client
-RUN cd client && npm run build
-
-# Copy built client into server public so the Express server can serve static files
-RUN mkdir -p server/public
-RUN cp -R client/build/* server/public/ || true
-
-# Multi-stage Dockerfile
 # Builder stage: install deps, build client, generate Prisma client
 FROM node:18-bullseye-slim AS builder
 
@@ -50,17 +11,25 @@ COPY package*.json ./
 COPY server/package*.json ./server/
 COPY client/package*.json ./client/
 
-# Install all dependencies (including dev) to support client build & prisma generate
+# Install dependencies for all workspaces (leveraging layer caching)
+# This layer will be cached unless package*.json files change
 RUN npm ci
 
-# Copy source and build the client
-COPY . .
-RUN cd client && npm run build
-
-# Generate Prisma client
+# Copy Prisma schema and generate client (small layer, changes infrequently)
+COPY server/prisma ./server/prisma
 RUN cd server && npx prisma generate
 
-# Remove dev dependencies to keep node_modules production-only
+# Copy and build client (separate layer for better caching)
+COPY client ./client
+RUN cd client && npm run build
+
+# Copy server source files
+COPY server/src ./server/src
+
+# Copy runtime scripts and config
+COPY start-production-container.sh ./
+
+# Prune dev dependencies
 RUN npm prune --production
 
 
