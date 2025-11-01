@@ -7,10 +7,14 @@ set -e
 
 echo "[entrypoint] Starting container entrypoint"
 
-# If a .env file exists in the app root, export its variables so this shell
-# (used for running migrations) picks them up. This ensures migrations run
-# inside the container even when running without --env-file at runtime.
-if [ -f ".env" ]; then
+# If a .env file exists, export it for local runs (Railway normally provides env)
+if [ -f "server/.env" ]; then
+  echo "[entrypoint] Found server/.env — exporting variables for migration step"
+  set -a
+  # shellcheck disable=SC1091
+  . server/.env
+  set +a
+elif [ -f ".env" ]; then
   echo "[entrypoint] Found .env — exporting variables for migration step"
   set -a
   # shellcheck disable=SC1091
@@ -18,18 +22,22 @@ if [ -f ".env" ]; then
   set +a
 fi
 
+# Prisma helpers
+PRISMA_SCHEMA="server/prisma/schema.prisma"
+PRISMA_CMD="npx prisma --schema ${PRISMA_SCHEMA}"
+
 if [ -n "${DATABASE_URL}" ]; then
   echo "[entrypoint] DATABASE_URL detected — running prisma migrations"
   # Try migrate deploy; if it fails (no migrations) fall back to db push
-  if npx prisma migrate deploy; then
+  if ${PRISMA_CMD} migrate deploy; then
     echo "[entrypoint] Migrations deployed successfully"
   else
     echo "[entrypoint] migrate deploy failed, trying prisma db push"
-    npx prisma db push
+    ${PRISMA_CMD} db push
   fi
   # Ensure Prisma client is generated for runtime
   echo "[entrypoint] Generating Prisma client"
-  npx prisma generate
+  ${PRISMA_CMD} generate
 else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"
 fi
