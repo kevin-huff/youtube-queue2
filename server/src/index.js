@@ -83,12 +83,37 @@ class Server {
 
     // Security middleware
     this.app.use(helmet({
+      // Allow embedding 3rd-party content like YouTube
+      crossOriginEmbedderPolicy: false,
+      // Allow loading cross-origin resources we explicitly permit via CSP (e.g., fonts)
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
       contentSecurityPolicy: {
         directives: {
+          // Base policy
           defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "https:"],
+
+          // Allow styles from self and Google Fonts
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+
+          // Scripts needed for YouTube IFrame API
+          scriptSrc: [
+            "'self'",
+            'https://www.youtube.com',
+            'https://s.ytimg.com',
+            'https://www.gstatic.com'
+          ],
+
+          // Images may come from HTTPS and data URIs
+          imgSrc: ["'self'", 'data:', 'https:'],
+
+          // Fonts from Google Fonts and data URIs
+          fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+
+          // Permit WebSocket and HTTPS connections (API + Socket.io)
+          connectSrc: ["'self'", 'https:', 'wss:'],
+
+          // Allow embedding YouTube iframes
+          frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.youtube-nocookie.com']
         },
       },
     }));

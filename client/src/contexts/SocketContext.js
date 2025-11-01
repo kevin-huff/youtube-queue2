@@ -10,7 +10,15 @@ import React, {
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
-const DEFAULT_SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
+const resolveServerUrl = () => {
+  if (process.env.REACT_APP_SERVER_URL) return process.env.REACT_APP_SERVER_URL;
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return window.location.origin;
+  }
+  return 'http://localhost:5000';
+};
+
+const DEFAULT_SERVER_URL = resolveServerUrl();
 
 const SocketContext = createContext();
 
@@ -48,6 +56,7 @@ export const SocketProvider = ({ children }) => {
   // Establish connection to the root namespace
   useEffect(() => {
     const socket = io(DEFAULT_SERVER_URL, {
+      transports: ['websocket'],
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
@@ -428,6 +437,7 @@ export const SocketProvider = ({ children }) => {
     cleanupChannelSocket();
 
     const namespace = io(`${DEFAULT_SERVER_URL}/channel/${normalizedChannelId}`, {
+      transports: ['websocket'],
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,

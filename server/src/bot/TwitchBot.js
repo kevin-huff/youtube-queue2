@@ -12,6 +12,8 @@ class TwitchBot {
     this.rateLimiter = new Map(); // Track user rate limits per channel
     this.channelModerators = new Map(); // channelId -> Set of moderators
     this.channelBannedUsers = new Map(); // channelId -> Set of banned users
+    this.pendingDuplicateConfirms = new Map(); // key: `${channelId}:${username}` -> { videoId, expiresAt }
+    this._historicalIds = null; // lazy-loaded Set of historical YouTube IDs
     
     this.config = {
       options: {
@@ -461,23 +463,38 @@ class TwitchBot {
           maxDuration: parseInt(maxVideoDuration, 10)
         });
         
-        // Add to queue
-        const result = await queueService.addToQueue(metadata, username);
-
-        let responseMessage = `@${username} Added to queue: ${metadata.title}`;
-        if (result?.duplicate) {
-          const { averageScore, judgeCount } = result.duplicate;
-          if (averageScore !== null || judgeCount) {
-            const scoreText = averageScore !== null
-              ? `${Number(averageScore).toFixed(2)}`
-              : 'previous run';
-            const judgeText = judgeCount
-              ? ` by ${judgeCount} judge${judgeCount === 1 ? '' : 's'}`
-              : '';
-            responseMessage += ` (last scored ${scoreText}${judgeText})`;
+        // Duplicate history detection (DB + historical file)
+        const duplicateInfo = await queueService.getDuplicateInfo(metadata.videoId);
+        const hasDbHistory = Boolean(duplicateInfo?.previousItem);
+        const hasFileHistory = await this._hasHistoricalYouTubeId(metadata.videoId);
+        const needsConfirm = hasDbHistory || hasFileHistory;
+        const confirmKey = `${channelId}:${username}`;
+        const now = Date.now();
+        const pending = this.pendingDuplicateConfirms.get(confirmKey);
+        
+        if (needsConfirm) {
+          const stillValid = pending && pending.videoId === metadata.videoId && pending.expiresAt > now;
+          if (!stillValid) {
+            // Ask user to submit again to confirm
+            this.pendingDuplicateConfirms.set(confirmKey, {
+              videoId: metadata.videoId,
+              expiresAt: now + 2 * 60 * 1000 // 2 minutes
+            });
+            this.sendMessage(channel, `@${username} This video has already been rated before. To confirm, submit the same link again within 2 minutes. You must beat your previous run to keep your score.`);
+            break; // don't add on first attempt
           }
         }
 
+        // Add to queue
+        const result = await queueService.addToQueue(metadata, username);
+
+        // Clear confirmation record on success
+        if (needsConfirm) {
+          this.pendingDuplicateConfirms.delete(confirmKey);
+        }
+
+        // Do not reveal previous scores; just acknowledge
+        const responseMessage = `@${username} Added to queue: ${metadata.title}`;
         this.sendMessage(channel, responseMessage);
 
         if (Array.isArray(result?.warnings)) {
@@ -498,6 +515,49 @@ class TwitchBot {
         this.sendMessage(channel, `@${username} ${error.message}`);
         break;
       }
+    }
+  }
+
+  async _loadHistoricalYouTubeIds() {
+    if (this._historicalIds) return this._historicalIds;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      // Try repo-root path then fallback
+      const candidates = [
+        path.resolve(process.cwd(), '../docs/historical_youtube.json'),
+        path.resolve(process.cwd(), 'docs/historical_youtube.json'),
+        path.join(__dirname, '../../../docs/historical_youtube.json')
+      ];
+      let filePath = null;
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          filePath = p;
+          break;
+        }
+      }
+      if (!filePath) {
+        this._historicalIds = new Set();
+        return this._historicalIds;
+      }
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(raw || '{}');
+      const ids = Object.keys(data || {});
+      this._historicalIds = new Set(ids);
+      return this._historicalIds;
+    } catch (err) {
+      logger.warn('Failed to load historical_youtube.json; proceeding without it', err);
+      this._historicalIds = new Set();
+      return this._historicalIds;
+    }
+  }
+
+  async _hasHistoricalYouTubeId(videoId) {
+    try {
+      const set = await this._loadHistoricalYouTubeIds();
+      return set.has(videoId);
+    } catch (_) {
+      return false;
     }
   }
   isRateLimited(key) {

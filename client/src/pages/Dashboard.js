@@ -174,6 +174,8 @@ const Dashboard = () => {
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
+  // Track selected channel id across renders to avoid refetch loops
+  const selectedChannelIdRef = useRef(null);
   const currentChannelId = channel?.id || null;
 
   const channelAccess = useMemo(
@@ -288,16 +290,21 @@ const Dashboard = () => {
       setChannels(fetched);
 
       // Keep current selection if still valid, else default to first
+      const currentSelectedId = selectedChannelIdRef.current;
       let next = null;
-      if (channel) {
-        next = fetched.find((c) => c.id === channel.id) || null;
+      if (currentSelectedId) {
+        next = fetched.find((c) => c.id === currentSelectedId) || null;
       }
       if (!next) {
         next = fetched[0] || null;
       }
 
       if (next) {
-        setChannel(next);
+        // Only update state if the selected id actually changes
+        if (next.id !== currentSelectedId) {
+          selectedChannelIdRef.current = next.id;
+          setChannel(next);
+        }
         await fetchChannelSettings(next.id);
       } else {
         if (saveTimeoutRef.current) {
@@ -316,7 +323,7 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, [fetchChannelSettings, channel]);
+  }, [fetchChannelSettings]);
 
   const handleChannelSwitch = useCallback(async (nextId) => {
     try {
@@ -508,7 +515,12 @@ const Dashboard = () => {
     if (user) {
       fetchChannels();
     }
-  }, [user, fetchChannels]);
+  }, [user]);
+
+  // Keep a ref of the currently selected channel id to avoid setState loops
+  useEffect(() => {
+    selectedChannelIdRef.current = channel?.id || null;
+  }, [channel?.id]);
 
   useEffect(() => {
     if (authLoading || loading) {

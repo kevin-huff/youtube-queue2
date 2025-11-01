@@ -320,8 +320,7 @@ class ChannelManager {
 
   async rebuildCupStandings(channelId, cupId) {
     const normalizedChannelId = channelId.toLowerCase();
-
-    const [queueItems, cupRecord] = await Promise.all([
+    const [queueItems, cupRecord, allTerminal] = await Promise.all([
       this.prisma.queueItem.findMany({
         where: {
           channelId: normalizedChannelId,
@@ -354,10 +353,57 @@ class ChannelManager {
           theme: true,
           status: true
         }
+      }),
+      // Fetch terminal history across channel to determine previous runs per videoId
+      this.prisma.queueItem.findMany({
+        where: {
+          channelId: normalizedChannelId,
+          status: { in: ['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED'] }
+        },
+        include: { judgeScores: true },
+        orderBy: [
+          { playedAt: 'asc' },
+          { createdAt: 'asc' }
+        ]
       })
     ]);
 
     const { videos, standings } = buildCupScoreData(queueItems);
+
+    // Build previous-average map per item (last prior run of same videoId)
+    const byVideo = new Map();
+    for (const item of allTerminal) {
+      const arr = byVideo.get(item.videoId) || [];
+      arr.push(item);
+      byVideo.set(item.videoId, arr);
+    }
+    const prevAvgByItemId = new Map();
+    for (const [videoId, items] of byVideo.entries()) {
+      // items already sorted
+      const averages = items.map((it) => {
+        const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];
+        if (!scores.length) return null;
+        const total = scores.reduce((s, x) => s + Number(x.score), 0);
+        return total / scores.length;
+      });
+      for (let i = 1; i < items.length; i += 1) {
+        const prev = averages[i - 1];
+        if (typeof prev === 'number') {
+          prevAvgByItemId.set(items[i].id, Number(prev.toFixed(5)));
+        }
+      }
+    }
+
+    // Apply rule: if not strictly greater than previous average, force 0
+    const penalizedVideos = videos.map((v) => {
+      const prev = prevAvgByItemId.get(v.queueItemId);
+      if (typeof v.averageScore === 'number' && typeof prev === 'number') {
+        if (!(v.averageScore > prev)) {
+          return { ...v, averageScore: 0, totalScore: 0 };
+        }
+      }
+      return v;
+    });
 
     await this.prisma.$transaction([
       this.prisma.cupStanding.deleteMany({
@@ -403,7 +449,7 @@ class ChannelManager {
       cupTheme: cupMetadata.theme
     }));
 
-    const enhancedVideos = videos.map((video) => ({
+    const enhancedVideos = penalizedVideos.map((video) => ({
       ...video,
       cupId,
       cupTitle: cupMetadata.title,

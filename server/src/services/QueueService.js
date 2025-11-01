@@ -60,6 +60,37 @@ const shuffleWithSeed = (items, seed) => {
   return arr;
 };
 
+// Cached historical YouTube IDs from docs/historical_youtube.json (optional)
+let _HISTORICAL_YT_IDS = null;
+const _loadHistoricalYouTubeIds = async () => {
+  if (_HISTORICAL_YT_IDS) return _HISTORICAL_YT_IDS;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const candidates = [
+      path.resolve(process.cwd(), '../docs/historical_youtube.json'),
+      path.resolve(process.cwd(), 'docs/historical_youtube.json'),
+      path.join(__dirname, '../../../docs/historical_youtube.json')
+    ];
+    let filePath = null;
+    for (const p of candidates) {
+      if (fs.existsSync(p)) { filePath = p; break; }
+    }
+    if (!filePath) {
+      _HISTORICAL_YT_IDS = new Set();
+      return _HISTORICAL_YT_IDS;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const data = JSON.parse(raw || '{}');
+    _HISTORICAL_YT_IDS = new Set(Object.keys(data || {}));
+    return _HISTORICAL_YT_IDS;
+  } catch (err) {
+    logger.warn('QueueService: failed to load historical_youtube.json; continuing without it', { err });
+    _HISTORICAL_YT_IDS = new Set();
+    return _HISTORICAL_YT_IDS;
+  }
+};
+
 class QueueService {
   constructor(io, channelId) {
     this.db = null;
@@ -406,6 +437,23 @@ class QueueService {
 
     const startedAt = new Date().toISOString();
 
+    // Determine duplicate baseline (from DB history only; file has no score)
+    let duplicateAverageToBeat = null;
+    let duplicateJudgeCount = 0;
+    let duplicateHasHistory = false;
+    try {
+      const dup = await this.getDuplicateInfo(queueItem.videoId);
+      if (dup?.previousItem) {
+        duplicateHasHistory = true;
+        if (typeof dup.previousItem.averageScore === 'number') {
+          duplicateAverageToBeat = Number(dup.previousItem.averageScore);
+        }
+        duplicateJudgeCount = dup.previousItem.judgeCount || 0;
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
     this.votingState = {
       channelId: this.channelId,
       queueItemId,
@@ -449,7 +497,12 @@ class QueueService {
       revealedAverage: null,
       revealedAverageAt: null,
       revealedSocial: null,
-      revealedSocialAt: null
+      revealedSocialAt: null,
+      duplicate: {
+        hasHistory: duplicateHasHistory,
+        averageToBeat: duplicateAverageToBeat,
+        judgeCount: duplicateJudgeCount
+      }
     };
 
     // Seed judges based on active sessions
@@ -622,7 +675,20 @@ class QueueService {
       throw new Error('Average score is not available yet');
     }
 
-    const average = this.votingState.computedAverage;
+    let average = this.votingState.computedAverage;
+
+    // If duplicate with a known baseline, show 0 unless strictly greater
+    try {
+      const avgToBeat = this.votingState?.duplicate?.averageToBeat;
+      if (typeof avgToBeat === 'number') {
+        if (!(average > avgToBeat)) {
+          average = 0;
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+
     this.votingState.revealedAverage = average;
     this.votingState.revealedAverageAt = new Date().toISOString();
     this.votingState.stage = VOTING_STAGES.AVERAGE;
@@ -646,7 +712,21 @@ class QueueService {
       throw new Error('Social score cannot be calculated yet');
     }
 
-    const social = this.votingState.computedSocial;
+    let social = this.votingState.computedSocial;
+
+    // If duplicate with a known baseline, zero social unless average beats prior
+    try {
+      const avgToBeat = this.votingState?.duplicate?.averageToBeat;
+      const avgNow = this.votingState?.computedAverage;
+      if (typeof avgToBeat === 'number' && typeof avgNow === 'number') {
+        if (!(avgNow > avgToBeat)) {
+          social = 0;
+        }
+      }
+    } catch (_) {
+      // ignore errors, keep computed social
+    }
+
     this.votingState.revealedSocial = social;
     this.votingState.revealedSocialAt = new Date().toISOString();
     this.votingState.stage = VOTING_STAGES.SOCIAL;
@@ -1235,7 +1315,22 @@ class QueueService {
         return null;
       }
 
-      return await this._hydrateQueueItem(item);
+      const hydrated = await this._hydrateQueueItem(item);
+      try {
+        // Tag duplicate history for judge visibility
+        const info = await this.getDuplicateInfo(hydrated.videoId);
+        let hasHistory = Boolean(info?.previousItem);
+        if (!hasHistory) {
+          const set = await _loadHistoricalYouTubeIds();
+          hasHistory = set.has(hydrated.videoId);
+        }
+        if (hasHistory) {
+          hydrated.hasDuplicateHistory = true;
+        }
+      } catch (e) {
+        // non-fatal
+      }
+      return hydrated;
     } catch (error) {
       logger.error('Failed to get next video:', error);
       throw error;

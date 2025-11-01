@@ -481,9 +481,14 @@ const JudgePage = () => {
           {/* Video Player */}
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Now Judging
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="h6" gutterBottom>
+                  Now Judging
+                </Typography>
+                {currentlyPlaying?.hasDuplicateHistory && (
+                  <Chip label="Duplicate Submission" color="warning" size="small" />
+                )}
+              </Box>
               <Box
                 sx={{
                   position: 'relative',
