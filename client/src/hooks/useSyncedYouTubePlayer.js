@@ -19,7 +19,8 @@ export const useSyncedYouTubePlayer = ({
   defaultMuted,
   onLocalPlay,
   onLocalPause,
-  onLocalSeek
+  onLocalSeek,
+  onLocalEnd
 }) => {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
@@ -29,7 +30,7 @@ export const useSyncedYouTubePlayer = ({
   const initialVolumeState = clampVolume(initialVolume);
   const [volume, setVolume] = useState(() => initialVolumeState ?? 100);
   const [muted, setMuted] = useState(() => Boolean(defaultMuted));
-  const callbacksRef = useRef({ onLocalPlay, onLocalPause, onLocalSeek });
+  const callbacksRef = useRef({ onLocalPlay, onLocalPause, onLocalSeek, onLocalEnd });
   const lastKnownTimeRef = useRef(0);
   const suppressUntilRef = useRef(0);
   const previousReportedTimeRef = useRef(0);
@@ -41,9 +42,10 @@ export const useSyncedYouTubePlayer = ({
     callbacksRef.current = {
       onLocalPlay: typeof onLocalPlay === 'function' ? onLocalPlay : undefined,
       onLocalPause: typeof onLocalPause === 'function' ? onLocalPause : undefined,
-      onLocalSeek: typeof onLocalSeek === 'function' ? onLocalSeek : undefined
+      onLocalSeek: typeof onLocalSeek === 'function' ? onLocalSeek : undefined,
+      onLocalEnd: typeof onLocalEnd === 'function' ? onLocalEnd : undefined
     };
-  }, [onLocalPlay, onLocalPause, onLocalSeek]);
+  }, [onLocalPlay, onLocalPause, onLocalSeek, onLocalEnd]);
 
   const markSuppressed = useCallback(() => {
     suppressUntilRef.current = Date.now() + 750;
@@ -175,6 +177,18 @@ export const useSyncedYouTubePlayer = ({
       }
       if (callbacksRef.current.onLocalPlay) {
         callbacksRef.current.onLocalPlay(current);
+      }
+      previousReportedTimeRef.current = current;
+      return;
+    }
+
+    if (playerState === window.YT.PlayerState.ENDED) {
+      // Treat as a pause at end + explicit end signal
+      if (callbacksRef.current.onLocalPause) {
+        callbacksRef.current.onLocalPause(current);
+      }
+      if (callbacksRef.current.onLocalEnd) {
+        callbacksRef.current.onLocalEnd(current);
       }
       previousReportedTimeRef.current = current;
       return;

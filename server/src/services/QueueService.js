@@ -1242,6 +1242,7 @@ class QueueService {
 
   async getNextVideo() {
     try {
+      // Do not auto-finalize here; cleanup occurs when advancing to the next video
       // VIP handling: if there are any VIP items queued, return the first active VIP (FIFO)
       try {
         const vipList = await this._getVipList();
@@ -1337,6 +1338,37 @@ class QueueService {
     }
   }
 
+  /**
+   * Finalize items that are stuck as PLAYING but appear to have finished.
+   */
+  async _finalizeStalePlayingItems() {
+    const graceSeconds = 30;
+    try {
+      const items = await this.db.queueItem.findMany({
+        where: { channelId: this.channelId, status: 'PLAYING' },
+        select: { id: true, duration: true, playedAt: true }
+      });
+      if (!items || items.length === 0) return;
+
+      const now = Date.now();
+      for (const it of items) {
+        if (this.currentlyPlaying && this.currentlyPlaying.id === it.id) continue;
+        const durationMs = Math.max(0, Number(it.duration || 0)) * 1000;
+        const playedAtMs = it.playedAt ? new Date(it.playedAt).getTime() : 0;
+        if (!playedAtMs || durationMs === 0) continue;
+        if (this.isVotingActiveForItem(it.id)) continue;
+        const threshold = durationMs + graceSeconds * 1000;
+        if (now - playedAtMs > threshold) {
+          await this.db.queueItem.update({ where: { id: it.id }, data: { status: 'PLAYED' } });
+          this.io.emit('queue:video_removed', { id: it.id });
+          logger.info(`Auto-finalized stuck PLAYING item as PLAYED: ${it.id}`);
+        }
+      }
+    } catch (err) {
+      logger.warn('finalizeStalePlayingItems error', { channelId: this.channelId, error: err });
+    }
+  }
+
   async playNext(options = {}) {
     try {
       const {
@@ -1345,6 +1377,16 @@ class QueueService {
         initiatedBy = 'system'
       } = options;
       let removalOccurred = false;
+
+      // Always reconcile any dangling PLAYING items from previous runs before advancing
+      try {
+        const finalizedIds = await this._finalizeDanglingPlayingItems();
+        if (Array.isArray(finalizedIds) && finalizedIds.length) {
+          removalOccurred = true;
+        }
+      } catch (reconcileErr) {
+        logger.warn('Failed to finalize dangling PLAYING items before playNext', { channelId: this.channelId, error: reconcileErr });
+      }
 
       if (finalizeCurrent && this.currentlyPlaying?.id) {
         const currentId = this.currentlyPlaying.id;
@@ -1428,6 +1470,34 @@ class QueueService {
       logger.error('Failed to play next video:', error);
       throw error;
     }
+  }
+
+  /**
+   * Finalize any queue items stuck as PLAYING except the current one in memory.
+   * Returns the list of item IDs finalized.
+   */
+  async _finalizeDanglingPlayingItems() {
+    const stuck = await this.db.queueItem.findMany({
+      where: { channelId: this.channelId, status: 'PLAYING' },
+      select: { id: true, playedAt: true }
+    });
+    if (!Array.isArray(stuck) || stuck.length === 0) return [];
+
+    const currentId = this.currentlyPlaying?.id || null;
+    const targets = stuck.filter((i) => i.id !== currentId).map((i) => i.id);
+    for (const id of targets) {
+      try {
+        await this.db.queueItem.update({
+          where: { id },
+          data: { status: 'PLAYED', playedAt: new Date() }
+        });
+        this.io.emit('queue:video_removed', { id });
+        logger.info(`Auto-finalized dangling PLAYING item as PLAYED: ${id}`);
+      } catch (err) {
+        logger.warn('Failed to finalize dangling item', { channelId: this.channelId, itemId: id, error: err });
+      }
+    }
+    return targets;
   }
 
   async skipCurrent(skippedBy = 'system') {
