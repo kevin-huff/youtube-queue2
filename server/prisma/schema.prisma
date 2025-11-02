@@ -26,6 +26,7 @@ model Account {
   assignedRoleGrants ChannelRoleAssignment[] @relation("RoleAssignmentsAssignedBy")
   judgeScores        JudgeScore[]            @relation("JudgeScoresForAccount")
   judgeSessions      JudgeSession[]          @relation("JudgeSessionsForAccount")
+  invitesAssignedBy  ChannelRoleInvite[]     @relation("RoleInvitesAssignedBy")
 
   @@map("accounts")
 }
@@ -49,6 +50,7 @@ model Channel {
   series          Series[]
   cups            Cup[]
   roleAssignments ChannelRoleAssignment[]
+  roleInvites     ChannelRoleInvite[]
   cupStandings    CupStanding[]
   seriesStandings SeriesStanding[]
 
@@ -191,6 +193,7 @@ model Cup {
   series          Series?                 @relation(fields: [seriesId], references: [id])
   queueItems      QueueItem[]
   roleAssignments ChannelRoleAssignment[]
+  roleInvites     ChannelRoleInvite[]
   standings       CupStanding[]
   judgeScores     JudgeScore[]
   judgeSessions   JudgeSession[]
