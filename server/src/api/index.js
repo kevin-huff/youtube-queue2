@@ -1150,7 +1150,10 @@ router.get('/channels/:channelId/submissions',
         statuses.push('PENDING');
       }
 
-      const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+      const rawLimit = (req.query.limit ?? '50').toString();
+      const limit = rawLimit.toUpperCase() === 'ALL'
+        ? undefined
+        : Math.min(parseInt(rawLimit || '50', 10), 100);
       const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
 
       const submissions = await queueService.listSubmissions({
@@ -1163,7 +1166,7 @@ router.get('/channels/:channelId/submissions',
         submissions,
         meta: {
           count: submissions.length,
-          limit,
+          limit: typeof limit === 'number' ? limit : 'ALL',
           offset,
           statuses
         }

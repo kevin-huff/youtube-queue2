@@ -599,7 +599,7 @@ const Dashboard = () => {
       setModerationLoading(true);
       setModerationError(null);
       const response = await axios.get(`/api/channels/${currentChannelId}/submissions`, {
-        params: { status: 'PENDING,APPROVED' },
+        params: { status: 'ALL', limit: 'ALL' },
         withCredentials: true
       });
       const submissions = Array.isArray(response?.data?.submissions)

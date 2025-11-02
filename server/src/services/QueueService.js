@@ -1875,25 +1875,39 @@ class QueueService {
 
   async listSubmissions({ statuses = ['PENDING'], limit = 50, offset = 0 } = {}) {
     try {
-      const normalizedStatuses = (Array.isArray(statuses) && statuses.length ? statuses : ['PENDING'])
+      const normalizedStatusesArr = Array.isArray(statuses) ? statuses : [statuses];
+      const normalizedStatuses = (normalizedStatusesArr || [])
+        .filter((s) => s !== undefined && s !== null)
         .map((status) => status.toString().toUpperCase());
 
-      const submissions = await this.db.queueItem.findMany({
-        where: {
-          channelId: this.channelId,
-          status: { in: normalizedStatuses }
-        },
+      const includeAllStatuses = normalizedStatuses.length === 0 || normalizedStatuses.includes('ALL');
+
+      const where = { channelId: this.channelId };
+      if (!includeAllStatuses) {
+        where.status = { in: normalizedStatuses };
+      }
+
+      const prismaArgs = {
+        where,
         include: {
           submitter: {
             select: SUBMITTER_SELECT
           }
         },
-        orderBy: [
-          { createdAt: 'asc' }
-        ],
-        skip: offset,
-        take: limit
-      });
+        orderBy: [{ createdAt: 'asc' }]
+      };
+
+      const numericOffset = typeof offset === 'number' && Number.isFinite(offset) ? offset : 0;
+      if (numericOffset > 0) {
+        prismaArgs.skip = numericOffset;
+      }
+
+      const numericLimit = typeof limit === 'number' && Number.isFinite(limit) ? limit : undefined;
+      if (numericLimit && numericLimit > 0) {
+        prismaArgs.take = numericLimit;
+      }
+
+      const submissions = await this.db.queueItem.findMany(prismaArgs);
 
       return await this._hydrateQueueItems(submissions);
     } catch (error) {

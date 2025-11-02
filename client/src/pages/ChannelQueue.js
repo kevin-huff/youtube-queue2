@@ -1144,6 +1144,43 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     };
   }, [channelConnected, currentlyPlaying?.videoId, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal, emitToChannel]);
 
+  // When the tab becomes visible again, resync local player to server state without broadcasting
+  useEffect(() => {
+    if (!channelConnected) return undefined;
+
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (!currentlyPlaying?.videoId) return;
+
+      const handler = (state = {}) => {
+        removeChannelListener('player:state_response', handler);
+        try {
+          const t = typeof state.time === 'number' && !Number.isNaN(state.time) ? state.time : undefined;
+          if (typeof t === 'number') {
+            seekLocal(t, { source: 'remote' });
+            if (state.playing) {
+              playLocal(t, { source: 'remote' });
+            } else {
+              pauseLocal(t, { source: 'remote' });
+            }
+          }
+        } catch (_) { /* noop */ }
+      };
+
+      addChannelListener('player:state_response', handler);
+      try { emitToChannel('player:state_request'); } catch (_) {}
+      setTimeout(() => removeChannelListener('player:state_response', handler), 5000);
+    };
+
+    try {
+      document.addEventListener('visibilitychange', onVis, { passive: true });
+    } catch (_) {}
+
+    return () => {
+      try { document.removeEventListener('visibilitychange', onVis); } catch (_) {}
+    };
+  }, [channelConnected, currentlyPlaying?.videoId, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal, emitToChannel]);
+
   const handlePlayNext = () => {
     if (!canOperatePlayback) {
       return;
@@ -1194,6 +1231,17 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER']);
 
   useEffect(() => { if (!canHostJudge) return; void ensureHostJudgeToken(); }, [ensureHostJudgeToken, canHostJudge]);
+
+  // Reset host/producer judging UI when the active item or cup changes
+  // Prevents stale locked/error state from the previous video carrying over
+  useEffect(() => {
+    // Only reset when host controls are relevant
+    if (!canHostJudge) return;
+    setHostJudgeBusy(false);
+    setHostJudgeError(null);
+    setHostJudgeLocked(false);
+    setHostJudgeScore(2.5);
+  }, [canHostJudge, currentCupId, currentlyPlaying?.id]);
 
   const loadHostJudgeScore = useCallback(async () => {
     if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;

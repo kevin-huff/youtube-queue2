@@ -38,6 +38,7 @@ export const useSyncedYouTubePlayer = ({
   const lastNonZeroVolumeRef = useRef(
     initialVolumeState && initialVolumeState > 0 ? initialVolumeState : 50
   );
+  const isHiddenRef = useRef(typeof document !== 'undefined' ? document.hidden : false);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -136,6 +137,7 @@ export const useSyncedYouTubePlayer = ({
     }
 
     const suppressed = suppressUntilRef.current && suppressUntilRef.current > now;
+    const pageHidden = isHiddenRef.current === true;
     const playerState = event.data;
     const previous = previousReportedTimeRef.current;
     const delta = Math.abs(current - previous);
@@ -149,6 +151,12 @@ export const useSyncedYouTubePlayer = ({
           suppressUntilRef.current = 0;
         }
       }
+      previousReportedTimeRef.current = current;
+      return;
+    }
+
+    if (pageHidden) {
+      // When the page is hidden, ignore broadcasting local player state changes
       previousReportedTimeRef.current = current;
       return;
     }
@@ -196,6 +204,22 @@ export const useSyncedYouTubePlayer = ({
     }
 
     previousReportedTimeRef.current = current;
+  }, []);
+
+  // Track document visibility to avoid broadcasting pause/play when the tab is hidden
+  useEffect(() => {
+    const onVis = () => {
+      try {
+        isHiddenRef.current = Boolean(document.hidden);
+      } catch (_) {}
+    };
+    try {
+      document.addEventListener('visibilitychange', onVis, { passive: true });
+    } catch (_) {}
+    onVis();
+    return () => {
+      try { document.removeEventListener('visibilitychange', onVis); } catch (_) {}
+    };
   }, []);
 
   useEffect(() => {
