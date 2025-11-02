@@ -29,11 +29,13 @@ function socketHandler(io, channelManager) {
       // Allow clients to request the current queue state
       socket.on('queue:join', async () => {
         try {
-          const [queue, enabled, vipQueue] = await Promise.all([
+          const [queue, enabled, vipQueue, shuffleAudioUrl] = await Promise.all([
             queueService.getCurrentQueue(),
             queueService.isQueueEnabled(),
             // Provide initial VIP list to clients
-            queueService._getVipList()
+            queueService._getVipList(),
+            // Provide initial shuffle audio so overlays can play without auth
+            queueService.getSetting('shuffle_audio_url', '')
           ]);
 
           socket.emit('queue:initial_state', {
@@ -42,7 +44,10 @@ function socketHandler(io, channelManager) {
             currentlyPlaying: queueService.currentlyPlaying,
             votingState: queueService.getVotingState(),
             overlayState: namespace._overlayState || { showPlayer: null },
-            vipQueue
+            vipQueue,
+            settings: {
+              shuffle_audio_url: shuffleAudioUrl || ''
+            }
           });
 
           logger.debug(`Sent initial queue state for channel ${channelId} to ${socket.id}`);

@@ -155,6 +155,10 @@ export const SocketProvider = ({ children }) => {
       ? payload.overlayState.showPlayer
       : null;
     setOverlayShowPlayer(initialOverlay);
+    // Accept initial settings snapshot from server (no auth required for overlays)
+    if (payload.settings && typeof payload.settings === 'object') {
+      setSettings((prev) => ({ ...(prev || {}), ...payload.settings }));
+    }
     // Initialize VIP queue if provided
     try {
       const initialVip = Array.isArray(payload.vipQueue)

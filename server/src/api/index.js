@@ -2225,36 +2225,77 @@ router.post('/channels/:channelId/roles',
         if (!account) {
           // No account yet — create a role invite instead
           const expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
-          const invite = await channelManager.prisma.channelRoleInvite.upsert({
-            where: {
-              channelId_invitedUsername_role_cupId: {
-                channelId: normalizedChannelId,
-                invitedUsername: username.toLowerCase(),
-                role: rawRole,
-                cupId: req.body.cupId || null
-              }
-            },
-            update: {
-              assignedBy: req.user.id,
-              expiresAt
-            },
-            create: {
-              channelId: normalizedChannelId,
-              invitedUsername: username.toLowerCase(),
-              role: rawRole,
-              cupId: req.body.cupId || null,
-              assignedBy: req.user.id,
-              expiresAt
-            },
-            include: {
-              assignedByAccount: {
-                select: { id: true, username: true, displayName: true, profileImageUrl: true }
+          const lowerUsername = username.toLowerCase();
+
+          let invite;
+          if (req.body.cupId) {
+            // Cup-scoped invite: safe to upsert on composite unique
+            invite = await channelManager.prisma.channelRoleInvite.upsert({
+              where: {
+                channelId_invitedUsername_role_cupId: {
+                  channelId: normalizedChannelId,
+                  invitedUsername: lowerUsername,
+                  role: rawRole,
+                  cupId: req.body.cupId
+                }
               },
-              cup: {
-                select: { id: true, title: true, slug: true, status: true }
+              update: {
+                assignedBy: req.user.id,
+                expiresAt
+              },
+              create: {
+                channelId: normalizedChannelId,
+                invitedUsername: lowerUsername,
+                role: rawRole,
+                cupId: req.body.cupId,
+                assignedBy: req.user.id,
+                expiresAt
+              },
+              include: {
+                assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+                cup: { select: { id: true, title: true, slug: true, status: true } }
               }
+            });
+          } else {
+            // Global (no cup) invite: cannot upsert by composite (cupId is null). Manually find-or-create
+            const existing = await channelManager.prisma.channelRoleInvite.findFirst({
+              where: {
+                channelId: normalizedChannelId,
+                invitedUsername: lowerUsername,
+                role: rawRole,
+                cupId: null
+              },
+              include: {
+                assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+                cup: { select: { id: true, title: true, slug: true, status: true } }
+              }
+            });
+            if (existing) {
+              invite = await channelManager.prisma.channelRoleInvite.update({
+                where: { id: existing.id },
+                data: { assignedBy: req.user.id, expiresAt },
+                include: {
+                  assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+                  cup: { select: { id: true, title: true, slug: true, status: true } }
+                }
+              });
+            } else {
+              invite = await channelManager.prisma.channelRoleInvite.create({
+                data: {
+                  channelId: normalizedChannelId,
+                  invitedUsername: lowerUsername,
+                  role: rawRole,
+                  cupId: null,
+                  assignedBy: req.user.id,
+                  expiresAt
+                },
+                include: {
+                  assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+                  cup: { select: { id: true, title: true, slug: true, status: true } }
+                }
+              });
             }
-          });
+          }
 
           return res.status(201).json({ invite: formatRoleInvite(invite) });
         }
@@ -2373,38 +2414,81 @@ router.post('/channels/:channelId/role-invites',
         return res.status(201).json({ role: formatRoleAssignment(assignment) });
       }
 
-      const invite = await channelManager.prisma.channelRoleInvite.upsert({
-        where: {
-          channelId_invitedUsername_role_cupId: {
-            channelId: normalizedChannelId,
-            invitedUsername: username.toLowerCase(),
-            role: rawRole,
-            cupId: req.body.cupId || null
-          }
-        },
-        update: {
-          assignedBy: req.user.id,
-          note: req.body.note || undefined,
-          expiresAt
-        },
-        create: {
-          channelId: normalizedChannelId,
-          invitedUsername: username.toLowerCase(),
-          role: rawRole,
-          cupId: req.body.cupId || null,
-          note: req.body.note || undefined,
-          assignedBy: req.user.id,
-          expiresAt
-        },
-        include: {
-          assignedByAccount: {
-            select: { id: true, username: true, displayName: true, profileImageUrl: true }
+      const lowerUsername = username.toLowerCase();
+      let invite;
+      if (req.body.cupId) {
+        invite = await channelManager.prisma.channelRoleInvite.upsert({
+          where: {
+            channelId_invitedUsername_role_cupId: {
+              channelId: normalizedChannelId,
+              invitedUsername: lowerUsername,
+              role: rawRole,
+              cupId: req.body.cupId
+            }
           },
-          cup: {
-            select: { id: true, title: true, slug: true, status: true }
+          update: {
+            assignedBy: req.user.id,
+            note: req.body.note || undefined,
+            expiresAt
+          },
+          create: {
+            channelId: normalizedChannelId,
+            invitedUsername: lowerUsername,
+            role: rawRole,
+            cupId: req.body.cupId,
+            note: req.body.note || undefined,
+            assignedBy: req.user.id,
+            expiresAt
+          },
+          include: {
+            assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+            cup: { select: { id: true, title: true, slug: true, status: true } }
           }
+        });
+      } else {
+        const existing = await channelManager.prisma.channelRoleInvite.findFirst({
+          where: {
+            channelId: normalizedChannelId,
+            invitedUsername: lowerUsername,
+            role: rawRole,
+            cupId: null
+          },
+          include: {
+            assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+            cup: { select: { id: true, title: true, slug: true, status: true } }
+          }
+        });
+        if (existing) {
+          invite = await channelManager.prisma.channelRoleInvite.update({
+            where: { id: existing.id },
+            data: {
+              assignedBy: req.user.id,
+              note: req.body.note || undefined,
+              expiresAt
+            },
+            include: {
+              assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+              cup: { select: { id: true, title: true, slug: true, status: true } }
+            }
+          });
+        } else {
+          invite = await channelManager.prisma.channelRoleInvite.create({
+            data: {
+              channelId: normalizedChannelId,
+              invitedUsername: lowerUsername,
+              role: rawRole,
+              cupId: null,
+              note: req.body.note || undefined,
+              assignedBy: req.user.id,
+              expiresAt
+            },
+            include: {
+              assignedByAccount: { select: { id: true, username: true, displayName: true, profileImageUrl: true } },
+              cup: { select: { id: true, title: true, slug: true, status: true } }
+            }
+          });
         }
-      });
+      }
 
       return res.status(201).json({ invite: formatRoleInvite(invite) });
     } catch (error) {

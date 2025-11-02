@@ -436,17 +436,19 @@ const QueueOverlay = () => {
     let shuffleUrl = shuffleAudioSrc;
     try {
       const u = new URL(shuffleUrl, window.location.origin);
+      // If page is HTTPS and URL is HTTP, prefer HTTPS scheme for the same host
       if (window.location.protocol === 'https:' && u.protocol === 'http:') {
-        shuffleUrl = u.pathname + u.search;
-      } else if (!/^https?:/i.test(shuffleUrl)) {
-        shuffleUrl = u.pathname + u.search;
+        shuffleUrl = `https://${u.host}${u.pathname}${u.search}${u.hash}`;
       } else {
         shuffleUrl = u.toString();
       }
-    } catch (_) {}
+    } catch (_) {
+      // leave as-is on URL parse issues
+    }
     // eslint-disable-next-line no-console
     console.info('QueueOverlay: attempting to play shuffle audio', shuffleUrl);
     const audio = new Audio(shuffleUrl);
+    try { audio.crossOrigin = 'anonymous'; } catch (_) {}
     audioRef.current = audio;
     audio.volume = 1;
 
@@ -518,18 +520,15 @@ const QueueOverlay = () => {
         try {
           const u = new URL(url, window.location.origin);
           if (window.location.protocol === 'https:' && u.protocol === 'http:') {
-            // Avoid mixed content; try same-origin relative path
-            url = u.pathname + u.search;
-          } else if (!/^https?:/i.test(url)) {
-            // Relative path; keep as-is (served by same origin)
-            url = u.pathname + u.search;
+            url = `https://${u.host}${u.pathname}${u.search}${u.hash}`;
           } else {
             url = u.toString();
           }
         } catch (_) {
-          // fallback to original
+          // leave as-is on URL parse issues
         }
         const audio = new Audio(url);
+        try { audio.crossOrigin = 'anonymous'; } catch (_) {}
         audio.volume = 1;
         audio.play().catch((err) => {
           console.warn('Soundboard audio playback failed:', err);
