@@ -27,7 +27,9 @@ import {
   Refresh as RefreshIcon
 } from '@mui/icons-material';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Derive API base similar to other pages to avoid mixed content and CSP issues
+const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const API_URL = `${SERVER_BASE}/api`;
 
 function ViewerHub() {
   const { channelName } = useParams();
