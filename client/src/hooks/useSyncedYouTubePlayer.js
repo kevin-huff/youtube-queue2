@@ -20,7 +20,8 @@ export const useSyncedYouTubePlayer = ({
   onLocalPlay,
   onLocalPause,
   onLocalSeek,
-  onLocalEnd
+  onLocalEnd,
+  autoPlayOnReady = true
 }) => {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
@@ -76,8 +77,8 @@ export const useSyncedYouTubePlayer = ({
       setCurrentTime(time);
     }
 
-    // Explicitly start playback when ready
-    if (typeof player.playVideo === 'function') {
+    // Start playback when ready only if allowed
+    if (autoPlayOnReady && typeof player.playVideo === 'function') {
       player.playVideo();
     }
 
@@ -111,7 +112,7 @@ export const useSyncedYouTubePlayer = ({
         lastNonZeroVolumeRef.current = currentVolume;
       }
     }
-  }, [defaultMuted, initialVolumeState, ensurePlayerSize]);
+  }, [defaultMuted, initialVolumeState, ensurePlayerSize, autoPlayOnReady]);
 
   const handlePlayerStateChange = useCallback((event = {}) => {
     if (!window.YT) return;
@@ -229,7 +230,7 @@ export const useSyncedYouTubePlayer = ({
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId,
         playerVars: {
-          autoplay: 1,
+          autoplay: autoPlayOnReady ? 1 : 0,
           controls: 0,
           rel: 0,
           modestbranding: 1,
@@ -262,12 +263,12 @@ export const useSyncedYouTubePlayer = ({
       previousReportedTimeRef.current = 0;
     } else {
       const player = playerRef.current;
-      if (player && typeof player.playVideo === 'function') {
+      if (autoPlayOnReady && player && typeof player.playVideo === 'function') {
         player.playVideo();
       }
     }
     ensurePlayerSize();
-  }, [apiReady, videoId, handlePlayerReady, handlePlayerStateChange, ensurePlayerSize]);
+  }, [apiReady, videoId, handlePlayerReady, handlePlayerStateChange, ensurePlayerSize, autoPlayOnReady]);
 
   useEffect(() => {
     return () => {

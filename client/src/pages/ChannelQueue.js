@@ -399,7 +399,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     showOverlayPlayer,
     hideOverlayPlayer,
     overlayShowPlayer,
-    vipQueue
+    vipQueue,
+    emitToChannel
   } = useSocket();
 
   const [activeCupId, setActiveCupId] = useState(null);
@@ -419,7 +420,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [finalizeLoading, setFinalizeLoading] = useState(false);
   const [forceLockLoading, setForceLockLoading] = useState(false);
 
-  // Minimal host/producer judge controls
+  // Host-only judge controls (embedded slider on producer page)
+  // Visible and active only when the user has the HOST role for this channel
   const [hostJudgeToken, setHostJudgeToken] = useState(null);
   const [hostJudgeScore, setHostJudgeScore] = useState(2.5);
   const [hostJudgeLocked, setHostJudgeLocked] = useState(false);
@@ -451,6 +453,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     removeChannelListener,
     initialVolume: 0,
     defaultMuted: true,
+    autoPlayOnReady: false,
     onLocalPlay: playOverlay,
     onLocalPause: pauseOverlay,
     onLocalSeek: seekOverlay
@@ -1106,6 +1109,41 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     pauseLocal(time);
   };
 
+  // On initial mount with a current video, sync to server player state instead of auto-playing
+  useEffect(() => {
+    if (!channelConnected || !currentlyPlaying?.videoId) {
+      return undefined;
+    }
+
+    const stateHandler = (state = {}) => {
+      removeChannelListener('player:state_response', stateHandler);
+      try {
+        const t = typeof state.time === 'number' && !Number.isNaN(state.time) ? state.time : undefined;
+        if (typeof t === 'number') {
+          seekLocal(t, { source: 'remote' });
+          if (state.playing) {
+            playLocal(t, { source: 'remote' });
+          } else {
+            pauseLocal(t, { source: 'remote' });
+          }
+        }
+      } catch (_) { /* noop */ }
+    };
+
+    addChannelListener('player:state_response', stateHandler);
+    // Ask the server for the current player state
+    try {
+      emitToChannel('player:state_request');
+    } catch (_) { /* noop */ }
+
+    // Fallback cleanup in case response never arrives
+    const timeout = setTimeout(() => removeChannelListener('player:state_response', stateHandler), 5000);
+    return () => {
+      clearTimeout(timeout);
+      removeChannelListener('player:state_response', stateHandler);
+    };
+  }, [channelConnected, currentlyPlaying?.videoId, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal, emitToChannel]);
+
   const handlePlayNext = () => {
     if (!canOperatePlayback) {
       return;
@@ -1153,7 +1191,9 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings]);
 
-  useEffect(() => { void ensureHostJudgeToken(); }, [ensureHostJudgeToken]);
+  const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER']);
+
+  useEffect(() => { if (!canHostJudge) return; void ensureHostJudgeToken(); }, [ensureHostJudgeToken, canHostJudge]);
 
   const loadHostJudgeScore = useCallback(async () => {
     if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
@@ -1173,7 +1213,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     } catch (_) {}
   }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id]);
 
-  useEffect(() => { void loadHostJudgeScore(); }, [loadHostJudgeScore]);
+  useEffect(() => { if (!canHostJudge) return; void loadHostJudgeScore(); }, [loadHostJudgeScore, canHostJudge]);
 
   const saveHostJudgeScore = useCallback(async () => {
     if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
@@ -1405,7 +1445,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
               </Box>
             )}
 
-            {canOperatePlayback && currentCupId && hostJudgeToken && (
+            {canHostJudge && currentCupId && hostJudgeToken && (
               <Card sx={{ mt: 3 }}>
                 <CardContent>
                   <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>

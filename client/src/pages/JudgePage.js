@@ -83,6 +83,7 @@ const JudgePage = () => {
     removeChannelListener,
     initialVolume: 100,
     defaultMuted: false,
+    autoPlayOnReady: false,
     onLocalPlay: playOverlay,
     onLocalPause: pauseOverlay,
     onLocalSeek: seekOverlay

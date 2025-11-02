@@ -254,11 +254,46 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
     if (!votingState || !Array.isArray(votingState.judges)) {
       return [];
     }
-    // Hide offline judges to keep the panel clean during the show
-    return [...votingState.judges]
-      .filter(Boolean)
-      .filter((j) => j.connected !== false)
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    const better = (a, b) => {
+      // Prefer revealed over not
+      const ar = a?.revealStatus === 'revealed';
+      const br = b?.revealStatus === 'revealed';
+      if (ar !== br) return ar ? a : b;
+      // Prefer locked over unlocked
+      if (Boolean(a?.locked) !== Boolean(b?.locked)) return a?.locked ? a : b;
+      // Prefer has score over not
+      const ahs = typeof a?.score === 'number';
+      const bhs = typeof b?.score === 'number';
+      if (ahs !== bhs) return ahs ? a : b;
+      // Prefer connected true
+      if (Boolean(a?.connected) !== Boolean(b?.connected)) return a?.connected ? a : b;
+      // Prefer newer update timestamp if available
+      const at = a?.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const bt = b?.updatedAt ? Date.parse(b.updatedAt) : 0;
+      if (at !== bt) return at > bt ? a : b;
+      // Tie-breaker: lower order
+      const ao = Number.isFinite(a?.order) ? a.order : Infinity;
+      const bo = Number.isFinite(b?.order) ? b.order : Infinity;
+      if (ao !== bo) return ao < bo ? a : b;
+      return a; // keep existing
+    };
+
+    // Build best entry per identity, hide offline
+    const best = new Map();
+    for (const j of votingState.judges) {
+      if (!j || j.connected === false) continue;
+      const key = (j.id && String(j.id)) || (j.name ? j.name.toString().trim().toLowerCase() : '__anon__');
+      if (!best.has(key)) {
+        best.set(key, j);
+      } else {
+        const chosen = better(best.get(key), j);
+        best.set(key, chosen);
+      }
+    }
+
+    const cleaned = Array.from(best.values());
+    return cleaned.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [votingState]);
 
   const averageTarget = typeof votingState?.revealedAverage === 'number'

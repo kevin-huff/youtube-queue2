@@ -269,6 +269,7 @@ const PlayerOverlay = () => {
     removeChannelListener,
     initialVolume: 100,
     defaultMuted: false,
+    autoPlayOnReady: false,
     // Only broadcast playback events if NOT in viewer mode (controls=show)
     // Viewer mode should be read-only
     onLocalPlay: showControls ? undefined : playOverlay,
