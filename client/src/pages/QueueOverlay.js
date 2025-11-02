@@ -15,8 +15,11 @@ import VotingOverlay from '../components/VotingOverlay';
 const SHUFFLE_DURATION_MS = 30000;
 const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
 const RING_TILT_DEG = 16;
-const STAR_PHASE_START_MS = 12000;
-const SCATTER_PHASE_MS = 20000;
+// Phase timing (must sum to <= SHUFFLE_DURATION_MS)
+const SCATTER_END_MS = 9000;   // initial scatter
+const RIFFLE_END_MS = 14000;   // card-like shuffle interleave
+const STAR_PHASE_START_MS = RIFFLE_END_MS; // maintain legacy name usage
+const SCATTER_PHASE_MS = 20000; // end of star flyby, then settle
 
 const STAR_POSITIONS = [
   { x: 0, y: -260, z: 220 },
@@ -114,6 +117,31 @@ const hashString = (value) => {
   return hash;
 };
 
+// Seeded RNG (mulberry32) for deterministic shuffles per shuffle event
+const makeSeededRng = (seed) => {
+  let t = seed >>> 0; // eslint-disable-line no-bitwise
+  return () => {
+    // mulberry32
+    t += 0x6D2B79F5; // eslint-disable-line no-bitwise
+    let x = t; // eslint-disable-line no-bitwise
+    x = Math.imul(x ^ (x >>> 15), 1 | x); // eslint-disable-line no-bitwise
+    x ^= x + Math.imul(x ^ (x >>> 7), 61 | x); // eslint-disable-line no-bitwise
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296; // eslint-disable-line no-bitwise
+  };
+};
+
+const seededShuffle = (arr, seed) => {
+  const a = arr.slice();
+  const rand = makeSeededRng(seed || 1);
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = a[i];
+    a[i] = a[j];
+    a[j] = tmp;
+  }
+  return a;
+};
+
 const computeCardSeed = (item, index) => {
   const base =
     item?.id ??
@@ -156,6 +184,36 @@ const getStarTransform = (seed, index) => {
   return `translate3d(${point.x + swayX}px, ${point.y + swayY}px, ${depth}px) rotateX(${tilt}deg) rotateZ(${spin}deg) scale(${scale.toFixed(2)})`;
 };
 
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Riffle/bridge-like shuffle transform: two piles slide/arc and interleave
+const getRiffleTransform = (seed, index, t) => {
+  const leftSide = (seed & 1) === 0; // eslint-disable-line no-bitwise
+  const randX = ((seed >> 2) % 80) - 40; // eslint-disable-line no-bitwise
+  const randY = ((seed >> 3) % 120) - 60; // eslint-disable-line no-bitwise
+  const depth = ((seed >> 4) % 160) - 80; // eslint-disable-line no-bitwise
+  const tiltY = ((seed >> 5) % 20) - 10; // eslint-disable-line no-bitwise
+  const spinZ = ((seed >> 6) % 28) - 14; // eslint-disable-line no-bitwise
+
+  const fromX = (leftSide ? -280 : 280) + randX;
+  const toX = randX * 0.25;
+  const fromY = randY * 1.2;
+  const toY = randY * 0.3;
+  const fromZ = -120 + depth * 0.3;
+  const toZ = 40 + depth * 0.2;
+
+  const tt = clamp01(t);
+  const x = lerp(fromX, toX, tt);
+  const y = lerp(fromY, toY, tt);
+  const z = lerp(fromZ, toZ, tt);
+
+  // Add a slight arc using tt easing
+  const arc = Math.sin(tt * Math.PI) * 18;
+
+  return `translate3d(${x}px, ${y - arc}px, ${z}px) rotateX(${tiltY}deg) rotateZ(${leftSide ? -10 : 10 + spinZ}deg) scale(${(0.9 + tt * 0.12).toFixed(2)})`;
+};
+
 const formatDuration = (seconds) => {
   if (typeof seconds !== 'number' || Number.isNaN(seconds) || seconds <= 0) {
     return '--:--';
@@ -177,6 +235,7 @@ const QueueOverlay = () => {
     currentlyPlaying,
     channelConnected,
     topEight,
+    vipQueue,
     lastShuffle,
     votingState,
     settings,
@@ -205,15 +264,13 @@ const QueueOverlay = () => {
     if (!shuffleVisual) {
       return 'idle';
     }
-    if (elapsedMs < STAR_PHASE_START_MS) {
-      return 'scatter';
-    }
-    if (elapsedMs < SCATTER_PHASE_MS) {
-      return 'star';
-    }
+    if (elapsedMs < SCATTER_END_MS) return 'scatter';
+    if (elapsedMs < RIFFLE_END_MS) return 'riffle';
+    if (elapsedMs < SCATTER_PHASE_MS) return 'star';
     return 'settle';
   }, [shuffleVisual, elapsedMs]);
   const isScatterStage = shuffleStage === 'scatter';
+  const isRiffleStage = shuffleStage === 'riffle';
   const isStarStage = shuffleStage === 'star';
   const isSettleStage = shuffleStage === 'settle';
 
@@ -357,6 +414,16 @@ const QueueOverlay = () => {
     });
   }, [lastShuffle]);
 
+  const shuffleSeed = useMemo(() => {
+    if (!shuffleVisual) return null;
+    try {
+      const seedRaw = `${shuffleVisual?.payload?.seed ?? ''}:${shuffleVisual?.startedAt ?? ''}`;
+      return hashString(`shuffle:${seedRaw}`);
+    } catch (_) {
+      return hashString(`shuffle:${Date.now()}`);
+    }
+  }, [shuffleVisual]);
+
   useEffect(() => {
     if (!shuffleVisual) {
       setProgress(0);
@@ -494,24 +561,56 @@ const QueueOverlay = () => {
     } catch (_) {}
   }, []);
 
+  const vipIndexMap = useMemo(() => {
+    try {
+      const ids = Array.isArray(vipQueue) ? vipQueue.map((v) => Number(v)) : [];
+      return new Map(ids.map((id, idx) => [id, idx]));
+    } catch (_) {
+      return new Map();
+    }
+  }, [vipQueue]);
+
   const sortedQueue = useMemo(() => {
     const items = queue.slice();
-    const score = (item) => {
-      if (currentlyPlaying?.id === item.id) return -2;
-      if (item.status === 'TOP_EIGHT') return -1;
-      return item.position ?? Number.MAX_SAFE_INTEGER;
-    };
-    return items.sort((a, b) => score(a) - score(b));
-  }, [queue, currentlyPlaying]);
+
+    const isVip = (id) => vipIndexMap.has(Number(id));
+    const vipPos = (id) => vipIndexMap.get(Number(id));
+
+    return items.sort((a, b) => {
+      // 1) Currently playing always first
+      const aNow = currentlyPlaying?.id === a.id;
+      const bNow = currentlyPlaying?.id === b.id;
+      if (aNow && !bNow) return -1;
+      if (bNow && !aNow) return 1;
+
+      // 2) VIPs next, FIFO using vipQueue order
+      const aVip = isVip(a.id);
+      const bVip = isVip(b.id);
+      if (aVip && !bVip) return -1;
+      if (bVip && !aVip) return 1;
+      if (aVip && bVip) return vipPos(a.id) - vipPos(b.id);
+
+      // 3) Top Eight after VIPs (preserve earlier intent)
+      const aTop = a.status === 'TOP_EIGHT';
+      const bTop = b.status === 'TOP_EIGHT';
+      if (aTop && !bTop) return -1;
+      if (bTop && !aTop) return 1;
+
+      // 4) Fallback by position
+      const apos = a.position ?? Number.MAX_SAFE_INTEGER;
+      const bpos = b.position ?? Number.MAX_SAFE_INTEGER;
+      return apos - bpos;
+    });
+  }, [queue, currentlyPlaying, vipIndexMap]);
 
   const shuffleItems = useMemo(() => {
-    if (shuffleVisual?.payload?.finalOrder?.length) {
-      const finalOrderList = shuffleVisual.payload.finalOrder;
-      const seen = new Set(finalOrderList.map((item) => item.id));
-      const remainder = sortedQueue.filter((item) => (item && item.id ? !seen.has(item.id) : true));
-      return [...finalOrderList, ...remainder];
+    // During a shuffle animation, randomize the display order to avoid overfeaturing top items
+    if (shuffleVisual) {
+      const base = sortedQueue.slice();
+      return seededShuffle(base, shuffleSeed || 1);
     }
 
+    // When not shuffling, keep any topEight emphasis for static overlay state
     if (Array.isArray(topEight) && topEight.length) {
       const seen = new Set(topEight.map((item) => item.id));
       const remainder = sortedQueue.filter((item) => (item && item.id ? !seen.has(item.id) : true));
@@ -519,7 +618,7 @@ const QueueOverlay = () => {
     }
 
     return sortedQueue;
-  }, [shuffleVisual, topEight, sortedQueue]);
+  }, [shuffleVisual, shuffleSeed, topEight, sortedQueue]);
 
   const finalRankMap = useMemo(() => {
     const map = new Map();
@@ -536,7 +635,14 @@ const ringLayout = useMemo(() => {
       return [];
     }
 
-    const maxRingSize = shuffleItems.length <= 8 ? shuffleItems.length : 8;
+    const maxRingSize = (() => {
+      if (!shuffleItems.length) return 0;
+      if (shuffleSeed) {
+        const size = 6 + (shuffleSeed % 5); // 6..10
+        return Math.min(shuffleItems.length, size);
+      }
+      return shuffleItems.length <= 8 ? shuffleItems.length : 8;
+    })();
     const groups = [];
 
     shuffleItems.forEach((item, index) => {
@@ -737,12 +843,18 @@ const ringLayout = useMemo(() => {
               >
                 {ringLayout.map((ringItems, ringIndex) => {
                   const ringCount = ringItems.length;
-                  const radius = 260 + ringIndex * 180;
-                  const cardScale = Math.max(0.85, 1 - ringIndex * 0.05);
+                  const ringHash = hashString(`ring:${shuffleSeed ?? 0}:${ringIndex}`);
+                  const offsetDeg = (ringHash % 360); // eslint-disable-line no-bitwise
+                  const radiusJitter = ((ringHash % 41) - 20); // [-20, 20] px
+                  const baseRadius = 260 + ringIndex * 180;
+                  const radius = baseRadius + radiusJitter;
+                  const baseScale = Math.max(0.85, 1 - ringIndex * 0.05);
+                  const scaleJitter = (((ringHash % 9) - 4) / 100); // ~ +/-0.04
+                  const cardScale = Math.max(0.8, baseScale + scaleJitter);
                   const cardWidth = Math.max(240 - ringIndex * 30, 160);
 
                   return ringItems.map(({ item, globalIndex, indexWithin }) => {
-                    const angle = (360 / ringCount) * indexWithin;
+                    const angle = offsetDeg + (360 / ringCount) * indexWithin;
                     const rank = finalRankMap.get(item.id);
                     const seed = computeCardSeed(item, globalIndex);
                     const scatter = getScatterTransform(seed);
@@ -755,7 +867,10 @@ const ringLayout = useMemo(() => {
                       transformValue = finalTransform;
                     } else if (isStarStage) {
                       transformValue = starTransform;
-                    } else if (elapsedMs > STAR_PHASE_START_MS * 0.6) {
+                    } else if (isRiffleStage) {
+                      const riffleT = (elapsedMs - SCATTER_END_MS) / Math.max(1, (RIFFLE_END_MS - SCATTER_END_MS));
+                      transformValue = getRiffleTransform(seed, globalIndex, riffleT);
+                    } else if (elapsedMs > SCATTER_END_MS * 0.7) {
                       transformValue = midTransform;
                     }
 
@@ -763,27 +878,38 @@ const ringLayout = useMemo(() => {
                       ? 1100 + (seed % 360)
                       : isStarStage
                         ? 520 + (seed % 260)
-                        : 320 + (seed % 200);
+                        : isRiffleStage
+                          ? 260 + (seed % 160)
+                          : 320 + (seed % 200);
 
                     const transitionEasing = isSettleStage
                       ? 'cubic-bezier(0.19, 1, 0.22, 1)'
                       : isStarStage
                         ? 'cubic-bezier(0.16, 0.84, 0.24, 0.99)'
-                        : 'cubic-bezier(0.37, 0.01, 0.67, 1.01)';
+                        : isRiffleStage
+                          ? 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+                          : 'cubic-bezier(0.37, 0.01, 0.67, 1.01)';
 
                     const transitionDelay = isSettleStage
                       ? `${Math.min(globalIndex * 24 + (seed % 80), 420)}ms`
                       : isStarStage
                         ? `${seed % 160}ms`
-                        : `${scatter.jitterDelay}ms`;
+                        : isRiffleStage
+                          ? `${seed % 80}ms`
+                          : `${scatter.jitterDelay}ms`;
 
                     const glowAnimation = isSettleStage
                       ? `${settleGlideKeyframes} ${2600 + (seed % 700)}ms ease-in-out ${(seed % 320)}ms infinite alternate`
                       : isStarStage
                         ? `${starPulseKeyframes} ${1900 + (seed % 600)}ms ease-in-out ${(seed % 380)}ms infinite`
-                        : `${flybyGlowKeyframes} ${1500 + (seed % 600)}ms ease-in-out ${(seed % 260)}ms infinite`;
+                        : isRiffleStage
+                          ? `${flybyGlowKeyframes} ${1200 + (seed % 400)}ms ease-in-out ${(seed % 220)}ms infinite`
+                          : `${flybyGlowKeyframes} ${1500 + (seed % 600)}ms ease-in-out ${(seed % 260)}ms infinite`;
 
-                    const animationString = `${cardFlipKeyframes} ${SHUFFLE_DURATION_MS}ms ease-in-out ${globalIndex * 80}ms forwards, ${glowAnimation}`;
+                    const delayJitter = seed % 60; // eslint-disable-line no-bitwise
+                    const animationString = `${cardFlipKeyframes} ${SHUFFLE_DURATION_MS}ms ease-in-out ${globalIndex * 80 + delayJitter}ms forwards, ${glowAnimation}`;
+
+                    const isVip = vipIndexMap.has(Number(item.id));
 
                     return (
                       <Box
@@ -809,7 +935,7 @@ const ringLayout = useMemo(() => {
                               linear-gradient(160deg, ${alpha('#102742', 0.92)}, ${alpha('#091025', 0.78)}),
                               ${alpha('#0c162f', 0.85)}
                             `,
-                            border: `1px solid ${alpha('#5ce1ff', 0.35)}`,
+                            border: `1px solid ${isVip ? alpha('#ffc107', 0.6) : alpha('#5ce1ff', 0.35)}`,
                             boxShadow: '0 28px 58px -22px rgba(38, 142, 255, 0.45)',
                             transformStyle: 'preserve-3d',
                             transform: `scale(${cardScale})`,
@@ -850,6 +976,22 @@ const ringLayout = useMemo(() => {
                                 background: `linear-gradient(180deg, transparent, ${alpha('#060915', 0.88)})`
                               }}
                             />
+                            {isVip && (
+                              <Chip
+                                size="small"
+                                label="VIP"
+                                sx={{
+                                  position: 'absolute',
+                                  top: 8,
+                                  left: 8,
+                                  bgcolor: alpha('#ffc107', 0.3),
+                                  color: '#ffd54f',
+                                  fontWeight: 700,
+                                  borderRadius: '999px',
+                                  letterSpacing: 1
+                                }}
+                              />
+                            )}
                             {/* Removed rank/index badges per request */}
                           </Box>
                           <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
@@ -1047,6 +1189,7 @@ const ringLayout = useMemo(() => {
           sortedQueue.slice(0, 20).map((item, index) => {
             const isCurrent = currentlyPlaying?.id === item.id;
             const isTop = item.status === 'TOP_EIGHT';
+            const isVip = vipIndexMap.has(Number(item.id));
             
 
             return (
@@ -1060,10 +1203,12 @@ const ringLayout = useMemo(() => {
                       linear-gradient(150deg, ${alpha('#10162d', 0.86)}, ${alpha('#090b18', 0.97)}),
                       radial-gradient(circle at top left, ${alpha('#55d8ff', 0.24)}, transparent 48%)
                     `,
-                    border: `1px solid ${alpha('#5ce1ff', isCurrent ? 0.65 : 0.2)}`,
+                    border: `1px solid ${isVip ? alpha('#ffc107', 0.6) : alpha('#5ce1ff', isCurrent ? 0.65 : 0.2)}`,
                     boxShadow: isCurrent
                       ? '0 28px 58px -24px rgba(86, 226, 255, 0.55)'
-                      : '0 20px 46px -30px rgba(6, 12, 38, 0.9)',
+                      : (isVip
+                        ? '0 28px 58px -24px rgba(255, 193, 7, 0.45)'
+                        : '0 20px 46px -30px rgba(6, 12, 38, 0.9)'),
                     overflow: 'hidden',
                     transformStyle: 'preserve-3d',
                     animation: `${floatKeyframes} ${12 + index}s ease-in-out infinite`
@@ -1128,6 +1273,19 @@ const ringLayout = useMemo(() => {
                           letterSpacing: 1
                         }}
                       />
+                      
+                      {isVip && (
+                        <Chip
+                          size="small"
+                          label="VIP"
+                          sx={{
+                            bgcolor: alpha('#ffc107', 0.3),
+                            color: '#ffd54f',
+                            fontWeight: 700,
+                            borderRadius: '999px'
+                          }}
+                        />
+                      )}
                       
                       {isCurrent && (
                         <Chip
