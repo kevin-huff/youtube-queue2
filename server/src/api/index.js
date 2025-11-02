@@ -1155,11 +1155,13 @@ router.get('/channels/:channelId/submissions',
         ? undefined
         : Math.min(parseInt(rawLimit || '50', 10), 100);
       const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+      const activeCupsOnly = String(req.query.activeCupsOnly || '').toLowerCase() === 'true';
 
       const submissions = await queueService.listSubmissions({
         statuses,
         limit,
-        offset
+        offset,
+        activeCupsOnly
       });
 
       res.json({

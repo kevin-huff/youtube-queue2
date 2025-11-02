@@ -1873,7 +1873,7 @@ class QueueService {
     }
   }
 
-  async listSubmissions({ statuses = ['PENDING'], limit = 50, offset = 0 } = {}) {
+  async listSubmissions({ statuses = ['PENDING'], limit = 50, offset = 0, activeCupsOnly = false } = {}) {
     try {
       const normalizedStatusesArr = Array.isArray(statuses) ? statuses : [statuses];
       const normalizedStatuses = (normalizedStatusesArr || [])
@@ -1887,13 +1887,13 @@ class QueueService {
         where.status = { in: normalizedStatuses };
       }
 
-      const prismaArgs = {
+      let prismaArgs = {
         where,
-        include: {
+        include: this._withCupInclude({
           submitter: {
             select: SUBMITTER_SELECT
           }
-        },
+        }),
         orderBy: [{ createdAt: 'asc' }]
       };
 
@@ -1907,9 +1907,31 @@ class QueueService {
         prismaArgs.take = numericLimit;
       }
 
-      const submissions = await this.db.queueItem.findMany(prismaArgs);
+      let submissions;
+      try {
+        submissions = await this.db.queueItem.findMany(prismaArgs);
+      } catch (error) {
+        if (this._handleCupIncludeFailure(error)) {
+          // Retry without cup relation
+          prismaArgs = {
+            ...prismaArgs,
+            include: {
+              submitter: { select: SUBMITTER_SELECT }
+            }
+          };
+          submissions = await this.db.queueItem.findMany(prismaArgs);
+        } else {
+          throw error;
+        }
+      }
 
-      return await this._hydrateQueueItems(submissions);
+      let hydrated = await this._hydrateQueueItems(submissions);
+
+      if (activeCupsOnly) {
+        hydrated = hydrated.filter((item) => !item.cup || item.cup.status === 'LIVE');
+      }
+
+      return hydrated;
     } catch (error) {
       logger.error('Failed to list submissions:', error);
       throw error;

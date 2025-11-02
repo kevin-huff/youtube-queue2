@@ -164,7 +164,7 @@ const Dashboard = () => {
   const { user, loading: authLoading, hasChannelRole, findChannelAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { clearQueue, connectToChannel, disconnectFromChannel } = useSocket();
+  const { clearQueue, connectToChannel, disconnectFromChannel, addChannelListener, removeChannelListener } = useSocket();
   const [channel, setChannel] = useState(null);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -598,8 +598,9 @@ const Dashboard = () => {
     try {
       setModerationLoading(true);
       setModerationError(null);
+      // Exclude terminal/played items and ignore inactive cups
       const response = await axios.get(`/api/channels/${currentChannelId}/submissions`, {
-        params: { status: 'ALL', limit: 'ALL' },
+        params: { status: 'PENDING,APPROVED,TOP_EIGHT,PLAYING', limit: 'ALL', activeCupsOnly: true },
         withCredentials: true
       });
       const submissions = Array.isArray(response?.data?.submissions)
@@ -805,6 +806,82 @@ const Dashboard = () => {
       loadPendingSubmissions();
     }
   }, [activeTab, canModerate, loadPendingSubmissions]);
+
+  // Live‑update moderation items while on the Moderation tab
+  useEffect(() => {
+    if (activeTab !== 'moderation') return undefined;
+
+    const TERMINAL = new Set(['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED']);
+
+    const sortItems = (arr) => {
+      return [...arr].sort((a, b) => {
+        const at = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bt = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (at !== bt) return at - bt;
+        return (a.id || 0) - (b.id || 0);
+      });
+    };
+
+    const handleItemUpdated = (payload = {}) => {
+      const item = payload?.item || payload;
+      if (!item || !item.id) return;
+      // Drop items that moved to terminal states
+      if (item.status && TERMINAL.has(String(item.status).toUpperCase())) {
+        setModerationItems((prev) => prev.filter((it) => it.id !== item.id));
+        return;
+      }
+      setModerationItems((prev) => {
+        const idx = prev.findIndex((it) => it.id === item.id);
+        if (idx === -1) {
+          return sortItems([...prev, item]);
+        }
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...item };
+        return sortItems(next);
+      });
+    };
+
+    const handleItemAdded = (item = {}) => {
+      if (!item || !item.id) return;
+      // Ignore items from inactive cups if info present
+      const cupStatus = item?.cup?.status ? String(item.cup.status).toUpperCase() : null;
+      if (cupStatus && cupStatus !== 'LIVE') return;
+      setModerationItems((prev) => {
+        if (prev.some((it) => it.id === item.id)) return prev;
+        return sortItems([...prev, item]);
+      });
+    };
+
+    const handleItemRemoved = (payload = {}) => {
+      const id = payload?.id ?? payload?.itemId;
+      if (!id) return;
+      setModerationItems((prev) => prev.filter((it) => it.id !== id));
+    };
+
+    const handleItemStatus = ({ id, status }) => {
+      if (!id) return;
+      const s = String(status || '').toUpperCase();
+      if (!s) return;
+      if (['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED'].includes(s)) {
+        setModerationItems((prev) => prev.filter((it) => it.id !== id));
+      }
+    };
+
+    addChannelListener('queue:item_updated', handleItemUpdated);
+    addChannelListener('queue:video_added', handleItemAdded);
+    addChannelListener('queue:video_removed', handleItemRemoved);
+    addChannelListener('queue:item_status', handleItemStatus);
+    const handleItemScored = ({ queueItemId }) => handleItemRemoved({ id: queueItemId });
+    addChannelListener('queue:item_scored', handleItemScored);
+
+    return () => {
+      removeChannelListener('queue:item_updated', handleItemUpdated);
+      removeChannelListener('queue:video_added', handleItemAdded);
+      removeChannelListener('queue:video_removed', handleItemRemoved);
+      removeChannelListener('queue:item_status', handleItemStatus);
+      removeChannelListener('queue:item_scored', handleItemScored);
+    };
+  }, [activeTab, addChannelListener, removeChannelListener]);
 
   useEffect(() => {
     setModerationItems([]);

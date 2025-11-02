@@ -55,6 +55,16 @@ function ViewerHub() {
     }
   };
 
+  // Prefer alias but always show real username when available
+  const formatName = useCallback((alias, username) => {
+    const a = (alias || '').toString().trim();
+    const u = (username || '').toString().trim();
+    if (a && u && a.toLowerCase() !== u.toLowerCase()) {
+      return `${a} (real: ${u})`;
+    }
+    return a || u || 'Anonymous';
+  }, []);
+
   const fetchData = useCallback(async () => {
       try {
         setLoading(true);
@@ -401,13 +411,80 @@ function ViewerHub() {
                               height: '100%',
                               display: 'flex',
                               flexDirection: 'column',
-                              background: 'rgba(0, 0, 0, 0.4)',
+                              background: 'rgba(0, 0, 0, 0.45)',
                               backdropFilter: 'blur(10px)',
-                              border: '1px solid rgba(255, 255, 255, 0.1)',
-                              borderRadius: 3
+                              border: '1px solid rgba(255, 255, 255, 0.12)',
+                              borderRadius: 3,
+                              overflow: 'hidden',
+                              transition: 'all 0.3s ease',
+                              '&:hover': {
+                                transform: 'translateY(-6px)',
+                                boxShadow: '0 18px 36px rgba(255, 193, 7, 0.25)'
+                              }
                             }}
                           >
-                            <Box sx={{ position: 'relative', p: 2 }}>
+                            {/* Thumbnail */}
+                            <Box
+                              component="a"
+                              href={item.videoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{
+                                position: 'relative',
+                                paddingTop: '56.25%',
+                                backgroundColor: 'grey.900',
+                                overflow: 'hidden',
+                                display: 'block',
+                                cursor: 'pointer',
+                                textDecoration: 'none',
+                                '&:hover .vip-thumb-overlay': { opacity: 1 }
+                              }}
+                            >
+                              {item.thumbnailUrl ? (
+                                <>
+                                  <Box
+                                    component="img"
+                                    src={item.thumbnailUrl}
+                                    alt={item.title}
+                                    sx={{
+                                      position: 'absolute',
+                                      top: 0,
+                                      left: 0,
+                                      width: '100%',
+                                      height: '100%',
+                                      objectFit: 'cover'
+                                    }}
+                                  />
+                                  <Box
+                                    className="vip-thumb-overlay"
+                                    sx={{
+                                      position: 'absolute',
+                                      inset: 0,
+                                      background: 'rgba(0,0,0,0.5)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      opacity: 0,
+                                      transition: 'opacity 0.25s ease'
+                                    }}
+                                  >
+                                    <Typography sx={{ color: 'white', fontWeight: 800, fontSize: '2rem' }}>▶</Typography>
+                                  </Box>
+                                </>
+                              ) : (
+                                <Box
+                                  sx={{
+                                    position: 'absolute',
+                                    inset: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: 'grey.800'
+                                  }}
+                                >
+                                  <QueueIcon sx={{ fontSize: 48, color: 'grey.600' }} />
+                                </Box>
+                              )}
                               <Chip
                                 label={`#${index + 1}`}
                                 size="small"
@@ -415,25 +492,49 @@ function ViewerHub() {
                                   position: 'absolute',
                                   top: 8,
                                   left: 8,
-                                  backgroundColor: 'rgba(0,0,0,0.7)',
+                                  background: 'linear-gradient(135deg, #ffc107 0%, #ff9800 100%)',
                                   color: 'white',
-                                  fontWeight: 'bold'
+                                  fontWeight: 700
                                 }}
                               />
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'white', pr: 1 }}>
-                                {item.title || 'Untitled Video'}
-                              </Typography>
-                              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                                by {item.submitterAlias || item.submitterUsername}
-                              </Typography>
                               {item.duration && (
                                 <Chip
                                   label={`${Math.floor(item.duration / 60)}:${String(item.duration % 60).padStart(2, '0')}`}
                                   size="small"
-                                  sx={{ mt: 1, backgroundColor: 'rgba(0,0,0,0.7)', color: 'white' }}
+                                  sx={{
+                                    position: 'absolute',
+                                    bottom: 8,
+                                    right: 8,
+                                    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                                    color: 'white',
+                                    fontWeight: 'bold'
+                                  }}
                                 />
                               )}
                             </Box>
+
+                            {/* Details */}
+                            <CardContent sx={{ p: 2.25 }}>
+                              <Typography
+                                variant="subtitle1"
+                                sx={{
+                                  fontWeight: 700,
+                                  color: 'white',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  lineHeight: 1.3,
+                                  mb: 0.75
+                                }}
+                              >
+                                {item.title || 'Untitled Video'}
+                              </Typography>
+                              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.75)' }}>
+                                by {formatName(item.submitterAlias, item.submitterUsername)}
+                              </Typography>
+                            </CardContent>
                           </Card>
                         </Grid>
                       ))}
@@ -556,7 +657,7 @@ function ViewerHub() {
                             alignItems: 'center'
                           }}
                         >
-                          🏆 Top 5 Standings
+                          🏆 Standings
                         </Typography>
                         <Button
                           size="small"
@@ -570,7 +671,7 @@ function ViewerHub() {
                         </Button>
                       </Box>
                       <List sx={{ p: 0 }}>
-                        {standings.slice(0, 5).map((entry, index) => (
+                        {standings.map((entry, index) => (
                           <React.Fragment key={entry.submitterUsername}>
                             <ListItem
                               sx={{
@@ -624,7 +725,7 @@ function ViewerHub() {
                                         fontWeight: 600
                                       }}
                                     >
-                                      {entry.publicSubmitterName || entry.submitterUsername}
+                                      {formatName(entry.submitterAlias, entry.submitterUsername)}
                                     </Typography>
                                     <Chip
                                       label={`${entry.averageScore?.toFixed(2) || 'N/A'}`}
@@ -822,7 +923,7 @@ function ViewerHub() {
                                   mb: 2
                                 }}
                               >
-                                by {video.publicSubmitterName || video.submitterUsername}
+                                by {formatName(video.submitterAlias, video.submitterUsername)}
                               </Typography>
 
                               {/* Judge Scores */}
@@ -1121,8 +1222,8 @@ function ViewerHub() {
                                 fontWeight: 500
                               }}
                             >
-                              by {item.submitterAlias || item.submitterUsername}
-                            </Typography>
+                                by {formatName(item.submitterAlias, item.submitterUsername)}
+                              </Typography>
                           {item.status && item.status !== 'PENDING' && (
                             <Box sx={{ mt: 1 }}>
                               <Chip

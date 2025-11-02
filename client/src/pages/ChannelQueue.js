@@ -478,6 +478,49 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     return [...votingState.judges].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [votingState]);
 
+  // VIP ordering helpers (mirror overlay behavior)
+  const vipIndexMap = useMemo(() => {
+    try {
+      const ids = Array.isArray(vipQueue) ? vipQueue.map((v) => Number(v)) : [];
+      return new Map(ids.map((id, idx) => [id, idx]));
+    } catch (_) {
+      return new Map();
+    }
+  }, [vipQueue]);
+
+  const sortedQueue = useMemo(() => {
+    const items = queue.slice();
+
+    const isVip = (id) => vipIndexMap.has(Number(id));
+    const vipPos = (id) => vipIndexMap.get(Number(id));
+
+    return items.sort((a, b) => {
+      // 1) Currently playing always first
+      const aNow = currentlyPlaying?.id === a.id;
+      const bNow = currentlyPlaying?.id === b.id;
+      if (aNow && !bNow) return -1;
+      if (bNow && !aNow) return 1;
+
+      // 2) VIPs next, FIFO using vipQueue order
+      const aVip = isVip(a.id);
+      const bVip = isVip(b.id);
+      if (aVip && !bVip) return -1;
+      if (bVip && !aVip) return 1;
+      if (aVip && bVip) return vipPos(a.id) - vipPos(b.id);
+
+      // 3) Top Eight after VIPs
+      const aTop = a.status === 'TOP_EIGHT';
+      const bTop = b.status === 'TOP_EIGHT';
+      if (aTop && !bTop) return -1;
+      if (bTop && !aTop) return 1;
+
+      // 4) Fallback by position
+      const apos = a.position ?? Number.MAX_SAFE_INTEGER;
+      const bpos = b.position ?? Number.MAX_SAFE_INTEGER;
+      return apos - bpos;
+    });
+  }, [queue, currentlyPlaying, vipIndexMap]);
+
   const unrevealedJudges = useMemo(() => (
     votingJudges.filter((judge) => !['revealed', 'skipped'].includes(judge.revealStatus))
   ), [votingJudges]);
@@ -1575,14 +1618,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                 </Paper>
               ) : (
                 <List>
-                  {queue.map((video, index) => (
+                  {sortedQueue.map((video, index) => (
                     <QueueItem
                       key={video.id || index}
                       video={video}
                       index={index}
                       isPlaying={currentlyPlaying?.id === video.id}
                       isTopEight={video.status === 'TOP_EIGHT'}
-                      isVip={Array.isArray(vipQueue) && vipQueue.includes(video.id)}
+                      isVip={vipIndexMap.has(Number(video.id))}
                       canManageVip={canManageVip}
                       onToggleVip={handleVipAction}
                       vipActionInFlight={vipActionId === video.id}
