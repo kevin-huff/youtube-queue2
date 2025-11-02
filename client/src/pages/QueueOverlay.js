@@ -850,43 +850,7 @@ const ringLayout = useMemo(() => {
                                 background: `linear-gradient(180deg, transparent, ${alpha('#060915', 0.88)})`
                               }}
                             />
-                            <Box
-                              sx={{
-                                position: 'absolute',
-                                top: 8,
-                                left: 8,
-                                px: 1.2,
-                                py: 0.4,
-                                borderRadius: 999,
-                                background: alpha('#01040d', 0.8),
-                                fontSize: 11,
-                                letterSpacing: 1.2,
-                                textTransform: 'uppercase',
-                                color: alpha('#ffffff', 0.8),
-                                fontWeight: 600
-                              }}
-                            >
-                              #{globalIndex + 1}
-                            </Box>
-                            {typeof rank === 'number' && (
-                              <Box
-                                sx={{
-                                  position: 'absolute',
-                                  top: 8,
-                                  right: 8,
-                                  px: 1.2,
-                                  py: 0.4,
-                                  borderRadius: 999,
-                                  background: alpha('#ff89df', 0.25),
-                                  color: '#ffb0ef',
-                                  fontSize: 11,
-                                  letterSpacing: 1,
-                                  fontWeight: 700
-                                }}
-                              >
-                                Final #{rank}
-                              </Box>
-                            )}
+                            {/* Removed rank/index badges per request */}
                           </Box>
                           <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                             <Typography
