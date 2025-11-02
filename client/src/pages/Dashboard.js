@@ -551,6 +551,22 @@ const Dashboard = () => {
     return rel.startsWith('/') ? `${base}${rel}` : rel;
   }, [SERVER_BASE]);
 
+  // Build a review URL for a submission's underlying video
+  const getModerationItemUrl = useCallback((item) => {
+    if (!item) return '';
+    const raw = (item.videoUrl || '').toString();
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('/')) {
+      const base = (SERVER_BASE || '').replace(/\/$/, '');
+      return `${base}${raw}`;
+    }
+    if ((!raw || raw.length === 0) && item.videoId) {
+      // Fallback for YouTube IDs when URL is absent
+      return `https://www.youtube.com/watch?v=${item.videoId}`;
+    }
+    return raw;
+  }, [SERVER_BASE]);
+
   const handleCopyUrl = useCallback(async (item) => {
     try {
       const url = resolveItemUrl(item);
@@ -1751,6 +1767,20 @@ const Dashboard = () => {
                                     </Typography>
                                   </Box>
                                   <Box display="flex" alignItems="center" gap={1}>
+                                    {getModerationItemUrl(item) && (
+                                      <Tooltip title="Open video">
+                                        <IconButton
+                                          size="small"
+                                          aria-label="Open"
+                                          component="a"
+                                          href={getModerationItemUrl(item)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          <OpenInNewIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
                                     <Chip
                                       label={item.status || 'PENDING'}
                                       size="small"

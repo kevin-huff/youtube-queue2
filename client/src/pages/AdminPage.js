@@ -32,6 +32,7 @@ import {
   VolumeUp as VolumeIcon,
   Pause as PauseIcon,
   WarningAmber as WarningIcon
+  , OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
 
@@ -71,6 +72,8 @@ const formatSubmitterLabel = (item, { includeReal = false } = {}) => {
 };
 
 const AdminPage = () => {
+  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+
   const {
     connected,
     queue,
@@ -236,6 +239,20 @@ const AdminPage = () => {
   const handleRemoveVideo = (videoId) => {
     removeVideoFromQueue(videoId);
   };
+
+  const buildSubmissionUrl = useCallback((submission) => {
+    if (!submission) return '';
+    const raw = (submission.videoUrl || '').toString();
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('/')) {
+      const base = (SERVER_BASE || '').replace(/\/$/, '');
+      return `${base}${raw}`;
+    }
+    if ((!raw || raw.length === 0) && submission.videoId) {
+      return `https://www.youtube.com/watch?v=${submission.videoId}`;
+    }
+    return raw;
+  }, [SERVER_BASE]);
 
   if (!connected) {
     return (
@@ -409,6 +426,18 @@ const AdminPage = () => {
                         secondary={`Submitted by ${formatSubmitterLabel(submission, { includeReal: true })} • ${formatTimestamp(submission.createdAt)}`}
                       />
                       <Stack direction="row" spacing={1} alignItems="center">
+                        {buildSubmissionUrl(submission) && (
+                          <IconButton
+                            component="a"
+                            href={buildSubmissionUrl(submission)}
+                            target="_blank"
+                            rel="noreferrer"
+                            size="small"
+                            aria-label="Open"
+                          >
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        )}
                         <Button
                           variant="contained"
                           size="small"
