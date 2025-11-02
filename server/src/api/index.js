@@ -1699,6 +1699,35 @@ router.post('/channels/:channelId/cups/:cupId/judges/:judgeId/regenerate',
   }
 );
 
+// Prune all inactive (ENDED) judge sessions for a cup
+router.post('/channels/:channelId/cups/:cupId/judges/prune',
+  requireAuth,
+  requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER', 'HOST']),
+  [
+    body('olderThanMinutes').optional().isInt({ min: 0 }).withMessage('olderThanMinutes must be a non-negative integer')
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const judgeService = channelManager.getJudgeService(normalizedChannelId);
+
+      if (!judgeService) {
+        return res.status(500).json({ error: 'Judge service not available' });
+      }
+
+      const { olderThanMinutes } = req.body || {};
+      const result = await judgeService.pruneInactiveSessions(req.params.cupId, { olderThanMinutes });
+
+      res.json({ success: true, deleted: result.count });
+    } catch (error) {
+      logger.error('Error pruning inactive judge sessions:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to prune inactive judges' });
+    }
+  }
+);
+
 router.post('/channels/:channelId/cups/:cupId/judge/session/end',
   authenticateJudgeToken,
   async (req, res) => {

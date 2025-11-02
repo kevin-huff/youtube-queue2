@@ -20,14 +20,32 @@ class JudgeService {
    */
   async regenerateToken(cupId, judgeIdentifier, options = {}) {
     try {
-      const isTokenJudge = typeof judgeIdentifier === 'string' && judgeIdentifier.startsWith('judge_');
+      let resolvedIdentifier = judgeIdentifier;
+      let isTokenJudge = typeof resolvedIdentifier === 'string' && resolvedIdentifier.startsWith('judge_');
 
       let judgeName = options.judgeName || null;
+
+      // If not clearly token/account, allow passing a session ID and resolve it
+      if (!isTokenJudge && typeof resolvedIdentifier === 'string') {
+        try {
+          const sess = await this.db.judgeSession.findUnique({ where: { id: resolvedIdentifier } });
+          if (sess && sess.cupId === cupId) {
+            if (sess.judgeTokenId) {
+              resolvedIdentifier = sess.judgeTokenId;
+              isTokenJudge = true;
+              judgeName = judgeName || sess.judgeName || null;
+            } else if (sess.judgeAccountId) {
+              resolvedIdentifier = sess.judgeAccountId;
+              isTokenJudge = false;
+            }
+          }
+        } catch (_) {}
+      }
 
       // If token judge, try to lookup existing session to preserve judgeName
       if (isTokenJudge) {
         const existing = await this.db.judgeSession.findUnique({
-          where: { cupId_judgeTokenId: { cupId, judgeTokenId: judgeIdentifier } }
+          where: { cupId_judgeTokenId: { cupId, judgeTokenId: resolvedIdentifier } }
         });
 
         if (existing) {
@@ -42,7 +60,7 @@ class JudgeService {
       } else {
         // Account-based judge: fetch the account display name if not provided
         if (!judgeName) {
-          const account = await this.db.account.findUnique({ where: { id: judgeIdentifier } });
+          const account = await this.db.account.findUnique({ where: { id: resolvedIdentifier } });
           judgeName = account?.displayName || account?.username || 'Judge';
         }
       }
@@ -75,7 +93,7 @@ class JudgeService {
       });
 
       logger.info(`Regenerated judge token for cup ${cupId}: ${newJudgeId}`);
-      this.io.emit('judge:token_regenerated', { cupId, newJudgeId, oldJudgeId: judgeIdentifier });
+      this.io.emit('judge:token_regenerated', { cupId, newJudgeId, oldJudgeId: resolvedIdentifier });
 
       return { token, session };
     } catch (error) {
@@ -175,18 +193,41 @@ class JudgeService {
    */
   async endSession(cupId, judgeIdentifier) {
     try {
-      const isTokenJudge = typeof judgeIdentifier === 'string' && judgeIdentifier.startsWith('judge_');
-      const whereClause = isTokenJudge
-        ? { cupId_judgeTokenId: { cupId, judgeTokenId: judgeIdentifier } }
-        : { cupId_judgeAccountId: { cupId, judgeAccountId: judgeIdentifier } };
+      let resolved = judgeIdentifier;
+      let isTokenJudge = typeof resolved === 'string' && resolved.startsWith('judge_');
 
-      const session = await this.db.judgeSession.update({
-        where: whereClause,
-        data: {
-          status: 'ENDED',
-          endedAt: new Date()
+      // Accept a session ID as well and resolve to the correct identifier
+      if (!isTokenJudge && typeof resolved === 'string') {
+        try {
+          const sess = await this.db.judgeSession.findUnique({ where: { id: resolved } });
+          if (sess && sess.cupId === cupId) {
+            resolved = sess.judgeTokenId || sess.judgeAccountId || resolved;
+            isTokenJudge = typeof resolved === 'string' && resolved.startsWith('judge_');
+          }
+        } catch (_) {}
+      }
+
+      let session;
+      try {
+        const whereClause = isTokenJudge
+          ? { cupId_judgeTokenId: { cupId, judgeTokenId: resolved } }
+          : { cupId_judgeAccountId: { cupId, judgeAccountId: resolved } };
+
+        session = await this.db.judgeSession.update({
+          where: whereClause,
+          data: { status: 'ENDED', endedAt: new Date() }
+        });
+      } catch (e) {
+        // Fallback to updating by session ID directly if composite lookup failed
+        if (typeof judgeIdentifier === 'string') {
+          session = await this.db.judgeSession.update({
+            where: { id: judgeIdentifier },
+            data: { status: 'ENDED', endedAt: new Date() }
+          });
+        } else {
+          throw e;
         }
-      });
+      }
 
       logger.info(`Judge session ended: ${judgeIdentifier} for cup ${cupId}`);
       this.io.emit('judge:session_ended', { session });
@@ -515,6 +556,32 @@ class JudgeService {
       return result;
     } catch (error) {
       logger.error('Failed to unlock all forced votes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Prune (delete) inactive judge sessions for a cup.
+   * Inactive = status !== ACTIVE (i.e., ENDED). Optional time cutoff.
+   * Returns { count }
+   */
+  async pruneInactiveSessions(cupId, options = {}) {
+    try {
+      const where = {
+        cupId,
+        status: { not: 'ACTIVE' }
+      };
+      if (options.olderThanMinutes && Number(options.olderThanMinutes) > 0) {
+        const minutes = Number(options.olderThanMinutes);
+        const cutoff = new Date(Date.now() - minutes * 60 * 1000);
+        where.endedAt = { lt: cutoff };
+      }
+
+      const result = await this.db.judgeSession.deleteMany({ where });
+      logger.info(`Pruned inactive judge sessions for cup ${cupId}: ${result.count}`);
+      return { count: result.count };
+    } catch (error) {
+      logger.error('Failed to prune inactive judge sessions:', error);
       throw error;
     }
   }

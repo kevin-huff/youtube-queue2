@@ -64,6 +64,7 @@ const CupAdmin = () => {
   const [judgesDialogOpen, setJudgesDialogOpen] = useState(false);
   const [judgesLoading, setJudgesLoading] = useState(false);
   const [judgesList, setJudgesList] = useState([]);
+  const [pruning, setPruning] = useState(false);
   
   // Create cup dialog
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -288,6 +289,33 @@ const CupAdmin = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePruneInactiveJudges = async () => {
+    if (!selectedCup) return;
+    try {
+      setPruning(true);
+      const response = await fetch(
+        `/api/channels/${channelName}/cups/${selectedCup.id}/judges/prune`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ olderThanMinutes: 0 })
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to prune inactive judges');
+      }
+      setSnackbarMessage(`Removed ${data.deleted || 0} inactive judges`);
+      setSnackbarOpen(true);
+      await fetchJudges(selectedCup.id);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPruning(false);
     }
   };
 
@@ -1173,20 +1201,31 @@ const CupAdmin = () => {
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>
-          Manage Judges
-          {selectedCup && (
-            <Typography variant="body2" color="text.secondary">
-              {selectedCup.title}
-            </Typography>
-          )}
-        </DialogTitle>
-        <DialogContent>
-          {judgesLoading ? (
-            <Alert severity="info">Loading judges...</Alert>
-          ) : judgesList.length === 0 ? (
-            <Alert severity="info" sx={{ mt: 2 }}>No judges found for this cup.</Alert>
-          ) : (
+      <DialogTitle>
+        Manage Judges
+        {selectedCup && (
+          <Typography variant="body2" color="text.secondary">
+            {selectedCup.title}
+          </Typography>
+        )}
+      </DialogTitle>
+      <DialogContent>
+        <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mb: 1 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="warning"
+            onClick={handlePruneInactiveJudges}
+            disabled={pruning}
+          >
+            Revoke All Inactive
+          </Button>
+        </Stack>
+        {judgesLoading ? (
+          <Alert severity="info">Loading judges...</Alert>
+        ) : judgesList.length === 0 ? (
+          <Alert severity="info" sx={{ mt: 2 }}>No judges found for this cup.</Alert>
+        ) : (
             <Stack spacing={2} mt={2}>
               {judgesList.map((j) => (
                 <Paper key={j.id} variant="outlined" sx={{ p: 2 }}>
@@ -1203,7 +1242,7 @@ const CupAdmin = () => {
                       <Button
                         size="small"
                         variant="outlined"
-                        disabled={!currentlyPlaying?.id}
+                        disabled={!currentlyPlaying?.id || (j.status !== 'ACTIVE')}
                         onClick={() => handleRemoveJudgeFromVoting(j.judgeTokenId || j.judge?.id)}
                       >
                         Remove From Voting
