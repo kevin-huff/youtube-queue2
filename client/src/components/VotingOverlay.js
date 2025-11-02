@@ -254,8 +254,10 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
     if (!votingState || !Array.isArray(votingState.judges)) {
       return [];
     }
+    // Hide offline judges to keep the panel clean during the show
     return [...votingState.judges]
       .filter(Boolean)
+      .filter((j) => j.connected !== false)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [votingState]);
 
@@ -789,7 +791,7 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                       fontSize: { xs: 28, md: 36 },
                       fontWeight: 900,
                       letterSpacing: 2,
-                      color: '#ffffff',
+                      color: revealed ? '#ffffff' : alpha('#ffffff', 0.9),
                       maxWidth: '70%',
                       textOverflow: 'ellipsis',
                       overflow: 'hidden',
@@ -798,11 +800,12 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                         0 0 20px ${alpha(stageMeta.accent, revealed ? 0.6 : 0.3)},
                         0 4px 15px rgba(0, 0, 0, 0.7)
                       `,
-                      // When revealed, use gradient text; otherwise, avoid white background highlight
-                      background: revealed ? `linear-gradient(135deg, ${stageMeta.accent}, #ffffff)` : 'transparent',
+                      // When revealed, use gradient text; otherwise no background at all
+                      background: revealed ? `linear-gradient(135deg, ${stageMeta.accent}, #ffffff)` : 'none',
+                      backgroundImage: revealed ? `linear-gradient(135deg, ${stageMeta.accent}, #ffffff)` : 'none',
                       backgroundClip: revealed ? 'text' : 'unset',
                       WebkitBackgroundClip: revealed ? 'text' : 'unset',
-                      WebkitTextFillColor: revealed ? 'transparent' : 'unset',
+                      WebkitTextFillColor: revealed ? 'transparent' : 'currentColor',
                       fontFamily: '"Rajdhani", "Poppins", sans-serif'
                     }}
                   >
@@ -858,13 +861,9 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                     >
                       {revealed && hasScore ? judge.score.toFixed(5) : hasScore ? 'Locked' : '·····'}
                     </Typography>
-                    {revealed && (
-                      <StarRating
-                        value={hasScore ? judge.score : 0}
-                        size={42}
-                        glow
-                      />
-                    )}
+                    {revealed ? (
+                      <StarRating value={hasScore ? judge.score : 0} size={42} glow />
+                    ) : null}
                   </Stack>
                   <Typography 
                     variant="caption" 
