@@ -798,9 +798,8 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                         0 0 20px ${alpha(stageMeta.accent, revealed ? 0.6 : 0.3)},
                         0 4px 15px rgba(0, 0, 0, 0.7)
                       `,
-                      background: revealed 
-                        ? `linear-gradient(135deg, ${stageMeta.accent}, #ffffff)` 
-                        : '#ffffff',
+                      // When revealed, use gradient text; otherwise, avoid white background highlight
+                      background: revealed ? `linear-gradient(135deg, ${stageMeta.accent}, #ffffff)` : 'transparent',
                       backgroundClip: revealed ? 'text' : 'unset',
                       WebkitBackgroundClip: revealed ? 'text' : 'unset',
                       WebkitTextFillColor: revealed ? 'transparent' : 'unset',
@@ -859,11 +858,13 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                     >
                       {revealed && hasScore ? judge.score.toFixed(5) : hasScore ? 'Locked' : '·····'}
                     </Typography>
-                    <StarRating
-                      value={hasScore ? judge.score : 0}
-                      size={42}
-                      glow={revealed}
-                    />
+                    {revealed && (
+                      <StarRating
+                        value={hasScore ? judge.score : 0}
+                        size={42}
+                        glow
+                      />
+                    )}
                   </Stack>
                   <Typography 
                     variant="caption" 

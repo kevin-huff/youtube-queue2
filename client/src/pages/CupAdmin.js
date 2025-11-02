@@ -85,6 +85,7 @@ const CupAdmin = () => {
   const {
     connectToChannel,
     disconnectFromChannel,
+    currentlyPlaying,
     refreshCupStandings,
     refreshScoresForItem,
     channelId,
@@ -282,6 +283,34 @@ const CupAdmin = () => {
       // Refresh judge list
       await fetchJudges(selectedCup.id);
       setSnackbarMessage('Judge session revoked');
+      setSnackbarOpen(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveJudgeFromVoting = async (judgeId) => {
+    if (!selectedCup || !currentlyPlaying?.id) return;
+    try {
+      setLoading(true);
+      const response = await fetch(
+        `/api/channels/${channelName}/cups/${selectedCup.id}/items/${encodeURIComponent(currentlyPlaying.id)}/voting/judges/${encodeURIComponent(judgeId)}/remove`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endSession: false })
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to remove judge from voting');
+      }
+
+      setSnackbarMessage('Judge removed from current voting');
       setSnackbarOpen(true);
     } catch (err) {
       setError(err.message);
@@ -1171,6 +1200,14 @@ const CupAdmin = () => {
                       </Typography>
                     </Box>
                     <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!currentlyPlaying?.id}
+                        onClick={() => handleRemoveJudgeFromVoting(j.judgeTokenId || j.judge?.id)}
+                      >
+                        Remove From Voting
+                      </Button>
                       <Button
                         size="small"
                         variant="outlined"

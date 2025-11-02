@@ -807,18 +807,9 @@ router.post('/channels/:channelId/cups/:cupId/judge-link',
         expiresIn: req.body.expiresIn || '7d'
       });
 
-      // Ensure a judge session exists for this generated token so the link works immediately
-      try {
-        const judgeService = channelManager.getJudgeService(normalizedChannelId);
-        const decoded = verifyJudgeToken(token);
-        if (judgeService && decoded && decoded.judgeId) {
-          // Create or reactivate session for this token
-          await judgeService.createSession(cupId, decoded.judgeId, decoded.judgeName);
-        }
-      } catch (err) {
-        // Log but don't fail the link generation if session creation fails
-        logger.error('Failed to create judge session for generated token:', err);
-      }
+      // Note: Do NOT auto-create a session on link generation.
+      // The session will be created when the judge visits the link and starts their session.
+      // Auto-creating sessions here led to duplicate judge entries if multiple links were generated.
 
       // Construct the full URL
       const protocol = req.protocol;
@@ -2407,6 +2398,49 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/force-lock',
     } catch (error) {
       logger.error('Error force-locking votes:', error);
       res.status(error.status || 500).json({ error: error.message || 'Failed to force-lock votes' });
+    }
+  }
+);
+
+// Remove a judge from the current voting session (optionally end their session)
+router.post('/channels/:channelId/cups/:cupId/items/:itemId/voting/judges/:judgeId/remove',
+  requireAuth,
+  requireChannelRole(['HOST', 'PRODUCER']),
+  [param('itemId').isInt().withMessage('Valid item ID is required')],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+
+      const itemId = parseInt(req.params.itemId, 10);
+      const currentVoting = queueService.getVotingState();
+
+      if (!currentVoting || currentVoting.queueItemId !== itemId) {
+        return res.status(400).json({ error: 'No active voting session for this queue item' });
+      }
+
+      const judgeId = req.params.judgeId;
+      const updated = queueService.removeJudgeFromCurrentVoting(judgeId);
+
+      // Optionally end the judge session too
+      const endSession = String(req.query.endSession || req.body?.endSession || '').toLowerCase() === 'true';
+      if (endSession) {
+        try {
+          const judgeService = channelManager.getJudgeService(normalizedChannelId);
+          if (judgeService) {
+            await judgeService.endSession(req.params.cupId, judgeId);
+          }
+        } catch (e) {
+          logger.warn('Failed to end judge session during remove', { channelId: normalizedChannelId, judgeId, error: e });
+        }
+      }
+
+      res.json({ voting: updated });
+    } catch (error) {
+      logger.error('Error removing judge from voting:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to remove judge' });
     }
   }
 );

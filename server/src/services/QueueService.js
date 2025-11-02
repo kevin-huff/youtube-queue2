@@ -924,6 +924,43 @@ class QueueService {
     this._broadcastVotingState(`judge-${event}`);
   }
 
+  /**
+   * Remove a judge entry from the active voting session (producer action)
+   * Does not modify persisted judge sessions unless the caller also ends it.
+   */
+  removeJudgeFromCurrentVoting(judgeId) {
+    if (!this.votingState) {
+      throw new Error('No voting session in progress');
+    }
+    if (!judgeId) {
+      throw new Error('Judge ID is required');
+    }
+
+    const judges = Array.isArray(this.votingState.judges) ? this.votingState.judges : [];
+    const index = judges.findIndex((j) => j.id === judgeId);
+    if (index === -1) {
+      throw new Error('Judge not found in current voting');
+    }
+
+    // Remove entry and fix reveal index if needed
+    judges.splice(index, 1);
+    if (typeof this.votingState.revealIndex === 'number' && this.votingState.revealIndex >= 0) {
+      if (this.votingState.revealIndex === index) {
+        // removed the currently revealed judge; reset revealIndex
+        this.votingState.revealIndex = -1;
+      } else if (this.votingState.revealIndex > index) {
+        // shift left
+        this.votingState.revealIndex -= 1;
+      }
+    }
+
+    this._recalculateVotingAggregates();
+    this._touchVotingState('judge-removed', { judgeId });
+    this._broadcastVotingState('judge-removed');
+
+    return this.getVotingState();
+  }
+
   async loadSettings() {
     try {
       const settings = await this.db.botSetting.findMany({
