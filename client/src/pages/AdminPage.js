@@ -124,7 +124,7 @@ const AdminPage = () => {
       setPendingLoading(true);
       setPendingError(null);
 
-      const response = await fetch(`/api/channels/${channelId}/submissions?status=PENDING`, {
+      const response = await fetch(`/api/channels/${channelId}/submissions?status=PENDING&limit=ALL`, {
         credentials: 'include'
       });
 

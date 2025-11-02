@@ -1,4 +1,5 @@
 const { getDatabase } = require('../database/connection');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const anonNames = require('../constants/anonNames');
 
@@ -57,6 +58,25 @@ const shuffleWithSeed = (items, seed) => {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 
+  return arr;
+};
+
+// Cryptographically-strong Fisher–Yates shuffle for unbiased selection/order
+const _cryptoRandomInt = (maxExclusive) => {
+  if (typeof crypto.randomInt === 'function') {
+    return crypto.randomInt(0, maxExclusive);
+  }
+  const buf = crypto.randomBytes(4);
+  const uint = buf.readUInt32BE(0);
+  return Math.floor((uint / 0x100000000) * maxExclusive);
+};
+
+const shuffleWithCrypto = (items) => {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = _cryptoRandomInt(i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
   return arr;
 };
 
@@ -1744,30 +1764,35 @@ class QueueService {
         }
 
         if (selectedItems.length < targetCount) {
-          // Backfill any remaining slots with the highest priority queue items
-          for (let i = 0; i < candidateItems.length && selectedItems.length < targetCount; i += 1) {
-            const candidate = candidateItems[i];
-            if (!seenIds.has(candidate.id)) {
-              selectedItems.push(candidate);
-              seenIds.add(candidate.id);
-            }
+          // Backfill remaining slots randomly from the rest of candidates
+          const remainder = candidateItems.filter((c) => !seenIds.has(c.id));
+          const shuffledRemainder = shuffleWithCrypto(remainder);
+          for (let i = 0; i < shuffledRemainder.length && selectedItems.length < targetCount; i += 1) {
+            selectedItems.push(shuffledRemainder[i]);
           }
         }
       } else {
-        selectedItems = candidateItems.slice(0, targetCount);
+        // Uniform random selection of Top 8 using cryptographic shuffle
+        selectedItems = shuffleWithCrypto(candidateItems).slice(0, targetCount);
       }
 
       if (!selectedItems.length) {
         throw new Error('Not enough videos to select a Top 8');
       }
 
-      const seed = Number.isFinite(options.seed) ? Number(options.seed) : Date.now();
+      // Use a cryptographically random seed for client-side shuffle animation
+      const seed = Number.isFinite(options.seed)
+        ? Number(options.seed)
+        : crypto.randomBytes(4).readUInt32BE(0);
 
-      const initialOrder = selectedItems.map((item, index) =>
+      // Initial order reflects the pre-finalized view (for animation)
+      const initialOrder = selectedItems
+        .map((item, index) =>
         this._formatBroadcastItem(item, index + 1)
       );
 
-      const shuffledItems = shuffleWithSeed(selectedItems, seed);
+      // Final order among the selected Top 8 should also be uniformly random
+      const shuffledItems = shuffleWithCrypto(selectedItems);
       const finalOrder = shuffledItems.map((item, index) =>
         this._formatBroadcastItem(item, index + 1)
       );
@@ -1832,15 +1857,51 @@ class QueueService {
         const vipList = await this._getVipList();
         const vipSet = new Set(vipList.map((v) => Number(v)));
         const filteredOrder = Array.isArray(newOrder)
-          ? newOrder.filter((entry) => !vipSet.has(Number(entry.id)))
+          ? newOrder
+              .map((entry) => ({ id: Number(entry.id) }))
+              .filter((entry) => Number.isInteger(entry.id) && !vipSet.has(entry.id))
           : [];
 
         // Reorder based on provided order (VIPs intentionally excluded)
-        for (let i = 0; i < filteredOrder.length; i++) {
+        for (let i = 0; i < filteredOrder.length; i += 1) {
           await this.db.queueItem.update({
             where: { id: filteredOrder[i].id },
             data: { position: i + 1 }
           });
+        }
+
+        // Append any remaining orderable (non-VIP) items that weren't included in newOrder
+        const remaining = await this.db.queueItem.findMany({
+          where: {
+            channelId: this.channelId,
+            status: { in: ORDERABLE_QUEUE_STATUSES },
+            id: filteredOrder.length
+              ? { notIn: filteredOrder.map((e) => e.id) }
+              : undefined
+          },
+          orderBy: { position: 'asc' },
+          select: { id: true }
+        });
+
+        let pos = filteredOrder.length + 1;
+        for (const item of remaining) {
+          // Skip VIPs just in case
+          if (vipSet.has(Number(item.id))) continue;
+          await this.db.queueItem.update({ where: { id: item.id }, data: { position: pos } });
+          pos += 1;
+        }
+
+        // Ensure PLAYING items don't collide with head positions; push them to position 0
+        try {
+          const playingItems = await this.db.queueItem.findMany({
+            where: { channelId: this.channelId, status: 'PLAYING' },
+            select: { id: true }
+          });
+          for (const it of playingItems) {
+            await this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } });
+          }
+        } catch (err) {
+          logger.warn('Failed to normalize PLAYING positions during reorder', { channelId: this.channelId, error: err });
         }
       } else {
         // Auto-reorder remaining items excluding VIPs
@@ -1854,11 +1915,24 @@ class QueueService {
           orderBy: { position: 'asc' }
         });
 
-        for (let i = 0; i < pendingItems.length; i++) {
+        for (let i = 0; i < pendingItems.length; i += 1) {
           await this.db.queueItem.update({
             where: { id: pendingItems[i].id },
             data: { position: i + 1 }
           });
+        }
+
+        // Ensure PLAYING items have position 0 so they sort ahead but don't collide
+        try {
+          const playingItems = await this.db.queueItem.findMany({
+            where: { channelId: this.channelId, status: 'PLAYING' },
+            select: { id: true }
+          });
+          for (const it of playingItems) {
+            await this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } });
+          }
+        } catch (err) {
+          logger.warn('Failed to normalize PLAYING positions during auto-reorder', { channelId: this.channelId, error: err });
         }
       }
 
