@@ -224,6 +224,35 @@ const formatChannelOwner = (owner) => ({
         username: owner.account.username,
         displayName: owner.account.displayName,
         profileImageUrl: owner.account.profileImageUrl
+  }
+  : null
+});
+
+const formatRoleInvite = (invite) => ({
+  id: invite.id,
+  channelId: invite.channelId,
+  invitedUsername: invite.invitedUsername,
+  role: invite.role,
+  cupId: invite.cupId,
+  note: invite.note || null,
+  expiresAt: invite.expiresAt,
+  acceptedAt: invite.acceptedAt,
+  createdAt: invite.createdAt,
+  assignedBy: invite.assignedBy,
+  assignedByAccount: invite.assignedByAccount
+    ? {
+        id: invite.assignedByAccount.id,
+        username: invite.assignedByAccount.username,
+        displayName: invite.assignedByAccount.displayName,
+        profileImageUrl: invite.assignedByAccount.profileImageUrl
+      }
+    : null,
+  cup: invite.cup
+    ? {
+        id: invite.cup.id,
+        title: invite.cup.title,
+        slug: invite.cup.slug,
+        status: invite.cup.status
       }
     : null
 });
@@ -1936,7 +1965,7 @@ router.get('/channels/:channelId/roles',
         req.params.channelId
       );
 
-      const [owners, assignments] = await Promise.all([
+      const [owners, assignments, invites] = await Promise.all([
         channelManager.prisma.channelOwner.findMany({
           where: { channelId: normalizedChannelId },
           include: {
@@ -1975,12 +2004,35 @@ router.get('/channels/:channelId/roles',
             }
           },
           orderBy: { createdAt: 'asc' }
+        }),
+        channelManager.prisma.channelRoleInvite.findMany({
+          where: { channelId: normalizedChannelId },
+          include: {
+            assignedByAccount: {
+              select: {
+                id: true,
+                username: true,
+                displayName: true,
+                profileImageUrl: true
+              }
+            },
+            cup: {
+              select: {
+                id: true,
+                title: true,
+                slug: true,
+                status: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'asc' }
         })
       ]);
 
       res.json({
         owners: owners.map(formatChannelOwner),
-        roles: assignments.map(formatRoleAssignment)
+        roles: assignments.map(formatRoleAssignment),
+        invites: invites.map(formatRoleInvite)
       });
     } catch (error) {
       logger.error('Error listing channel roles:', error);
@@ -2171,7 +2223,40 @@ router.post('/channels/:channelId/roles',
         });
 
         if (!account) {
-          return res.status(404).json({ error: 'Account not found' });
+          // No account yet — create a role invite instead
+          const expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+          const invite = await channelManager.prisma.channelRoleInvite.upsert({
+            where: {
+              channelId_invitedUsername_role_cupId: {
+                channelId: normalizedChannelId,
+                invitedUsername: username.toLowerCase(),
+                role: rawRole,
+                cupId: req.body.cupId || null
+              }
+            },
+            update: {
+              assignedBy: req.user.id,
+              expiresAt
+            },
+            create: {
+              channelId: normalizedChannelId,
+              invitedUsername: username.toLowerCase(),
+              role: rawRole,
+              cupId: req.body.cupId || null,
+              assignedBy: req.user.id,
+              expiresAt
+            },
+            include: {
+              assignedByAccount: {
+                select: { id: true, username: true, displayName: true, profileImageUrl: true }
+              },
+              cup: {
+                select: { id: true, title: true, slug: true, status: true }
+              }
+            }
+          });
+
+          return res.status(201).json({ invite: formatRoleInvite(invite) });
         }
 
         targetAccountId = account.id;
@@ -2197,6 +2282,164 @@ router.post('/channels/:channelId/roles',
     } catch (error) {
       logger.error('Error assigning channel role:', error);
       res.status(error.status || 500).json({ error: error.message || 'Failed to assign channel role' });
+    }
+  }
+);
+
+// Role invite endpoints
+router.get('/channels/:channelId/role-invites',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await ensureOwnerOrManager(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      const invites = await channelManager.prisma.channelRoleInvite.findMany({
+        where: { channelId: normalizedChannelId },
+        include: {
+          assignedByAccount: {
+            select: { id: true, username: true, displayName: true, profileImageUrl: true }
+          },
+          cup: {
+            select: { id: true, title: true, slug: true, status: true }
+          }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      res.json({ invites: invites.map(formatRoleInvite) });
+    } catch (error) {
+      logger.error('Error listing role invites:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to load role invites' });
+    }
+  }
+);
+
+router.post('/channels/:channelId/role-invites',
+  requireAuth,
+  [
+    body('username').isString().trim().withMessage('Username is required'),
+    body('role').isString().withMessage('Role is required'),
+    body('cupId').optional().isString(),
+    body('expiresAt').optional().isISO8601().withMessage('expiresAt must be a valid ISO date'),
+    body('note').optional().isString()
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await ensureOwnerOrManager(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      const username = (req.body.username || '').toString().trim();
+      const rawRole = (req.body.role || '').toString().trim().toUpperCase();
+      const allowedRoles = ['PRODUCER', 'HOST', 'JUDGE', 'MODERATOR'];
+      if (!allowedRoles.includes(rawRole)) {
+        return res.status(400).json({ error: 'Invalid role selection' });
+      }
+
+      const expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+      if (expiresAt && Number.isNaN(expiresAt.getTime())) {
+        return res.status(400).json({ error: 'expiresAt must be a valid date' });
+      }
+
+      // If the account already exists, assign immediately instead of inviting
+      const existingAccount = await channelManager.prisma.account.findFirst({
+        where: {
+          OR: [
+            { username: { equals: username, mode: 'insensitive' } },
+            { displayName: { equals: username, mode: 'insensitive' } }
+          ]
+        }
+      });
+
+      if (existingAccount) {
+        const roleService = req.app.get('roleService');
+        const assignment = await roleService.assignChannelRole({
+          channelId: normalizedChannelId,
+          accountId: existingAccount.id,
+          role: rawRole,
+          cupId: req.body.cupId || null,
+          assignedBy: req.user.id,
+          expiresAt
+        });
+        return res.status(201).json({ role: formatRoleAssignment(assignment) });
+      }
+
+      const invite = await channelManager.prisma.channelRoleInvite.upsert({
+        where: {
+          channelId_invitedUsername_role_cupId: {
+            channelId: normalizedChannelId,
+            invitedUsername: username.toLowerCase(),
+            role: rawRole,
+            cupId: req.body.cupId || null
+          }
+        },
+        update: {
+          assignedBy: req.user.id,
+          note: req.body.note || undefined,
+          expiresAt
+        },
+        create: {
+          channelId: normalizedChannelId,
+          invitedUsername: username.toLowerCase(),
+          role: rawRole,
+          cupId: req.body.cupId || null,
+          note: req.body.note || undefined,
+          assignedBy: req.user.id,
+          expiresAt
+        },
+        include: {
+          assignedByAccount: {
+            select: { id: true, username: true, displayName: true, profileImageUrl: true }
+          },
+          cup: {
+            select: { id: true, title: true, slug: true, status: true }
+          }
+        }
+      });
+
+      return res.status(201).json({ invite: formatRoleInvite(invite) });
+    } catch (error) {
+      logger.error('Error creating role invite:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to create role invite' });
+    }
+  }
+);
+
+router.delete('/channels/:channelId/role-invites/:inviteId',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await ensureOwnerOrManager(
+        channelManager,
+        req.user.id,
+        req.params.channelId
+      );
+
+      const inviteId = parseInt(req.params.inviteId, 10);
+      if (!Number.isInteger(inviteId)) {
+        return res.status(400).json({ error: 'Invalid invite ID' });
+      }
+
+      const invite = await channelManager.prisma.channelRoleInvite.findUnique({ where: { id: inviteId } });
+      if (!invite || invite.channelId !== normalizedChannelId) {
+        return res.status(404).json({ error: 'Role invite not found' });
+      }
+
+      await channelManager.prisma.channelRoleInvite.delete({ where: { id: inviteId } });
+      return res.json({ success: true });
+    } catch (error) {
+      logger.error('Error removing role invite:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to remove role invite' });
     }
   }
 );

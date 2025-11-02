@@ -191,6 +191,68 @@ passport.use(new TwitchStrategy({
     // Note: Do not auto-create channels here. Ownership and channel creation
     // now occur via explicit onboarding/API actions.
 
+    // Auto-accept any pending role invites that match this username
+    try {
+      const now = new Date();
+      const pendingInvites = await prisma.channelRoleInvite.findMany({
+        where: {
+          invitedUsername: username,
+          acceptedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: now } }
+          ]
+        }
+      });
+
+      for (const invite of pendingInvites) {
+        try {
+          // Create or update role assignment for this account
+          // Ensure we don't duplicate existing assignment
+          const existing = await prisma.channelRoleAssignment.findFirst({
+            where: {
+              channelId: invite.channelId,
+              accountId: account.id,
+              role: invite.role,
+              cupId: invite.cupId || null
+            }
+          });
+
+          if (!existing) {
+            await prisma.channelRoleAssignment.create({
+              data: {
+                channelId: invite.channelId,
+                accountId: account.id,
+                role: invite.role,
+                cupId: invite.cupId || null,
+                assignedBy: invite.assignedBy || null,
+                expiresAt: invite.expiresAt || null
+              }
+            });
+          }
+
+          // Mark invite as accepted
+          await prisma.channelRoleInvite.update({
+            where: { id: invite.id },
+            data: { acceptedAt: new Date() }
+          });
+
+          try {
+            logger.info('Accepted role invite on login', {
+              username,
+              channelId: invite.channelId,
+              role: invite.role,
+              cupId: invite.cupId || null
+            });
+          } catch (_) {}
+        } catch (inviteErr) {
+          logger.warn('Failed to accept role invite on login', { error: inviteErr?.message, inviteId: invite.id });
+        }
+      }
+    } catch (invitesErr) {
+      logger.warn('Error while processing role invites during OAuth callback', invitesErr);
+    }
+
     const userData = await buildUserPayload(account.id);
 
     return done(null, userData);

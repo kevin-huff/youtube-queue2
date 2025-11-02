@@ -219,6 +219,30 @@ model ChannelRoleAssignment {
   @@map("channel_role_assignments")
 }
 
+model ChannelRoleInvite {
+  id                 Int       @id @default(autoincrement())
+  channelId          String    @map("channel_id")
+  invitedUsername    String    @map("invited_username")
+  role               ShowRole
+  cupId              String?   @map("cup_id")
+  assignedBy         String?   @map("assigned_by")
+  note               String?
+  expiresAt          DateTime? @map("expires_at")
+  acceptedAt         DateTime? @map("accepted_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  channel            Channel   @relation(fields: [channelId], references: [id])
+  cup                Cup?      @relation(fields: [cupId], references: [id])
+  assignedByAccount  Account?  @relation("RoleInvitesAssignedBy", fields: [assignedBy], references: [id])
+
+  @@unique([channelId, invitedUsername, role, cupId])
+  @@index([channelId])
+  @@index([invitedUsername])
+  @@map("channel_role_invites")
+}
+
 model JudgeSession {
   id             String             @id @default(cuid())
   cupId          String             @map("cup_id")

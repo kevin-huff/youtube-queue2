@@ -409,6 +409,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesError, setRolesError] = useState(null);
   const [roleSubmitting, setRoleSubmitting] = useState(false);
+  const [rolesNotice, setRolesNotice] = useState(null);
   const [newRoleUsername, setNewRoleUsername] = useState('');
   const [newRoleType, setNewRoleType] = useState('PRODUCER');
   const [newManagerUsername, setNewManagerUsername] = useState('');
@@ -833,6 +834,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     try {
       setRoleSubmitting(true);
       setRolesError(null);
+      setRolesNotice(null);
 
       const response = await fetch(`/api/channels/${normalizedChannelId}/roles`, {
         method: 'POST',
@@ -850,6 +852,15 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
 
       if (!response.ok) {
         throw new Error(payload.error || 'Failed to assign role');
+      }
+      if (payload && payload.invite) {
+        // Invite flow: user doesn't have an account yet
+        setRolesNotice(
+          `Invite created for @${payload.invite.invitedUsername}. They will be granted ${payload.invite.role} on first login.`
+        );
+        setNewRoleUsername('');
+        await loadRoles();
+        return;
       }
 
       setNewRoleUsername('');
@@ -2043,6 +2054,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     {rolesError && (
                       <Alert severity="error" onClose={() => setRolesError(null)} sx={{ pointerEvents: 'auto' }}>
                         {rolesError}
+                      </Alert>
+                    )}
+                    {rolesNotice && (
+                      <Alert severity="success" onClose={() => setRolesNotice(null)} sx={{ pointerEvents: 'auto' }}>
+                        {rolesNotice}
                       </Alert>
                     )}
 
