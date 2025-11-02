@@ -58,6 +58,7 @@ import axios from 'axios';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import PlayerControlPanel from '../components/PlayerControlPanel';
+import PrecisionSlider from '../components/PrecisionSlider';
 import { useAuth } from '../contexts/AuthContext';
 
 const formatDuration = (seconds) => {
@@ -366,7 +367,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [shuffleError, setShuffleError] = useState(null);
   const [shuffleFeedback, setShuffleFeedback] = useState(null);
   const theme = useTheme();
-  const { hasChannelRole } = useAuth();
+  const { hasChannelRole, user } = useAuth();
 
   const {
     connectToChannel,
@@ -416,6 +417,13 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [votingAction, setVotingAction] = useState(null);
   const [finalizeLoading, setFinalizeLoading] = useState(false);
   const [forceLockLoading, setForceLockLoading] = useState(false);
+
+  // Minimal host/producer judge controls
+  const [hostJudgeToken, setHostJudgeToken] = useState(null);
+  const [hostJudgeScore, setHostJudgeScore] = useState(2.5);
+  const [hostJudgeLocked, setHostJudgeLocked] = useState(false);
+  const [hostJudgeBusy, setHostJudgeBusy] = useState(false);
+  const [hostJudgeError, setHostJudgeError] = useState(null);
 
   const normalizedChannelId = channelName?.toLowerCase();
 
@@ -513,6 +521,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const canForceLockVotes = Boolean(
     votingState && votingJudges.some((judge) => !judge.locked && typeof judge.score === 'number')
   );
+
+  // Shared styling for action buttons in Voting Control
+  const actionBtnSx = { minWidth: 160, borderRadius: 12 / 8, textTransform: 'none', fontWeight: 600 };
+
+  // One-host-judge token key (per cup) so multiple producers share the same judge
+  const hostTokenKey = useMemo(() => (
+    currentCupId ? `host_judge_token_${currentCupId}` : null
+  ), [currentCupId]);
 
   const handleStartVoting = useCallback(async () => {
     if (!currentlyPlaying?.id) {
@@ -1086,6 +1102,121 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     playNext();
   };
 
+  // Host/Producer judge token + actions
+  const ensureHostJudgeToken = useCallback(async () => {
+    if (!normalizedChannelId || !currentCupId || !user?.id) return;
+    try {
+      setHostJudgeError(null);
+
+      // 1) Prefer a shared token saved in channel settings so every producer uses the same judge
+      if (hostTokenKey && settings && typeof settings[hostTokenKey] === 'string' && settings[hostTokenKey]) {
+        setHostJudgeToken(settings[hostTokenKey]);
+        return;
+      }
+
+      // 2) No shared token yet — generate one and persist to channel settings
+      const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/judges/${user.id}/regenerate`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ judgeName: normalizedChannelId })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || 'Failed to prepare judge controls');
+
+      const token = payload.token;
+      setHostJudgeToken(token);
+      setHostJudgeLocked(false);
+
+      // Persist as channel setting so all producers pick up the same judge token
+      if (hostTokenKey) {
+        try {
+          await axios.put(`/api/channels/${normalizedChannelId}/settings/${hostTokenKey}`, { value: token }, { withCredentials: true });
+        } catch (_) {
+          // Non-fatal if settings write fails
+        }
+      }
+    } catch (err) {
+      setHostJudgeError(err.message || 'Failed to prepare judge controls');
+      setHostJudgeToken(null);
+    }
+  }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings]);
+
+  useEffect(() => { void ensureHostJudgeToken(); }, [ensureHostJudgeToken]);
+
+  const loadHostJudgeScore = useCallback(async () => {
+    if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
+    try {
+      setHostJudgeError(null);
+      const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/items/${currentlyPlaying.id}/score`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${hostJudgeToken}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.judgeScore) {
+        setHostJudgeScore(Number(data.judgeScore.score ?? 2.5));
+        setHostJudgeLocked(Boolean(data.judgeScore.isLocked));
+      }
+    } catch (_) {}
+  }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id]);
+
+  useEffect(() => { void loadHostJudgeScore(); }, [loadHostJudgeScore]);
+
+  const saveHostJudgeScore = useCallback(async () => {
+    if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
+    try {
+      setHostJudgeBusy(true);
+      setHostJudgeError(null);
+      const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/items/${currentlyPlaying.id}/score`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${hostJudgeToken}` },
+        body: JSON.stringify({ score: hostJudgeScore })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          // Token expired/revoked — refresh shared token
+          await ensureHostJudgeToken();
+        }
+        throw new Error(payload.error || 'Failed to submit score');
+      }
+      setHostJudgeLocked(Boolean(payload.judgeScore?.isLocked));
+    } catch (err) {
+      setHostJudgeError(err.message || 'Failed to submit score');
+    } finally {
+      setHostJudgeBusy(false);
+    }
+  }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, hostJudgeScore, ensureHostJudgeToken]);
+
+  const lockHostJudgeScore = useCallback(async () => {
+    if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
+    try {
+      setHostJudgeBusy(true);
+      setHostJudgeError(null);
+      await saveHostJudgeScore();
+      const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/items/${currentlyPlaying.id}/lock`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${hostJudgeToken}` }
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          await ensureHostJudgeToken();
+        }
+        throw new Error(payload.error || 'Failed to lock in');
+      }
+      setHostJudgeLocked(true);
+    } catch (err) {
+      setHostJudgeError(err.message || 'Failed to lock in');
+    } finally {
+      setHostJudgeBusy(false);
+    }
+  }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, saveHostJudgeScore, ensureHostJudgeToken]);
+
   const handleSkip = () => {
     if (!canOperatePlayback) {
       return;
@@ -1263,6 +1394,51 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
               </Box>
             )}
 
+            {canOperatePlayback && currentCupId && hostJudgeToken && (
+              <Card sx={{ mt: 3 }}>
+                <CardContent>
+                  <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>
+                    <Typography variant="h6" fontWeight={600}>Judge Controls</Typography>
+                    {hostJudgeLocked && (
+                      <Chip size="small" color="success" label="Locked" />
+                    )}
+                  </Box>
+
+                  {hostJudgeError && (
+                    <Alert severity="error" sx={{ mb: 2 }} onClose={() => setHostJudgeError(null)}>
+                      {hostJudgeError}
+                    </Alert>
+                  )}
+
+                  <PrecisionSlider
+                    value={hostJudgeScore}
+                    onChange={setHostJudgeScore}
+                    disabled={hostJudgeLocked || !currentlyPlaying}
+                    min={0}
+                    max={5}
+                    step={0.00001}
+                  />
+
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} mt={2}>
+                    <Button
+                      variant="outlined"
+                      onClick={saveHostJudgeScore}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying}
+                    >
+                      Save Score
+                    </Button>
+                    <Button
+                      variant="contained"
+                      onClick={lockHostJudgeScore}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying}
+                    >
+                      Lock In
+                    </Button>
+                  </Stack>
+                </CardContent>
+              </Card>
+            )}
+
             <Paper sx={{ mt: 3, p: 3 }}>
               <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
                 <Typography variant="h6" fontWeight={600}>
@@ -1368,11 +1544,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       <Typography variant="subtitle2" color="text.secondary">
                         Scoring Flow
                       </Typography>
-                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap">
+                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} flexWrap="wrap">
                         <Button
                           variant="contained"
                           color="primary"
-                          size="small"
+                          size="medium"
                           startIcon={
                             votingAction === 'start'
                               ? <CircularProgress size={16} color="inherit" />
@@ -1380,14 +1556,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={startDisabled}
                           onClick={handleStartVoting}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Start Voting
                         </Button>
                         <Button
                           variant="outlined"
                           color="warning"
-                          size="small"
+                          size="medium"
                           startIcon={
                             votingAction === 'cancel'
                               ? <CircularProgress size={16} color="inherit" />
@@ -1395,14 +1571,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={cancelDisabled}
                           onClick={handleCancelVoting}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Cancel
                         </Button>
                         <Button
-                          variant="outlined"
+                          variant="contained"
                           color="secondary"
-                          size="small"
+                          size="medium"
                           startIcon={
                             forceLockLoading
                               ? <CircularProgress size={16} color="inherit" />
@@ -1410,7 +1586,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={forceLockDisabled}
                           onClick={handleForceLock}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Force Lock All
                         </Button>
@@ -1421,11 +1597,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       <Typography variant="subtitle2" color="text.secondary">
                         Reveal Sequence
                       </Typography>
-                      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} flexWrap="wrap">
+                      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} flexWrap="wrap">
                         <Button
                           variant="contained"
                           color="secondary"
-                          size="small"
+                          size="medium"
                           startIcon={
                             votingAction === 'reveal-next'
                               ? <CircularProgress size={16} color="inherit" />
@@ -1433,14 +1609,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={revealNextDisabled}
                           onClick={handleRevealNext}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Reveal Next{nextJudgeName ? ` (${nextJudgeName})` : ''}
                         </Button>
                         <Button
                           variant="contained"
                           color="success"
-                          size="small"
+                          size="medium"
                           startIcon={
                             votingAction === 'reveal-average'
                               ? <CircularProgress size={16} color="inherit" />
@@ -1448,14 +1624,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={revealAverageDisabled}
                           onClick={handleRevealAverage}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Reveal Average
                         </Button>
                         <Button
                           variant="contained"
                           color="warning"
-                          size="small"
+                          size="medium"
                           startIcon={
                             votingAction === 'reveal-social'
                               ? <CircularProgress size={16} color="inherit" />
@@ -1463,14 +1639,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={revealSocialDisabled}
                           onClick={handleRevealSocial}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Reveal Social
                         </Button>
                         <Button
                           variant="contained"
                           color="primary"
-                          size="small"
+                          size="medium"
                           startIcon={
                             finalizeLoading
                               ? <CircularProgress size={16} color="inherit" />
@@ -1478,7 +1654,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           }
                           disabled={finalizeDisabled}
                           onClick={handleFinalizeScore}
-                          sx={{ pointerEvents: 'auto' }}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
                         >
                           Submit Final Score
                         </Button>
@@ -1592,222 +1768,89 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
             </Card>
           )}
 
-          {canManageRoles && (
-            <Card>
-              <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-                <Box
-                  sx={{
-                    display: 'flex',
-                    flexDirection: { xs: 'column', sm: 'row' },
-                    justifyContent: 'space-between',
-                    alignItems: { xs: 'flex-start', sm: 'center' },
-                    gap: 1.5
-                  }}
-                >
-                  <Box>
-                    <Typography variant="h6" fontWeight={600}>
-                      Access &amp; Roles
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Grant producers or hosts the ability to control the show. Owners and managers can edit this list.
-                    </Typography>
-                  </Box>
-                </Box>
+          {/* Access & Roles moved to bottom of column */}
 
-                {owners.length > 0 && (
-                  <Box>
-                    <Typography variant="caption" color="text.secondary">
-                      Channel owners &amp; managers
-                    </Typography>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
-                      {owners.map((owner) => {
-                        const name = owner.account?.displayName || owner.account?.username || owner.accountId;
-                        return (
-                          <Chip
-                            key={owner.id}
-                            label={`${name} • ${owner.role}`}
-                            size="small"
-                            color="default"
-                            variant="outlined"
-                          />
-                        );
-                      })}
-                    </Stack>
-                  </Box>
-                )}
+          {/* Top Eight */}
+          <Card>
+            <CardContent>
+              <Box display="flex" alignItems="center" gap={1.5} mb={2}>
+                <EmojiEvents color="secondary" />
+                <Typography variant="h6" fontWeight={600}>
+                  Top Eight
+                </Typography>
+                <Chip
+                  label={lastShuffleDate ? `${lastShuffle?.initiatedBy || 'host'} • ${lastShuffleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting shuffle'}
+                  size="small"
+                  color={lastShuffleDate ? 'secondary' : 'default'}
+                  variant={lastShuffleDate ? 'filled' : 'outlined'}
+                  sx={{ ml: 'auto' }}
+                />
+              </Box>
 
-                {/* Manager Controls */}
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                    Managers
+              {canOperatePlayback && (
+                <Box display="flex" alignItems="center" justifyContent="space-between" gap={2} mb={2}>
+                  <Typography variant="body2" color="text.secondary">
+                    {derivedTopEight.length
+                      ? 'Shuffle again to remix the Top 8 bracket.'
+                      : 'Trigger a shuffle to lock in tonight’s Top 8.'}
                   </Typography>
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 1 }}>
-                    <TextField
-                      label="Twitch username"
-                      value={newManagerUsername}
-                      onChange={(e) => setNewManagerUsername(e.target.value)}
-                      size="small"
-                      fullWidth
-                      disabled={managerSubmitting}
-                      autoComplete="off"
-                    />
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      disabled={managerSubmitting || !newManagerUsername.trim()}
-                      onClick={handleAddManager}
-                    >
-                      Add Manager
-                    </Button>
-                  </Stack>
-                  <Stack spacing={1}>
-                    {owners.filter((o) => o.role === 'MANAGER').length === 0 ? (
-                      <Typography variant="body2" color="text.secondary">
-                        No managers yet. Add a username to grant manager access.
-                      </Typography>
-                    ) : (
-                      owners
-                        .filter((o) => o.role === 'MANAGER')
-                        .map((mgr) => {
-                          const name = mgr.account?.displayName || mgr.account?.username || mgr.accountId;
-                          return (
-                            <Paper
-                              key={mgr.id}
-                              variant="outlined"
-                              sx={{ p: 1, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}
-                            >
-                              <Typography variant="body2">{name}</Typography>
-                              <Tooltip title="Remove manager">
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    color="error"
-                                    disabled={managerSubmitting}
-                                    onClick={() => handleRemoveManager(mgr.id)}
-                                  >
-                                    <DeleteIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                            </Paper>
-                          );
-                        })
-                    )}
-                  </Stack>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<Shuffle />}
+                    onClick={handleShuffle}
+                    disabled={shuffleLoading || !queue.length}
+                  >
+                    {shuffleLoading ? 'Shuffling…' : 'Shuffle'}
+                  </Button>
                 </Box>
+              )}
 
-                {rolesError && (
-                  <Alert severity="error" onClose={() => setRolesError(null)} sx={{ pointerEvents: 'auto' }}>
-                    {rolesError}
-                  </Alert>
-                )}
+              {shuffleError && (
+                <Alert severity="error" onClose={() => setShuffleError(null)} sx={{ mb: 2 }}>
+                  {shuffleError}
+                </Alert>
+              )}
 
-                <Box
-                  component="form"
-                  onSubmit={handleRoleFormSubmit}
-                  sx={{ pointerEvents: 'auto' }}
-                >
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-                    <TextField
-                      label="Twitch username"
-                      value={newRoleUsername}
-                      onChange={(event) => setNewRoleUsername(event.target.value)}
-                      size="small"
-                      fullWidth
-                      disabled={roleSubmitting}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      select
-                      label="Role"
-                      size="small"
-                      value={newRoleType}
-                      onChange={(event) => setNewRoleType(event.target.value)}
-                      sx={{ minWidth: { xs: '100%', sm: 160 } }}
-                      disabled={roleSubmitting}
-                    >
-                      {ROLE_OPTIONS.map((option) => (
-                        <MenuItem key={option.value} value={option.value}>
-                          {option.label}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                    <Button
-                      type="submit"
-                      variant="contained"
-                      color="primary"
-                      size="small"
-                      disabled={roleSubmitting || !newRoleUsername.trim()}
-                    >
-                      Assign
-                    </Button>
-                  </Stack>
-                </Box>
+              {shuffleFeedback && (
+                <Alert severity="success" onClose={() => setShuffleFeedback(null)} sx={{ mb: 2 }}>
+                  {shuffleFeedback}
+                </Alert>
+              )}
 
-                {rolesLoading ? (
-                  <LinearProgress />
-                ) : (
-                  <Stack spacing={1.2}>
-                    {roleAssignments.length === 0 ? (
-                      <Typography variant="body2" color="text.secondary">
-                        No additional show roles yet. Add a username to grant producer or host controls.
-                      </Typography>
-                    ) : (
-                      roleAssignments.map((assignment) => {
-                        const name = assignment.account?.displayName || assignment.account?.username || assignment.accountId;
-                        const roleLabel = ROLE_LABELS[assignment.role] || assignment.role;
-                        return (
-                          <Paper
-                            key={assignment.id}
-                            variant="outlined"
-                            sx={{
-                              p: 1.5,
-                              borderRadius: 2,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 1.5
-                            }}
-                          >
-                            <Box>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                                {name}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {roleLabel}{assignment.cup ? ` • ${assignment.cup.title}` : ''}
-                              </Typography>
-                            </Box>
-                            <Stack direction="row" spacing={1} alignItems="center" sx={{ pointerEvents: 'auto' }}>
-                              {assignment.cup && (
-                                <Chip
-                                  size="small"
-                                  label={assignment.cup.title}
-                                  variant="outlined"
-                                  color="default"
-                                />
-                              )}
-                              <Tooltip title="Remove role">
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    color="error"
-                                    disabled={roleSubmitting}
-                                    onClick={() => handleRemoveRole(assignment.id)}
-                                  >
-                                    <DeleteIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                            </Stack>
-                          </Paper>
-                        );
-                      })
-                    )}
-                  </Stack>
-                )}
-              </CardContent>
-            </Card>
-          )}
+              {derivedTopEight.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No Top 8 bracket yet. Once a shuffle is triggered the selected entries will appear here.
+                </Typography>
+              ) : (
+                <Grid container spacing={1.5}>
+                  {derivedTopEight.map((item, index) => (
+                    <Grid item xs={12} sm={6} key={item.id || index}>
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 1.5,
+                          borderRadius: 1.5,
+                          borderColor: alpha(theme.palette.secondary.main, 0.5),
+                          bgcolor: alpha(theme.palette.secondary.main, 0.07)
+                        }}
+                      >
+                        <Typography variant="overline" color="secondary" fontWeight={700}>
+                          #{index + 1}
+                        </Typography>
+                        <Typography variant="subtitle2" fontWeight={600} noWrap>
+                          {item.title || 'Untitled Video'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap>
+                          {getQueueAlias(item)}
+                        </Typography>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Cup Standings */}
           {currentStandings && currentStandings.length > 0 && (
@@ -1891,86 +1934,224 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                 </Card>
               )}
 
-              <Card>
-                <CardContent>
-                  <Box display="flex" alignItems="center" gap={1.5} mb={2}>
-                    <EmojiEvents color="secondary" />
-                    <Typography variant="h6" fontWeight={600}>
-                      Top Eight
-                    </Typography>
-                    <Chip
-                      label={lastShuffleDate ? `${lastShuffle?.initiatedBy || 'host'} • ${lastShuffleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting shuffle'}
-                      size="small"
-                      color={lastShuffleDate ? 'secondary' : 'default'}
-                      variant={lastShuffleDate ? 'filled' : 'outlined'}
-                      sx={{ ml: 'auto' }}
-                    />
-                  </Box>
+              
 
-                  {canOperatePlayback && (
-                    <Box display="flex" alignItems="center" justifyContent="space-between" gap={2} mb={2}>
-                      <Typography variant="body2" color="text.secondary">
-                        {derivedTopEight.length
-                          ? 'Shuffle again to remix the Top 8 bracket.'
-                          : 'Trigger a shuffle to lock in tonight’s Top 8.'}
-                      </Typography>
-                      <Button
-                        variant="contained"
-                        size="small"
-                        startIcon={<Shuffle />}
-                        onClick={handleShuffle}
-                        disabled={shuffleLoading || !queue.length}
-                      >
-                        {shuffleLoading ? 'Shuffling…' : 'Shuffle'}
-                      </Button>
+              {canManageRoles && (
+                <Card>
+                  <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'row' },
+                        justifyContent: 'space-between',
+                        alignItems: { xs: 'flex-start', sm: 'center' },
+                        gap: 1.5
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="h6" fontWeight={600}>
+                          Access &amp; Roles
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Grant producers or hosts the ability to control the show. Owners and managers can edit this list.
+                        </Typography>
+                      </Box>
                     </Box>
-                  )}
 
-                  {shuffleError && (
-                    <Alert severity="error" onClose={() => setShuffleError(null)} sx={{ mb: 2 }}>
-                      {shuffleError}
-                    </Alert>
-                  )}
+                    {owners.length > 0 && (
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Channel owners &amp; managers
+                        </Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                          {owners.map((owner) => {
+                            const name = owner.account?.displayName || owner.account?.username || owner.accountId;
+                            return (
+                              <Chip
+                                key={owner.id}
+                                label={`${name} • ${owner.role}`}
+                                size="small"
+                                color="default"
+                                variant="outlined"
+                              />
+                            );
+                          })}
+                        </Stack>
+                      </Box>
+                    )}
 
-                  {shuffleFeedback && (
-                    <Alert severity="success" onClose={() => setShuffleFeedback(null)} sx={{ mb: 2 }}>
-                      {shuffleFeedback}
-                    </Alert>
-                  )}
+                    {/* Manager Controls */}
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                        Managers
+                      </Typography>
+                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 1 }}>
+                        <TextField
+                          label="Twitch username"
+                          value={newManagerUsername}
+                          onChange={(e) => setNewManagerUsername(e.target.value)}
+                          size="small"
+                          fullWidth
+                          disabled={managerSubmitting}
+                          autoComplete="off"
+                        />
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          disabled={managerSubmitting || !newManagerUsername.trim()}
+                          onClick={handleAddManager}
+                        >
+                          Add Manager
+                        </Button>
+                      </Stack>
+                      <Stack spacing={1}>
+                        {owners.filter((o) => o.role === 'MANAGER').length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">
+                            No managers yet. Add a username to grant manager access.
+                          </Typography>
+                        ) : (
+                          owners
+                            .filter((o) => o.role === 'MANAGER')
+                            .map((mgr) => {
+                              const name = mgr.account?.displayName || mgr.account?.username || mgr.accountId;
+                              return (
+                                <Paper
+                                  key={mgr.id}
+                                  variant="outlined"
+                                  sx={{ p: 1, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}
+                                >
+                                  <Typography variant="body2">{name}</Typography>
+                                  <Tooltip title="Remove manager">
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        disabled={managerSubmitting}
+                                        onClick={() => handleRemoveManager(mgr.id)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                </Paper>
+                              );
+                            })
+                        )}
+                      </Stack>
+                    </Box>
 
-                  {derivedTopEight.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary">
-                      No Top 8 bracket yet. Once a shuffle is triggered the selected entries will appear here.
-                    </Typography>
-                  ) : (
-                    <Grid container spacing={1.5}>
-                      {derivedTopEight.map((item, index) => (
-                        <Grid item xs={12} sm={6} key={item.id || index}>
-                          <Paper
-                            variant="outlined"
-                            sx={{
-                              p: 1.5,
-                              borderRadius: 1.5,
-                              borderColor: alpha(theme.palette.secondary.main, 0.5),
-                              bgcolor: alpha(theme.palette.secondary.main, 0.07)
-                            }}
-                          >
-                            <Typography variant="overline" color="secondary" fontWeight={700}>
-                              #{index + 1}
-                            </Typography>
-                            <Typography variant="subtitle2" fontWeight={600} noWrap>
-                              {item.title || 'Untitled Video'}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>
-                              {getQueueAlias(item)}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      ))}
-                    </Grid>
-                  )}
-                </CardContent>
-              </Card>
+                    {rolesError && (
+                      <Alert severity="error" onClose={() => setRolesError(null)} sx={{ pointerEvents: 'auto' }}>
+                        {rolesError}
+                      </Alert>
+                    )}
+
+                    <Box
+                      component="form"
+                      onSubmit={handleRoleFormSubmit}
+                      sx={{ pointerEvents: 'auto' }}
+                    >
+                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                        <TextField
+                          label="Twitch username"
+                          value={newRoleUsername}
+                          onChange={(event) => setNewRoleUsername(event.target.value)}
+                          size="small"
+                          fullWidth
+                          disabled={roleSubmitting}
+                          autoComplete="off"
+                        />
+                        <TextField
+                          select
+                          label="Role"
+                          size="small"
+                          value={newRoleType}
+                          onChange={(event) => setNewRoleType(event.target.value)}
+                          sx={{ minWidth: { xs: '100%', sm: 160 } }}
+                          disabled={roleSubmitting}
+                        >
+                          {ROLE_OPTIONS.map((option) => (
+                            <MenuItem key={option.value} value={option.value}>
+                              {option.label}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                        <Button
+                          type="submit"
+                          variant="contained"
+                          color="primary"
+                          size="small"
+                          disabled={roleSubmitting || !newRoleUsername.trim()}
+                        >
+                          Assign
+                        </Button>
+                      </Stack>
+                    </Box>
+
+                    {rolesLoading ? (
+                      <LinearProgress />
+                    ) : (
+                      <Stack spacing={1.2}>
+                        {roleAssignments.length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">
+                            No additional show roles yet. Add a username to grant producer or host controls.
+                          </Typography>
+                        ) : (
+                          roleAssignments.map((assignment) => {
+                            const name = assignment.account?.displayName || assignment.account?.username || assignment.accountId;
+                            const roleLabel = ROLE_LABELS[assignment.role] || assignment.role;
+                            return (
+                              <Paper
+                                key={assignment.id}
+                                variant="outlined"
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 2,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 1.5
+                                }}
+                              >
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                                    {name}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {roleLabel}{assignment.cup ? ` • ${assignment.cup.title}` : ''}
+                                  </Typography>
+                                </Box>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ pointerEvents: 'auto' }}>
+                                  {assignment.cup && (
+                                    <Chip
+                                      size="small"
+                                      label={assignment.cup.title}
+                                      variant="outlined"
+                                      color="default"
+                                    />
+                                  )}
+                                  <Tooltip title="Remove role">
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        disabled={roleSubmitting}
+                                        onClick={() => handleRemoveRole(assignment.id)}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                </Stack>
+                              </Paper>
+                            );
+                          })
+                        )}
+                      </Stack>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardContent>
