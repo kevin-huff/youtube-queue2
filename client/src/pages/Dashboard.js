@@ -179,6 +179,15 @@ const Dashboard = () => {
   const [moderationLoading, setModerationLoading] = useState(false);
   const [moderationError, setModerationError] = useState(null);
   const [moderationActionId, setModerationActionId] = useState(null);
+  const [showAutoOnly, setShowAutoOnly] = useState(false);
+  const [playedInCupCount, setPlayedInCupCount] = useState(0);
+  // Summary stats for header and overview
+  const [statusCounts, setStatusCounts] = useState({});
+  const [warningsTotal, setWarningsTotal] = useState(0);
+  const [autoApprovedTotal, setAutoApprovedTotal] = useState(0);
+  const [topModerator, setTopModerator] = useState({ name: null, count: 0 });
+  // Deprecated: per-night count replaced by per-cup count
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [warningDialogOpen, setWarningDialogOpen] = useState(false);
   const [warningNote, setWarningNote] = useState('');
   const [warningTarget, setWarningTarget] = useState(null);
@@ -720,6 +729,13 @@ const Dashboard = () => {
     }
   }, [user]);
 
+  // Refresh status summary when channel changes
+  useEffect(() => {
+    if (!currentChannelId) return;
+    fetchStatusSummary();
+    fetchPlayedInActiveCup();
+  }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
+
   // Keep a ref of the currently selected channel id to avoid setState loops
   useEffect(() => {
     selectedChannelIdRef.current = channel?.id || null;
@@ -982,6 +998,79 @@ const Dashboard = () => {
   const moderationCountDisplay = moderationLoading ? '…' : warningCount;
   const warningActionInFlight = Boolean(warningTarget && moderationActionId === warningTarget.id);
   const warningNoteLength = warningNote.length;
+  const filteredModerationItems = useMemo(
+    () => (showAutoOnly
+      ? moderationItems.filter((item) => item.moderationStatus !== 'WARNING' && !item.moderatedBy)
+      : moderationItems
+    ),
+    [moderationItems, showAutoOnly]
+  );
+
+  const fetchStatusSummary = useCallback(async () => {
+    if (!currentChannelId) return;
+    try {
+      setSummaryLoading(true);
+      const response = await axios.get(`/api/channels/${currentChannelId}/submissions`, {
+        params: { status: 'ALL', limit: 'ALL', activeCupsOnly: true },
+        withCredentials: true
+      });
+      const list = Array.isArray(response?.data?.submissions) ? response.data.submissions : [];
+
+      const counts = {};
+      let warnings = 0;
+      let autoApproved = 0;
+      const modCounts = new Map();
+
+      for (const it of list) {
+        const s = String(it.status || 'UNKNOWN').toUpperCase();
+        counts[s] = (counts[s] || 0) + 1;
+        if (it.moderationStatus === 'WARNING') warnings += 1;
+        if (it.moderationStatus !== 'WARNING' && !it.moderatedBy) autoApproved += 1;
+        if (it.moderatedBy) {
+          const key = it.moderatedByDisplayName || it.moderatedBy;
+          modCounts.set(key, (modCounts.get(key) || 0) + 1);
+        }
+        // No-op: per-cup played count handled separately
+      }
+
+      let top = { name: null, count: 0 };
+      for (const [name, count] of modCounts.entries()) {
+        if (count > top.count) top = { name, count };
+      }
+
+      setStatusCounts(counts);
+      setWarningsTotal(warnings);
+      setAutoApprovedTotal(autoApproved);
+      setTopModerator(top);
+    } catch (err) {
+      console.warn('Failed to fetch summary:', err);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [currentChannelId]);
+
+  const fetchPlayedInActiveCup = useCallback(async () => {
+    if (!currentChannelId) return;
+    try {
+      const cupsRes = await axios.get(`/api/channels/${currentChannelId}/cups`, { withCredentials: true });
+      const cups = Array.isArray(cupsRes?.data?.cups) ? cupsRes.data.cups : [];
+      const activeCup = cups.find((c) => c.isActive) || cups[0];
+      if (!activeCup?.id) {
+        setPlayedInCupCount(0);
+        return;
+      }
+      const vidsRes = await axios.get(`/api/channels/${currentChannelId}/cups/${activeCup.id}/videos`, { withCredentials: true });
+      const videos = Array.isArray(vidsRes?.data?.videos) ? vidsRes.data.videos : [];
+      const count = videos.filter((v) => {
+        const s = String(v.status || '').toUpperCase();
+        return s === 'PLAYED' || s === 'SCORED';
+      }).length;
+      setPlayedInCupCount(count);
+    } catch (err) {
+      console.warn('Failed to compute played-in-cup count:', err);
+      setPlayedInCupCount(0);
+    }
+  }, [currentChannelId]);
 
   if (authLoading || loading) {
     return (
@@ -1027,26 +1116,59 @@ const Dashboard = () => {
           </Typography>
 
           {Array.isArray(channels) && channels.length > 0 && (
-            <Box mt={2} display="flex" alignItems="center" gap={2}>
-              <Typography variant="body2" color="text.secondary">Channel:</Typography>
-              <TextField
-                select
-                size="small"
-                value={currentChannelId || ''}
-                onChange={(e) => handleChannelSwitch(e.target.value)}
-                sx={{ minWidth: 220 }}
-              >
-                {channels.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>{c.displayName || c.id}</MenuItem>
-                ))}
-              </TextField>
-              {roleLabels.length > 0 && (
-                <Box display="flex" alignItems="center" gap={1}>
-                  {roleLabels.map((r) => (
-                    <Chip key={r} size="small" label={r} />
+            <Box mt={2}>
+              <Box display="flex" alignItems="center" gap={2}>
+                <Typography variant="body2" color="text.secondary">Channel:</Typography>
+                <TextField
+                  select
+                  size="small"
+                  value={currentChannelId || ''}
+                  onChange={(e) => handleChannelSwitch(e.target.value)}
+                  sx={{ minWidth: 220 }}
+                >
+                  {channels.map((c) => (
+                    <MenuItem key={c.id} value={c.id}>{c.displayName || c.id}</MenuItem>
                   ))}
-                </Box>
-              )}
+                </TextField>
+                {roleLabels.length > 0 && (
+                  <Box display="flex" alignItems="center" gap={1}>
+                    {roleLabels.map((r) => (
+                      <Chip key={r} size="small" label={r} />
+                    ))}
+                  </Box>
+                )}
+              </Box>
+
+              {/* Status counts under channel access */}
+              <Box mt={1.5} display="flex" alignItems="center" gap={1} flexWrap="wrap">
+                {summaryLoading && (
+                  <Skeleton variant="rectangular" width={240} height={28} sx={{ borderRadius: 1 }} />
+                )}
+                {!summaryLoading && (
+                  <>
+                    {Object.entries(statusCounts).filter(([, v]) => v > 0).map(([k, v]) => {
+                      const s = String(k).toUpperCase();
+                      const label = `${s.replace('_', ' ')}: ${v}`;
+                      let color = 'default';
+                      if (s === 'PENDING') color = 'warning';
+                      else if (s === 'APPROVED' || s === 'PLAYED' || s === 'SCORED') color = 'success';
+                      else if (s === 'PLAYING') color = 'info';
+                      else if (s === 'TOP_EIGHT') color = 'secondary';
+                      else if (s === 'REJECTED' || s === 'REMOVED' || s === 'ELIMINATED' || s === 'SKIPPED') color = 'error';
+                      return (
+                        <Chip key={s} size="small" color={color} variant={s === 'PENDING' ? 'filled' : 'outlined'} label={label} />
+                      );
+                    })}
+                    {warningsTotal > 0 && (
+                      <Chip size="small" color="warning" label={`WARNING: ${warningsTotal}`} />
+                    )}
+                    {autoApprovedTotal > 0 && (
+                      <Chip size="small" color="success" variant="outlined" label={`Auto‑approved: ${autoApprovedTotal}`} />
+                    )}
+                    <Chip size="small" variant="outlined" label={`Top Mod: ${topModerator.name || '—'}${topModerator.count ? ` (${topModerator.count})` : ''}`} />
+                  </>
+                )}
+              </Box>
             </Box>
           )}
         </Box>
@@ -1123,6 +1245,21 @@ const Dashboard = () => {
 
             {channel && (
               <>
+            {/* Played in active cup */}
+            <Card sx={{ mb: 2 }}>
+              <CardContent>
+                <Box display="flex" alignItems="center" justifyContent="space-between">
+                  <Box>
+                    <Typography color="text.secondary" variant="body2" gutterBottom>
+                      Videos Played This Cup
+                    </Typography>
+                    <Typography variant="h4" fontWeight={700}>
+                      {playedInCupCount}
+                    </Typography>
+                  </Box>
+                </Box>
+              </CardContent>
+            </Card>
             {/* Channel Header Card */}
             <Card sx={{ mb: 4 }}>
               <CardContent>
@@ -1813,6 +1950,14 @@ const Dashboard = () => {
                       color={warningCount ? 'warning' : 'default'}
                     />
                   </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <StatCard
+                      icon={<Person />}
+                      title="Top Moderator"
+                      value={topModerator.name ? `${topModerator.name} (${topModerator.count})` : '—'}
+                      color="secondary"
+                    />
+                  </Grid>
                 </Grid>
 
                 <Grid container spacing={3}>
@@ -1884,14 +2029,26 @@ const Dashboard = () => {
                               Flag videos with warnings or give them a thumbs up for the production team.
                             </Typography>
                           </Box>
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={loadPendingSubmissions}
-                            disabled={moderationLoading}
-                          >
-                            Refresh
-                          </Button>
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <FormControlLabel
+                              control={
+                                <Switch
+                                  size="small"
+                                  checked={showAutoOnly}
+                                  onChange={(e) => setShowAutoOnly(e.target.checked)}
+                                />
+                              }
+                              label="Only Auto‑approved"
+                            />
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              onClick={loadPendingSubmissions}
+                              disabled={moderationLoading}
+                            >
+                              Refresh
+                            </Button>
+                          </Box>
                         </Box>
 
                         {moderationError && (
@@ -1904,13 +2061,13 @@ const Dashboard = () => {
                           <Box display="flex" justifyContent="center" py={4}>
                             <CircularProgress size={32} />
                           </Box>
-                        ) : moderationItems.length === 0 ? (
+                        ) : filteredModerationItems.length === 0 ? (
                           <Alert severity="success">
                             No videos need attention right now. You&rsquo;re all caught up!
                           </Alert>
                         ) : (
                           <Stack spacing={2}>
-                            {moderationItems.map((item) => (
+                            {filteredModerationItems.map((item) => (
                               <Paper key={item.id} variant="outlined" sx={{ p: 2 }}>
                                 <Box display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={2}>
                                   <Box flex={1} minWidth={220}>
