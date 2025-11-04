@@ -1745,101 +1745,7 @@ const Dashboard = () => {
               </Grid>
             </Grid>
 
-            {/* Links & Actions */}
-            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-              Links & Actions
-            </Typography>
-            {(() => {
-              const base = window.location.origin.replace(/\/$/, '');
-              const rows = [
-                { icon: <LiveTv color="primary" />, label: 'Queue Page', desc: 'Public list of videos in queue', url: `${base}/channel/${channel.id}` },
-                { icon: <LiveTv color="primary" />, label: 'Viewer Hub', desc: 'Standings, queue, and cups', url: `${base}/viewer/${channel.id}` },
-                { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
-                { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
-                { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
-                { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
-              ];
-              return (
-                <Stack spacing={1.25} sx={{ mb: 4 }}>
-                  {rows.map((row, idx) => (
-                    <Box
-                      key={`${row.label}-${idx}`}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        border: '1px solid',
-                        borderColor: row.danger ? 'error.light' : 'divider',
-                        bgcolor: row.danger ? alpha(theme.palette.error.main, 0.05) : 'background.paper',
-                        borderRadius: 1.2,
-                        p: 1
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36 }}>{row.icon}</Box>
-                      <Box sx={{ minWidth: 220 }}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                          {row.label}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {row.desc}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ flex: 1 }}>
-                        {row.url && (
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontFamily: 'monospace',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              px: 1.25,
-                              py: 0.75,
-                              borderRadius: 1,
-                              bgcolor: 'action.hover'
-                            }}
-                            title={row.url}
-                          >
-                            {row.url}
-                          </Typography>
-                        )}
-                      </Box>
-                      <Stack direction="row" spacing={0.5}>
-                        {row.url && (
-                          <Tooltip title="Open in new tab">
-                            <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
-                              <OpenInNewIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        {row.url && (
-                          <Tooltip title="Copy URL">
-                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(row.url)}>
-                              <ContentCopy fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        {row.onOpen && (
-                          <Tooltip title={row.danger ? (clearingQueue ? 'Clearing…' : 'Clear Queue') : 'Open'}>
-                            <span>
-                              <Button
-                                size="small"
-                                variant={row.danger ? 'outlined' : 'contained'}
-                                color={row.danger ? 'error' : 'primary'}
-                                disabled={row.danger && clearingQueue}
-                                onClick={row.onOpen}
-                              >
-                                {row.danger ? (clearingQueue ? 'Clearing…' : 'Clear') : 'Open'}
-                              </Button>
-                            </span>
-                          </Tooltip>
-                        )}
-                      </Stack>
-                    </Box>
-                  ))}
-                </Stack>
-              );
-            })()}
+            
 
             {/* Cup KPIs */}
             {activeCup && (
@@ -2000,6 +1906,102 @@ const Dashboard = () => {
                 />
               </Grid>
             </Grid>
+
+            {/* Links & Actions (moved to bottom for cohesiveness) */}
+            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+              Links & Actions
+            </Typography>
+            {(() => {
+              const base = window.location.origin.replace(/\/$/, '');
+              const rows = [
+                { icon: <LiveTv color="primary" />, label: 'Queue Page', desc: 'Public list of videos in queue', url: `${base}/channel/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Viewer Hub', desc: 'Standings, queue, and cups', url: `${base}/viewer/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
+                { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
+                { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
+              ];
+              return (
+                <Stack spacing={1.25} sx={{ mb: 4 }}>
+                  {rows.map((row, idx) => (
+                    <Box
+                      key={`${row.label}-${idx}`}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        border: '1px solid',
+                        borderColor: row.danger ? 'error.light' : 'divider',
+                        bgcolor: row.danger ? alpha(theme.palette.error.main, 0.05) : 'background.paper',
+                        borderRadius: 1.2,
+                        p: 1
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36 }}>{row.icon}</Box>
+                      <Box sx={{ minWidth: 220 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          {row.label}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {row.desc}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ flex: 1 }}>
+                        {row.url && (
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: 'monospace',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              px: 1.25,
+                              py: 0.75,
+                              borderRadius: 1,
+                              bgcolor: 'action.hover'
+                            }}
+                            title={row.url}
+                          >
+                            {row.url}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Stack direction="row" spacing={0.5}>
+                        {row.url && (
+                          <Tooltip title="Open in new tab">
+                            <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
+                              <OpenInNewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.url && (
+                          <Tooltip title="Copy URL">
+                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(row.url)}>
+                              <ContentCopy fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.onOpen && (
+                          <Tooltip title={row.danger ? (clearingQueue ? 'Clearing…' : 'Clear Queue') : 'Open'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant={row.danger ? 'outlined' : 'contained'}
+                                color={row.danger ? 'error' : 'primary'}
+                                disabled={row.danger && clearingQueue}
+                                onClick={row.onOpen}
+                              >
+                                {row.danger ? (clearingQueue ? 'Clearing…' : 'Clear') : 'Open'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              );
+            })()}
 
             {/* removed limited access + auto-save indicator (in Settings tab now) */}
           </>
