@@ -719,7 +719,7 @@ class QueueService {
     return this.getVotingState();
   }
 
-  revealSocialScore() {
+  async revealSocialScore() {
     if (!this.votingState) {
       throw new Error('No voting session in progress');
     }
@@ -757,7 +757,188 @@ class QueueService {
     });
     this._broadcastVotingState('reveal-social');
 
+    // Also emit a standings preview so overlays match immediately at reveal time
+    try {
+      await this._emitStandingsPreviewForCurrentVoting();
+    } catch (err) {
+      logger.warn('Failed to emit standings preview after social reveal', { channelId: this.channelId, error: err });
+    }
+
     return this.getVotingState();
+  }
+
+  async _emitStandingsPreviewForCurrentVoting() {
+    try {
+      if (!this.votingState || !this.votingState.cupId) return;
+      const cupId = this.votingState.cupId;
+
+      // Load scored/played items for the cup
+      const queueItems = await this.db.queueItem.findMany({
+        where: {
+          channelId: this.channelId,
+          cupId,
+          status: { in: ['SCORED', 'PLAYED'] }
+        },
+        include: {
+          judgeScores: true,
+          submitter: { select: SUBMITTER_SELECT }
+        },
+        orderBy: [
+          { playedAt: 'asc' },
+          { createdAt: 'asc' }
+        ]
+      });
+
+      // Build previous-average map per item (last prior run of same videoId) across terminal history
+      const allTerminal = await this.db.queueItem.findMany({
+        where: {
+          channelId: this.channelId,
+          status: { in: ['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED'] }
+        },
+        include: { judgeScores: true },
+        orderBy: [
+          { playedAt: 'asc' },
+          { createdAt: 'asc' }
+        ]
+      });
+
+      const byVideo = new Map();
+      for (const item of allTerminal) {
+        const arr = byVideo.get(item.videoId) || [];
+        arr.push(item);
+        byVideo.set(item.videoId, arr);
+      }
+      const prevAvgByItemId = new Map();
+      for (const [videoId, items] of byVideo.entries()) {
+        const averages = items.map((it) => {
+          const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];
+          if (!scores.length) return null;
+          const total = scores.reduce((s, x) => s + Number(x.score), 0);
+          return total / scores.length;
+        });
+        for (let i = 1; i < items.length; i += 1) {
+          const prev = averages[i - 1];
+          if (typeof prev === 'number') {
+            prevAvgByItemId.set(items[i].id, Number(prev.toFixed(5)));
+          }
+        }
+      }
+
+      // Compute per-video averages from judge scores
+      const videos = queueItems.map((item) => {
+        const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
+        const judgeCount = judgeScores.length;
+        const submitterAlias = item.submitterAlias || null;
+        const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
+        if (!judgeCount) {
+          return {
+            queueItemId: item.id,
+            submitterUsername,
+            submitterAlias,
+            judgeCount: 0,
+            averageScore: null,
+            totalScore: null
+          };
+        }
+        const totalScore = judgeScores.reduce((sum, score) => sum + Number(score.score), 0);
+        const averageScore = totalScore / judgeCount;
+        return {
+          queueItemId: item.id,
+          submitterUsername,
+          submitterAlias,
+          judgeCount,
+          totalScore: Number(totalScore.toFixed(5)),
+          averageScore: Number(averageScore.toFixed(5))
+        };
+      });
+
+      // Apply duplicate penalty to historical videos
+      const penalizedVideos = videos.map((v) => {
+        const prev = prevAvgByItemId.get(v.queueItemId);
+        if (typeof v.averageScore === 'number' && typeof prev === 'number') {
+          if (!(v.averageScore > prev)) {
+            return { ...v, averageScore: 0, totalScore: 0 };
+          }
+        }
+        return v;
+      });
+
+      // Baseline C: mean of penalized video averages in the cup (fallback 3.4)
+      const DEFAULT_BASELINE = 3.4;
+      const scoredValues = penalizedVideos
+        .map((v) => (typeof v.averageScore === 'number' ? v.averageScore : null))
+        .filter((n) => typeof n === 'number');
+      const cupBaseline = scoredValues.length > 0
+        ? (scoredValues.reduce((s, n) => s + n, 0) / scoredValues.length)
+        : DEFAULT_BASELINE;
+
+      // Aggregate by submitter
+      const byUser = new Map();
+      penalizedVideos
+        .filter((v) => typeof v.averageScore === 'number')
+        .forEach((v) => {
+          const key = v.submitterUsername;
+          const existing = byUser.get(key) || { submitterUsername: key, submitterAlias: v.submitterAlias || null, scores: [], totalJudgeCount: 0 };
+          if (!existing.submitterAlias && v.submitterAlias) existing.submitterAlias = v.submitterAlias;
+          existing.scores.push(v.averageScore);
+          existing.totalJudgeCount += (v.judgeCount || 0);
+          byUser.set(key, existing);
+        });
+
+      // Add ephemeral current video to submitter’s scores using duplicate rule
+      try {
+        const identity = this.votingState.queueItem?.submitterUsername || this.votingState.queueItem?.publicSubmitterName || null;
+        const avgToBeat = this.votingState?.duplicate?.averageToBeat;
+        const avgNow = this.votingState?.computedAverage;
+        if (identity && typeof avgNow === 'number') {
+          const currentScore = (typeof avgToBeat === 'number' && !(avgNow > avgToBeat)) ? 0 : Number(avgNow.toFixed(5));
+          const entry = byUser.get(identity) || { submitterUsername: identity, submitterAlias: this.votingState.queueItem?.submitterAlias || null, scores: [], totalJudgeCount: 0 };
+          entry.scores.push(currentScore);
+          byUser.set(identity, entry);
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Compute shrunk top-5 standings
+      const K = 5;
+      const standings = Array.from(byUser.values())
+        .map((entry) => {
+          const sorted = entry.scores.slice().sort((a, b) => b - a);
+          const n = Math.min(sorted.length, K);
+          const sumTop = sorted.slice(0, n).reduce((s, x) => s + x, 0);
+          const padded = (sumTop + (K - n) * cupBaseline) / K;
+          const totalScore = entry.scores.reduce((s, x) => s + x, 0);
+          return {
+            submitterUsername: entry.submitterUsername,
+            submitterAlias: entry.submitterAlias || null,
+            totalScore: Number(totalScore.toFixed(5)),
+            averageScore: Number(padded.toFixed(5)),
+            judgeCount: entry.totalJudgeCount,
+            videoCount: entry.scores.length
+          };
+        })
+        .sort((a, b) => {
+          if ((b.averageScore ?? 0) !== (a.averageScore ?? 0)) return (b.averageScore ?? 0) - (a.averageScore ?? 0);
+          if ((b.videoCount || 0) !== (a.videoCount || 0)) return (b.videoCount || 0) - (a.videoCount || 0);
+          return (b.judgeCount || 0) - (a.judgeCount || 0);
+        })
+        .map((entry, index) => ({ ...entry, rank: index + 1 }));
+
+      // Cup metadata
+      const cup = await this.db.cup.findUnique({
+        where: { id: cupId, channelId: this.channelId },
+        select: { id: true, title: true, theme: true, status: true }
+      });
+
+      this.io.emit('cup:standings_preview', {
+        cupId,
+        standings,
+        cup
+      });
+    } catch (error) {
+      logger.warn('QueueService: failed to compute standings preview', { channelId: this.channelId, error });
+    }
   }
 
   completeVoting(options = {}) {
@@ -1947,7 +2128,9 @@ class QueueService {
     }
   }
 
-  async listSubmissions({ statuses = ['PENDING'], limit = 50, offset = 0, activeCupsOnly = false } = {}) {
+  // Note: Do NOT default `limit` here. When the API passes `limit: undefined`
+  // (e.g., for `limit=ALL`), we want to return all results without applying `take`.
+  async listSubmissions({ statuses = ['PENDING'], limit, offset = 0, activeCupsOnly = false } = {}) {
     try {
       const normalizedStatusesArr = Array.isArray(statuses) ? statuses : [statuses];
       const normalizedStatuses = (normalizedStatusesArr || [])

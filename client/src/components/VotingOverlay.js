@@ -301,14 +301,7 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
     : typeof votingState?.computedAverage === 'number'
       ? votingState.computedAverage
       : null;
-  const socialTarget = typeof votingState?.revealedSocial === 'number'
-    ? votingState.revealedSocial
-    : typeof votingState?.computedSocial === 'number'
-      ? votingState.computedSocial
-      : null;
-
   const animatedAverage = useAnimatedNumber(averageTarget, { duration: 720, precision: 5 });
-  const animatedSocial = useAnimatedNumber(socialTarget, { duration: 820, precision: 5 });
 
   // ── After hooks, early return if invalid
   if (!votingState) {
@@ -327,90 +320,48 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
     revealReady &&
     (votingState.queueItem?.submitterUsername || votingState.queueItem?.publicSubmitterName);
 
-  const finalScoreValue = typeof votingState.revealedSocial === 'number'
-    ? votingState.revealedSocial
-    : typeof votingState.computedSocial === 'number'
-      ? votingState.computedSocial
-      : typeof votingState.revealedAverage === 'number'
-        ? votingState.revealedAverage
-          : typeof votingState.computedAverage === 'number'
-            ? votingState.computedAverage
-            : null;
-
+  // Leaderboard parity: use the leaderboard social score from standings
   const showAverage = typeof votingState.revealedAverage === 'number';
   const showSocial = typeof votingState.revealedSocial === 'number';
-
-  const finalScoreDisplay = finalScoreValue !== null
-    ? finalScoreValue.toFixed(5)
-    : '—';
 
   const cupId = votingState.cupId || null;
   const standings = cupId && cupStandings ? cupStandings[cupId] : null;
 
+  const leaderboardSocialValue = (() => {
+    if (!Array.isArray(standings) || standings.length === 0) return null;
+    const identity = (votingState.queueItem?.submitterUsername
+      || votingState.queueItem?.publicSubmitterName
+      || '').toString().trim().toLowerCase();
+    if (!identity) return null;
+    const entry = standings.find((e) => (
+      (e.submitterUsername || e.publicSubmitterName || '')
+        .toString()
+        .trim()
+        .toLowerCase() === identity
+    ));
+    if (!entry) return null;
+    return typeof entry.averageScore === 'number' ? entry.averageScore : null;
+  })();
+
+  // Display to match leaderboard overlay (3 decimals)
+  const socialDisplayText = leaderboardSocialValue !== null
+    ? Number(leaderboardSocialValue).toFixed(5)
+    : '—';
+
   const projectedRank = (() => {
-    // Only show projected rank when social score is revealed
-    if (!showSocial) {
-      return null;
-    }
-
-    if (!Array.isArray(standings) || standings.length === 0) {
-      return null;
-    }
-
-    const identity = (revealName || alias || '').toString().trim();
-    if (!identity) {
-      return null;
-    }
-
-    const normalized = identity.toLowerCase();
-    const referenceScore = typeof finalScoreValue === 'number' ? finalScoreValue : null;
-    if (referenceScore === null) {
-      return null;
-    }
-
-    const entries = standings.map((entry) => {
-      if ((entry.submitterUsername || '').toLowerCase() === normalized) {
-        return {
-          ...entry,
-          averageScore: referenceScore
-        };
-      }
-      return entry;
-    });
-
-    if (!entries.some((entry) => (entry.submitterUsername || '').toLowerCase() === normalized)) {
-      entries.push({
-        submitterUsername: identity,
-        averageScore: referenceScore,
-        videoCount: 1
-      });
-    }
-
-    // Sort exactly like the leaderboard does
-    entries.sort((a, b) => {
-      // If both have rank property, use it
-      if (a.rank && b.rank) {
-        return a.rank - b.rank;
-      }
-      // Otherwise sort by averageScore (weighted average of all videos), not totalScore
-      const scoreA = (typeof a.averageScore === 'number' ? a.averageScore : 0);
-      const scoreB = (typeof b.averageScore === 'number' ? b.averageScore : 0);
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
-      // Tiebreaker: videoCount (descending)
-      return (b.videoCount || 0) - (a.videoCount || 0);
-    });
-
-    const index = entries.findIndex((entry) => (entry.submitterUsername || '').toLowerCase() === normalized);
-    if (index === -1) {
-      return null;
-    }
-
-    return {
-      position: index + 1,
-      total: entries.length
-    };
+    // Show current leaderboard rank (not projection) to avoid mismatch
+    if (!showSocial) return null;
+    if (!Array.isArray(standings) || standings.length === 0) return null;
+    const identity = (revealName || alias || '').toString().trim().toLowerCase();
+    if (!identity) return null;
+    const index = standings.findIndex((entry) => (
+      (entry.submitterUsername || entry.publicSubmitterName || '')
+        .toString()
+        .trim()
+        .toLowerCase() === identity
+    ));
+    if (index === -1) return null;
+    return { position: index + 1, total: standings.length };
   })();
 
   const formatScore = (value) => (typeof value === 'number' ? value.toFixed(5) : '—');
@@ -990,7 +941,7 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                 <Stack direction="row" spacing={1.4} alignItems="center" justifyContent="space-between">
                   <Stack direction="row" spacing={1.2} alignItems="center">
                     <EqualizerIcon sx={{ color: '#ffd166' }} />
-                    <Typography sx={{ fontWeight: 700, letterSpacing: 1.4 }}>Final Social Score</Typography>
+                    <Typography sx={{ fontWeight: 700, letterSpacing: 1.4 }}>Social Score</Typography>
                   </Stack>
                   <Stack direction="row" spacing={1.6} alignItems="center">
                     <Typography
@@ -1001,17 +952,17 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
                         color: '#fff4dc'
                       }}
                     >
-                      {finalScoreDisplay}
+                      {socialDisplayText}
                     </Typography>
                     <StarRating
-                      value={finalScoreValue}
+                      value={leaderboardSocialValue}
                       size={38}
                       glow
                     />
                   </Stack>
                 </Stack>
                 <Typography variant="caption" sx={{ color: alpha('#ffffff', 0.74) }}>
-                  Final weighted score ready.
+                  Matches leaderboard overlay.
                 </Typography>
               </Stack>
             </Paper>

@@ -55,7 +55,7 @@ const formatScore = (value) => {
   if (Number.isNaN(numeric)) {
     return '—';
   }
-  return numeric.toFixed(3);
+  return numeric.toFixed(5);
 };
 
 const getRankKey = (entry, index) => entry?.rank ?? index + 1;

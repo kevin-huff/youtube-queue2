@@ -218,6 +218,23 @@ export const SocketProvider = ({ children }) => {
         return prev;
       }
 
+    deriveTopEight(next);
+    return next;
+  });
+  }, [deriveTopEight]);
+
+  // Handle status changes; remove from queue on terminal statuses
+  const handleQueueItemStatus = useCallback(({ id, status, previousStatus }) => {
+    if (!id) return;
+    const terminal = ['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED'];
+    setQueue((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      if (terminal.includes(status)) {
+        const next = prev.filter((item) => item.id !== id);
+        deriveTopEight(next);
+        return next;
+      }
+      const next = prev.map((item) => (item.id === id ? { ...item, status } : item));
       deriveTopEight(next);
       return next;
     });
@@ -415,6 +432,7 @@ export const SocketProvider = ({ children }) => {
     socket.on('queue:video_added', handleQueueVideoAdded);
     socket.on('queue:video_removed', handleQueueVideoRemoved);
     socket.on('queue:item_updated', handleQueueItemUpdated);
+    socket.on('queue:item_status', handleQueueItemStatus);
     socket.on('queue:status_changed', handleQueueStatusChanged);
     socket.on('queue:now_playing', handleQueueNowPlaying);
     socket.on('queue:cleared', () => {
@@ -438,6 +456,8 @@ export const SocketProvider = ({ children }) => {
       }
     });
     socket.on('cup:standings_updated', handleCupStandingsUpdated);
+    // Preview standings during social reveal so overlays match immediately
+    socket.on('cup:standings_preview', handleCupStandingsUpdated);
     socket.on('voting:update', handleVotingUpdate);
     socket.on('voting:ended', handleVotingEnded);
 
@@ -462,6 +482,7 @@ export const SocketProvider = ({ children }) => {
     handleQueueVideoAdded,
     handleQueueVideoRemoved,
     handleQueueItemUpdated,
+    handleQueueItemStatus,
     handleQueueStatusChanged,
     handleQueueNowPlaying,
     handleSettingUpdated,

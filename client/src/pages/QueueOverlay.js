@@ -934,8 +934,16 @@ const ringLayout = useMemo(() => {
                               linear-gradient(160deg, ${alpha('#102742', 0.92)}, ${alpha('#091025', 0.78)}),
                               ${alpha('#0c162f', 0.85)}
                             `,
-                            border: `1px solid ${isVip ? alpha('#ffc107', 0.6) : alpha('#5ce1ff', 0.35)}`,
-                            boxShadow: '0 28px 58px -22px rgba(38, 142, 255, 0.45)',
+                            border: isVip
+                              ? `2px solid ${alpha('#ffd54f', 0.9)}`
+                              : `1px solid ${alpha('#5ce1ff', 0.35)}`,
+                            boxShadow: isVip
+                              ? `
+                                  0 0 0 2px ${alpha('#ffd54f', 0.28)},
+                                  0 22px 48px -18px ${alpha('#ffc107', 0.55)},
+                                  0 8px 16px -10px ${alpha('#ffc107', 0.35)}
+                                `
+                              : '0 28px 58px -22px rgba(38, 142, 255, 0.45)',
                             transformStyle: 'preserve-3d',
                             transform: `scale(${cardScale})`,
                             filter: 'brightness(1)',
@@ -983,8 +991,8 @@ const ringLayout = useMemo(() => {
                                   position: 'absolute',
                                   top: 8,
                                   left: 8,
-                                  bgcolor: alpha('#ffc107', 0.3),
-                                  color: '#ffd54f',
+                                  bgcolor: alpha('#ffc107', 0.4),
+                                  color: '#ffeb7a',
                                   fontWeight: 700,
                                   borderRadius: '999px',
                                   letterSpacing: 1
@@ -1202,11 +1210,13 @@ const ringLayout = useMemo(() => {
                       linear-gradient(150deg, ${alpha('#10162d', 0.86)}, ${alpha('#090b18', 0.97)}),
                       radial-gradient(circle at top left, ${alpha('#55d8ff', 0.24)}, transparent 48%)
                     `,
-                    border: `1px solid ${isVip ? alpha('#ffc107', 0.6) : alpha('#5ce1ff', isCurrent ? 0.65 : 0.2)}`,
+                    border: isVip
+                      ? `2px solid ${alpha('#ffd54f', 0.9)}`
+                      : `1px solid ${alpha('#5ce1ff', isCurrent ? 0.65 : 0.2)}`,
                     boxShadow: isCurrent
                       ? '0 28px 58px -24px rgba(86, 226, 255, 0.55)'
                       : (isVip
-                        ? '0 28px 58px -24px rgba(255, 193, 7, 0.45)'
+                        ? `0 0 0 2px ${alpha('#ffd54f', 0.28)}, 0 28px 58px -24px ${alpha('#ffc107', 0.6)}, 0 10px 20px -12px ${alpha('#ffc107', 0.4)}`
                         : '0 20px 46px -30px rgba(6, 12, 38, 0.9)'),
                     overflow: 'hidden',
                     transformStyle: 'preserve-3d',

@@ -1656,6 +1656,7 @@ router.get('/channels/:channelId/cups/:cupId/judges',
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const judgeService = channelManager.getJudgeService(normalizedChannelId);
       const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
 
       if (!judgeService) {
         return res.status(500).json({ error: 'Judge service not available' });
@@ -2700,7 +2701,7 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/voting/reveal-social
         return res.status(400).json({ error: 'No active voting session for this queue item' });
       }
 
-      const votingState = queueService.revealSocialScore();
+      const votingState = await queueService.revealSocialScore();
       res.json({ voting: votingState });
     } catch (error) {
       logger.error('Error revealing social score:', error);
@@ -2882,6 +2883,23 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
           videos,
           cup
         });
+      }
+
+      // Ensure overlays/clients remove the item from the active queue immediately
+      try {
+        // Remove from VIP list if present
+        await queueService._removeVipEntry(itemId);
+      } catch (_) {}
+      try {
+        // Notify clients about removal and then emit a reordered queue snapshot
+        queueService.io.emit('queue:video_removed', { id: itemId });
+      } catch (e) {
+        logger.warn('Failed to emit queue:video_removed after finalize', { channelId: normalizedChannelId, itemId, error: e });
+      }
+      try {
+        await queueService.reorderQueue();
+      } catch (e) {
+        logger.warn('Failed to reorder queue after finalize', { channelId: normalizedChannelId, itemId, error: e });
       }
 
       const enrichedItem = {

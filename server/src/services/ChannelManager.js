@@ -79,83 +79,10 @@ const buildCupScoreData = (queueItems) => {
     };
   });
 
-  const standingsAccumulator = new Map();
-
-  videos
-    .filter((video) => typeof video.averageScore === 'number')
-    .forEach((video) => {
-      const existing = standingsAccumulator.get(video.submitterUsername) || {
-        submitterUsername: video.submitterUsername,
-        submitterAlias: video.submitterAlias || null,
-        videoScores: [], // Store all video scores
-        totalJudgeCount: 0,
-        videoCount: 0
-      };
-
-      if (!existing.submitterAlias && video.submitterAlias) {
-        existing.submitterAlias = video.submitterAlias;
-      }
-
-      existing.videoScores.push(video.averageScore);
-      existing.totalJudgeCount += video.judgeCount;
-      existing.videoCount += 1;
-
-      standingsAccumulator.set(video.submitterUsername, existing);
-    });
-
-  // Helper function to calculate median
-  const calculateMedian = (scores) => {
-    if (scores.length === 0) return null;
-    const sorted = [...scores].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 0) {
-      return (sorted[mid - 1] + sorted[mid]) / 2;
-    }
-    return sorted[mid];
-  };
-
-  const standings = Array.from(standingsAccumulator.values())
-    .map((entry) => {
-      // Take best N (up to 5) videos by score
-      const bestScores = [...entry.videoScores]
-        .sort((a, b) => b - a)
-        .slice(0, 5);
-      
-      // Calculate median of best scores as social score
-      const socialScore = calculateMedian(bestScores);
-      
-      // Keep totalScore for compatibility (sum of all videos)
-      const totalScore = entry.videoScores.reduce((sum, score) => sum + score, 0);
-
-      return {
-        submitterUsername: entry.submitterUsername,
-        submitterAlias: entry.submitterAlias || null,
-        totalScore: Number(totalScore.toFixed(5)),
-        averageScore: socialScore !== null ? Number(socialScore.toFixed(5)) : null,
-        judgeCount: entry.totalJudgeCount,
-        videoCount: entry.videoCount
-      };
-    })
-    .sort((a, b) => {
-      // Sort by averageScore (which is now the median of best 5)
-      if (b.averageScore !== a.averageScore) {
-        return (b.averageScore ?? 0) - (a.averageScore ?? 0);
-      }
-      // Tiebreaker: more videos wins
-      if (b.videoCount !== a.videoCount) {
-        return b.videoCount - a.videoCount;
-      }
-      // Final tiebreaker: more total judge votes
-      return (b.judgeCount ?? 0) - (a.judgeCount ?? 0);
-    })
-    .map((entry, index) => ({
-      ...entry,
-      rank: index + 1
-    }));
-
+  // Initial return uses only videos; standings are built after duplicate penalties
   return {
     videos,
-    standings
+    standings: []
   };
 };
 
@@ -368,7 +295,7 @@ class ChannelManager {
       })
     ]);
 
-    const { videos, standings } = buildCupScoreData(queueItems);
+    const { videos } = buildCupScoreData(queueItems);
 
     // Build previous-average map per item (last prior run of same videoId)
     const byVideo = new Map();
@@ -405,10 +332,64 @@ class ChannelManager {
       return v;
     });
 
+    // Build standings using shrunk top-K with cup baseline
+    const DEFAULT_BASELINE = 3.4;
+    const K = 5;
+    const scoredValues = penalizedVideos
+      .map((v) => (typeof v.averageScore === 'number' ? v.averageScore : null))
+      .filter((n) => typeof n === 'number');
+    const cupBaseline = scoredValues.length > 0
+      ? (scoredValues.reduce((s, n) => s + n, 0) / scoredValues.length)
+      : DEFAULT_BASELINE;
+
+    const byUser = new Map();
+    penalizedVideos
+      .filter((v) => typeof v.averageScore === 'number')
+      .forEach((v) => {
+        const key = v.submitterUsername;
+        const existing = byUser.get(key) || {
+          submitterUsername: key,
+          submitterAlias: v.submitterAlias || null,
+          scores: [],
+          totalJudgeCount: 0
+        };
+        if (!existing.submitterAlias && v.submitterAlias) {
+          existing.submitterAlias = v.submitterAlias;
+        }
+        existing.scores.push(v.averageScore);
+        existing.totalJudgeCount += (v.judgeCount || 0);
+        byUser.set(key, existing);
+      });
+
+    const standings = Array.from(byUser.values())
+      .map((entry) => {
+        const sorted = entry.scores.slice().sort((a, b) => b - a);
+        const n = Math.min(sorted.length, K);
+        const sumTop = sorted.slice(0, n).reduce((s, x) => s + x, 0);
+        const padded = (sumTop + (K - n) * cupBaseline) / K;
+        const totalScore = entry.scores.reduce((s, x) => s + x, 0);
+        return {
+          submitterUsername: entry.submitterUsername,
+          submitterAlias: entry.submitterAlias || null,
+          totalScore: Number(totalScore.toFixed(5)),
+          averageScore: Number(padded.toFixed(5)),
+          judgeCount: entry.totalJudgeCount,
+          videoCount: entry.scores.length
+        };
+      })
+      .sort((a, b) => {
+        if ((b.averageScore ?? 0) !== (a.averageScore ?? 0)) {
+          return (b.averageScore ?? 0) - (a.averageScore ?? 0);
+        }
+        if ((b.videoCount || 0) !== (a.videoCount || 0)) {
+          return (b.videoCount || 0) - (a.videoCount || 0);
+        }
+        return (b.judgeCount || 0) - (a.judgeCount || 0);
+      })
+      .map((entry, index) => ({ ...entry, rank: index + 1 }));
+
     await this.prisma.$transaction([
-      this.prisma.cupStanding.deleteMany({
-        where: { cupId }
-      }),
+      this.prisma.cupStanding.deleteMany({ where: { cupId } }),
       ...standings.map((standing) => this.prisma.cupStanding.create({
         data: {
           cupId,

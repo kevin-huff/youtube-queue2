@@ -12,6 +12,11 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
+    "three": "^0.160.0",
+    "@react-three/fiber": "^8.15.17",
+    "@react-three/drei": "^9.110.5",
+    "@react-three/postprocessing": "^2.15.11",
+    "postprocessing": "^6.35.3",
     "react-scripts": "5.0.1",
     "socket.io-client": "^4.7.4",
     "web-vitals": "^3.5.0"

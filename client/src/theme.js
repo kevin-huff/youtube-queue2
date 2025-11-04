@@ -13,10 +13,18 @@ const theme = createTheme({
       light: '#33f7a8',
       dark: '#00c474',
     },
+    // Bold neon accent palette for immersive visuals
+    neon: {
+      pink: '#ff1cf7',
+      blue: '#00f0ff',
+      purple: '#8a2be2',
+      magenta: '#ff4dff',
+      cyan: '#00e6ff'
+    },
     background: {
-      default: '#0e0e10', // Twitch dark background
-      paper: '#18181b',
-      elevated: '#1f1f23',
+      default: '#0b0b0d', // Deeper, inky dark
+      paper: '#111114',
+      elevated: '#16161a',
     },
     text: {
       primary: '#efeff1',
@@ -35,21 +43,27 @@ const theme = createTheme({
       main: '#4fc3f7',
     },
     divider: 'rgba(255, 255, 255, 0.08)',
+    // Decorative gradients used across the app
+    gradients: {
+      primary: 'linear-gradient(135deg, #A21CFD 0%, #00F0FF 100%)',
+      aurora: 'linear-gradient(135deg, rgba(162,28,253,0.15) 0%, rgba(0,240,255,0.15) 100%)',
+      surface: 'radial-gradient(1200px 600px at 80% -20%, rgba(162,28,253,0.15) 0%, rgba(0,0,0,0) 60%), radial-gradient(900px 500px at -10% 120%, rgba(0,240,255,0.12) 0%, rgba(0,0,0,0) 60%)'
+    },
   },
   typography: {
     fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
     h1: {
-      fontSize: '2.5rem',
+      fontSize: '3.25rem',
       fontWeight: 700,
       letterSpacing: '-0.02em',
     },
     h2: {
-      fontSize: '2rem',
+      fontSize: '2.25rem',
       fontWeight: 600,
       letterSpacing: '-0.01em',
     },
     h3: {
-      fontSize: '1.5rem',
+      fontSize: '1.75rem',
       fontWeight: 600,
     },
     h4: {
