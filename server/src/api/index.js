@@ -676,6 +676,31 @@ router.get('/public/submitters/:username', async (req, res) => {
       });
     }
 
+    // Prepare cup baselines (mean score per cup) for social score calculation
+    const cupIdSet = new Set(items.filter((i) => i.cup).map((i) => i.cup.id));
+    const cupIdsForBaseline = Array.from(cupIdSet.values());
+    const DEFAULT_SOCIAL_MIN_VOTES = 3;
+    const DEFAULT_SOCIAL_GLOBAL_MEAN = 3.4;
+    let cupBaselines = new Map();
+    if (cupIdsForBaseline.length > 0) {
+      try {
+        const grouped = await prisma.judgeScore.groupBy({
+          by: ['cupId'],
+          where: { cupId: { in: cupIdsForBaseline } },
+          _avg: { score: true },
+          _count: { score: true }
+        });
+        cupBaselines = new Map(
+          grouped.map((g) => [g.cupId, {
+            meanScore: Number((g._avg?.score ?? DEFAULT_SOCIAL_GLOBAL_MEAN).toFixed(5)),
+            totalVotes: g._count?.score ?? 0
+          }])
+        );
+      } catch (_) {
+        cupBaselines = new Map();
+      }
+    }
+
     // Group items by cup
     const byCup = new Map();
     for (const item of items) {
@@ -703,6 +728,20 @@ router.get('/public/submitters/:username', async (req, res) => {
         averageScore = Number((sum / judgeCount).toFixed(5));
       }
 
+      // Compute social score using cup baseline
+      let socialScore = null;
+      if (judgeCount > 0 && typeof averageScore === 'number') {
+        const baseline = cupBaselines.get(item.cup.id) || { meanScore: DEFAULT_SOCIAL_GLOBAL_MEAN };
+        const m = DEFAULT_SOCIAL_MIN_VOTES;
+        const v = judgeCount;
+        const C = typeof baseline.meanScore === 'number' ? baseline.meanScore : DEFAULT_SOCIAL_GLOBAL_MEAN;
+        const divisor = v + m;
+        if (divisor > 0) {
+          const weighted = ((v / divisor) * averageScore) + ((m / divisor) * C);
+          socialScore = Number(weighted.toFixed(5));
+        }
+      }
+
       const videoPayload = {
         queueItemId: item.id,
         videoId: item.videoId,
@@ -715,6 +754,7 @@ router.get('/public/submitters/:username', async (req, res) => {
         judgeCount,
         totalScore,
         averageScore,
+        socialScore,
         judgeScores: judgeScores.map((score) => ({
           id: score.id,
           score: Number(score.score),

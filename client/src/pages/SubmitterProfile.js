@@ -106,6 +106,23 @@ export default function SubmitterProfile() {
       <Box sx={{ position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0.7 }}>
         <Box sx={{ position: 'absolute', top: -200, right: -150, width: 520, height: 520, borderRadius: '50%', filter: 'blur(80px)', background: `radial-gradient(circle, ${alpha(theme.palette.neon.pink, 0.25)} 0%, transparent 60%)` }} />
         <Box sx={{ position: 'absolute', bottom: -220, left: -220, width: 640, height: 640, borderRadius: '50%', filter: 'blur(90px)', background: `radial-gradient(circle, ${alpha(theme.palette.neon.blue, 0.18)} 0%, transparent 60%)` }} />
+        {/* Subtle neon dot grid to differentiate from home */}
+        <Box sx={{
+          position: 'absolute', inset: 0,
+          backgroundImage: `radial-gradient(${alpha(theme.palette.neon.blue, 0.08)} 1px, transparent 1px), radial-gradient(${alpha(theme.palette.neon.pink, 0.06)} 1px, transparent 1px)`,
+          backgroundSize: '24px 24px, 24px 24px',
+          backgroundPosition: '0 0, 12px 12px',
+          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,0.8), rgba(0,0,0,0.2) 40%, rgba(0,0,0,0.8))'
+        }} />
+        {/* Diagonal light beam */}
+        <Box sx={{
+          position: 'absolute',
+          top: '10%', left: '-10%',
+          width: '140%', height: 120,
+          transform: 'rotate(-8deg)',
+          background: `linear-gradient(90deg, transparent, ${alpha(theme.palette.neon.purple, 0.25)}, transparent)`,
+          filter: 'blur(30px)'
+        }} />
       </Box>
 
       <Container maxWidth="lg" sx={{ py: 4, position: 'relative', zIndex: 1 }}>
@@ -229,7 +246,7 @@ export default function SubmitterProfile() {
                                   {v.playedAt ? `Played ${formatDate(v.playedAt)}` : `Submitted ${formatDate(v.createdAt)}`}
                                 </Typography>
                                 <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                                  <Chip size="small" label={`Avg ${round(v.averageScore || 0, 2)}`} sx={{ bgcolor: alpha(theme.palette.neon.blue, 0.12), border: `1px solid ${alpha(theme.palette.neon.blue, 0.35)}`, color: theme.palette.neon.blue }} variant="outlined" />
+                                  <Chip size="small" label={`Social ${round(v.socialScore || v.averageScore || 0, 2)}`} sx={{ bgcolor: alpha(theme.palette.neon.blue, 0.12), border: `1px solid ${alpha(theme.palette.neon.blue, 0.35)}`, color: theme.palette.neon.blue }} variant="outlined" />
                                   <Chip size="small" label={`${v.judgeCount} judges`} sx={{ bgcolor: alpha(theme.palette.neon.pink, 0.12), border: `1px solid ${alpha(theme.palette.neon.pink, 0.35)}`, color: theme.palette.neon.pink }} variant="outlined" />
                                 </Stack>
 
