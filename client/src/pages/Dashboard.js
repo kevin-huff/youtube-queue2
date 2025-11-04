@@ -169,13 +169,13 @@ const StatusDistribution = ({ counts = {}, selected = 'ALL', onSelect }) => {
     PENDING: { label: 'Pending', color: theme.palette.warning.main, filterable: true },
     PLAYING: { label: 'Playing', color: theme.palette.info.main, filterable: true },
     APPROVED: { label: 'Approved', color: theme.palette.success.main, filterable: true },
-    TOP_EIGHT: { label: 'Top 8', color: theme.palette.secondary.main, filterable: true },
-    SCORED: { label: 'Scored', color: theme.palette.success.light, filterable: false },
-    PLAYED: { label: 'Played', color: theme.palette.success.dark, filterable: false },
+    TOP_EIGHT: { label: 'Top 8', color: theme.palette.neon.purple, filterable: true },
+    SCORED: { label: 'Scored', color: theme.palette.primary.main, filterable: false },
+    PLAYED: { label: 'Played', color: theme.palette.neon.blue, filterable: false },
     REJECTED: { label: 'Rejected', color: theme.palette.error.main, filterable: false },
-    SKIPPED: { label: 'Skipped', color: theme.palette.error.main, filterable: false },
-    REMOVED: { label: 'Removed', color: theme.palette.error.main, filterable: false },
-    ELIMINATED: { label: 'Eliminated', color: theme.palette.error.main, filterable: false }
+    SKIPPED: { label: 'Skipped', color: alpha(theme.palette.warning.main, 0.5), filterable: false },
+    REMOVED: { label: 'Removed', color: theme.palette.grey[600], filterable: false },
+    ELIMINATED: { label: 'Eliminated', color: theme.palette.neon.pink, filterable: false }
   };
 
   const entries = ORDER
@@ -268,7 +268,8 @@ const Dashboard = () => {
   const [moderationActionId, setModerationActionId] = useState(null);
   const [showAutoOnly, setShowAutoOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [playedInCupCount, setPlayedInCupCount] = useState(0);
+  const [scoredInCupCount, setScoredInCupCount] = useState(0);
+  const [unmoderatedAutoApprovedCount, setUnmoderatedAutoApprovedCount] = useState(0);
   // Summary stats for header and overview
   const [statusCounts, setStatusCounts] = useState({});
   const [warningsTotal, setWarningsTotal] = useState(0);
@@ -1145,19 +1146,27 @@ const Dashboard = () => {
       const cups = Array.isArray(cupsRes?.data?.cups) ? cupsRes.data.cups : [];
       const activeCup = cups.find((c) => c.isActive) || cups[0];
       if (!activeCup?.id) {
-        setPlayedInCupCount(0);
+        setScoredInCupCount(0);
+        setUnmoderatedAutoApprovedCount(0);
         return;
       }
       const vidsRes = await axios.get(`/api/channels/${currentChannelId}/cups/${activeCup.id}/videos`, { withCredentials: true });
       const videos = Array.isArray(vidsRes?.data?.videos) ? vidsRes.data.videos : [];
-      const count = videos.filter((v) => {
+      const TERMINAL = new Set(['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED']);
+      let scored = 0;
+      let unmoderated = 0;
+      for (const v of videos) {
         const s = String(v.status || '').toUpperCase();
-        return s === 'PLAYED' || s === 'SCORED';
-      }).length;
-      setPlayedInCupCount(count);
+        if (s === 'SCORED') scored += 1;
+        const autoApproved = v.moderationStatus !== 'WARNING' && !v.moderatedBy;
+        if (autoApproved && !TERMINAL.has(s)) unmoderated += 1;
+      }
+      setScoredInCupCount(scored);
+      setUnmoderatedAutoApprovedCount(unmoderated);
     } catch (err) {
       console.warn('Failed to compute played-in-cup count:', err);
-      setPlayedInCupCount(0);
+      setScoredInCupCount(0);
+      setUnmoderatedAutoApprovedCount(0);
     }
   }, [currentChannelId]);
 
@@ -2012,9 +2021,17 @@ const Dashboard = () => {
                   <Grid item xs={12} sm={6} md={4}>
                     <StatCard
                       icon={<VideoLibrary />}
-                      title="Played This Cup"
-                      value={playedInCupCount}
+                      title="Scored This Cup"
+                      value={scoredInCupCount}
                       color="secondary"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <StatCard
+                      icon={<Timer />}
+                      title="Unmoderated"
+                      value={unmoderatedAutoApprovedCount}
+                      color="info"
                     />
                   </Grid>
                 </Grid>
