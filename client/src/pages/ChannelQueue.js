@@ -121,6 +121,7 @@ const QueueItem = ({
   const theme = useTheme();
   const showWarning = video.moderationStatus === 'WARNING';
   const showApproval = video.moderationStatus !== 'WARNING' && Boolean(video.moderatedBy);
+  const showAutoApproval = video.moderationStatus !== 'WARNING' && !video.moderatedBy;
 
   const highlightColor = isPlaying
     ? theme.palette.primary.main
@@ -213,7 +214,15 @@ const QueueItem = ({
                   icon={<CheckCircle sx={{ fontSize: 16 }} />}
                   label="Cleared"
                 />
-      )}
+              )}
+              {showAutoApproval && (
+                <Chip
+                  size="small"
+                  color="success"
+                  icon={<CheckCircle sx={{ fontSize: 16 }} />}
+                  label="Auto‑cleared"
+                />
+              )}
             </Box>
 
             {showWarning && (
@@ -245,6 +254,11 @@ const QueueItem = ({
                 Approved by {video.moderatedByDisplayName || video.moderatedBy}
                 {video.moderatedAt ? ` — ${formatModerationTimestamp(video.moderatedAt)}` : ''}
                 {video.moderationNote ? ` — ${video.moderationNote}` : ''}
+              </Typography>
+            )}
+            {showAutoApproval && (
+              <Typography variant="caption" color="text.secondary">
+                Auto‑approved
               </Typography>
             )}
 

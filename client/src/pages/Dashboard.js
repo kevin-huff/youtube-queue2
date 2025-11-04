@@ -1956,6 +1956,14 @@ const Dashboard = () => {
                                         icon={<WarningAmber fontSize="small" />}
                                       />
                                     )}
+                                    {item.moderationStatus !== 'WARNING' && !item.moderatedBy && (
+                                      <Chip
+                                        label="Auto‑approved"
+                                        size="small"
+                                        color="success"
+                                        variant="outlined"
+                                      />
+                                    )}
                                   </Box>
                                 </Box>
 
@@ -1982,6 +1990,11 @@ const Dashboard = () => {
                                     Approved by {item.moderatedByDisplayName || item.moderatedBy}
                                     {item.moderatedAt ? ` — ${formatTimestamp(item.moderatedAt)}` : ''}
                                     {item.moderationNote ? ` — ${item.moderationNote}` : ''}
+                                  </Typography>
+                                )}
+                                {item.moderationStatus !== 'WARNING' && !item.moderatedBy && (
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+                                    Auto‑approved
                                   </Typography>
                                 )}
 
