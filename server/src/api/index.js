@@ -262,14 +262,19 @@ const SUBMITTER_FIELDS = {
   role: true
 };
 
-// OAuth routes
-router.get('/auth/twitch',
-  passport.authenticate('twitch', { scope: ['user:read:email', 'channel:read:subscriptions'] })
+// OAuth routes (conditionally enabled)
+const TWITCH_AUTH_ENABLED = Boolean(
+  process.env.TWITCH_CLIENT_ID && process.env.TWITCH_CLIENT_SECRET && process.env.TWITCH_REDIRECT_URI
 );
 
-router.get('/auth/twitch/callback',
-  passport.authenticate('twitch', { failureRedirect: '/login?error=auth_failed' }),
-  async (req, res) => {
+if (TWITCH_AUTH_ENABLED) {
+  router.get('/auth/twitch',
+    passport.authenticate('twitch', { scope: ['user:read:email', 'channel:read:subscriptions'] })
+  );
+
+  router.get('/auth/twitch/callback',
+    passport.authenticate('twitch', { failureRedirect: '/login?error=auth_failed' }),
+    async (req, res) => {
     try {
       const channelManager = req.app.get('channelManager');
       const bot = req.app.get('bot');
@@ -297,8 +302,16 @@ router.get('/auth/twitch/callback',
     const hasAnyChannel = Array.isArray(req.user?.channels) && req.user.channels.length > 0;
     const targetPath = hasAnyChannel ? '/dashboard' : '/onboarding';
     res.redirect(`${redirectUrl}${targetPath}`);
-  }
-);
+    }
+  );
+} else {
+  router.get('/auth/twitch', (req, res) => {
+    res.status(503).json({ error: 'Twitch OAuth is not configured on this deployment' });
+  });
+  router.get('/auth/twitch/callback', (req, res) => {
+    res.redirect('/login?error=oauth_not_configured');
+  });
+}
 
 router.get('/auth/user', (req, res) => {
   if (req.isAuthenticated && req.isAuthenticated()) {

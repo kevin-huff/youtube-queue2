@@ -139,13 +139,22 @@ const buildUserPayload = async (accountId) => {
   };
 };
 
-// Passport configuration for Twitch OAuth
-passport.use(new TwitchStrategy({
-  clientID: process.env.TWITCH_CLIENT_ID,
-  clientSecret: process.env.TWITCH_CLIENT_SECRET,
-  callbackURL: process.env.TWITCH_REDIRECT_URI,
-  scope: ['user:read:email']
-}, async (accessToken, refreshToken, profile, done) => {
+// Passport configuration for Twitch OAuth (optional in environments without creds)
+const hasTwitchOAuth = Boolean(
+  process.env.TWITCH_CLIENT_ID && process.env.TWITCH_CLIENT_SECRET && process.env.TWITCH_REDIRECT_URI
+);
+
+if (!hasTwitchOAuth) {
+  try {
+    logger.warn('Twitch OAuth credentials not configured; skipping TwitchStrategy registration');
+  } catch (_) {}
+} else {
+  passport.use(new TwitchStrategy({
+    clientID: process.env.TWITCH_CLIENT_ID,
+    clientSecret: process.env.TWITCH_CLIENT_SECRET,
+    callbackURL: process.env.TWITCH_REDIRECT_URI,
+    scope: ['user:read:email']
+  }, async (accessToken, refreshToken, profile, done) => {
   try {
     logger.info(`Twitch OAuth callback for user: ${profile.login}`);
     
@@ -260,7 +269,8 @@ passport.use(new TwitchStrategy({
     logger.error('Error in Twitch OAuth strategy:', error);
     return done(error, null);
   }
-}));
+  }));
+}
 
 // Serialize user for session
 passport.serializeUser((user, done) => {

@@ -8,12 +8,15 @@ services:
       - "5000:5000"
     environment:
       - NODE_ENV=production
+      - UPLOADS_DIR=/app/server/uploads
     volumes:
       - ./server/.env:/app/server/.env:ro
       - ./server/data:/app/server/data
       - ./server/logs:/app/server/logs
+      - ./server/uploads:/app/server/uploads
     restart: unless-stopped
-    command: npm run start:production
+    # Use container entrypoint so migrations + prisma generate run
+    command: /app/start-production-container.sh
 
   # Optional: Use external PostgreSQL if needed
   # postgres:
