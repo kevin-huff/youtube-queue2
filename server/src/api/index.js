@@ -1668,8 +1668,8 @@ router.get('/channels/:channelId/cups/:cupId/judges',
       const channelManager = getChannelManager(req);
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const judgeService = channelManager.getJudgeService(normalizedChannelId);
-      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
-      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+      // Ensure the channel exists and is active; throws if not
+      getQueueServiceOrThrow(channelManager, normalizedChannelId);
 
       if (!judgeService) {
         return res.status(500).json({ error: 'Judge service not available' });
