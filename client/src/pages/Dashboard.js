@@ -36,10 +36,8 @@ import {
   Collapse
 } from '@mui/material';
 import {
-  Settings,
   LiveTv,
   QueueMusic,
-  TrendingUp,
   ContentCopy,
   PlayArrow,
   Timer,
@@ -160,6 +158,111 @@ const StatCard = ({ icon, title, value, color = 'primary' }) => {
   );
 };
 
+// Tiny, dependency-free visualizations
+const Donut = ({ value = 0, total = 0, size = 88, stroke = 10, color = 'primary', label, sublabel }) => {
+  const theme = useTheme();
+  const pct = total > 0 ? Math.max(0, Math.min(1, value / total)) : 0;
+  const radius = (size - stroke) / 2;
+  const c = 2 * Math.PI * radius;
+  const dash = c * pct;
+  const gap = c - dash;
+  const clr = theme.palette[color]?.main || theme.palette.primary.main;
+  return (
+    <Box sx={{ position: 'relative', width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size/2} cy={size/2} r={radius} stroke={theme.palette.action.hover} strokeWidth={stroke} fill="none" />
+        <circle
+          cx={size/2}
+          cy={size/2}
+          r={radius}
+          stroke={clr}
+          strokeWidth={stroke}
+          fill="none"
+          strokeDasharray={`${dash} ${gap}`}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size/2} ${size/2})`}
+        />
+      </svg>
+      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+        <Typography variant="subtitle1" fontWeight={800} lineHeight={1}>{total > 0 ? Math.round(pct * 100) : 0}%</Typography>
+        {label && <Typography variant="caption" color="text.secondary">{label}</Typography>}
+      </Box>
+      {sublabel && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}>
+          {sublabel}
+        </Typography>
+      )}
+    </Box>
+  );
+};
+
+const Sparkline = ({ data = [], width = 220, height = 56, color = 'primary' }) => {
+  const theme = useTheme();
+  const clr = theme.palette[color]?.main || theme.palette.primary.main;
+  const safe = Array.isArray(data) ? data : [];
+  const n = safe.length;
+  const max = Math.max(1, ...safe);
+  const stepX = n > 1 ? width / (n - 1) : width;
+  const points = safe.map((v, i) => {
+    const x = i * stepX;
+    const y = height - (height * (v / max));
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <polyline fill="none" stroke={theme.palette.action.hover} strokeWidth="2" points={`0,${height} ${points} ${width},${height}`} />
+      <polyline fill="none" stroke={clr} strokeWidth="2.5" points={points} />
+    </svg>
+  );
+};
+
+const BarList = ({ items = [], color = 'primary', maxLabel = 18 }) => {
+  const theme = useTheme();
+  const clr = theme.palette[color]?.main || theme.palette.primary.main;
+  const maxVal = Math.max(1, ...items.map((i) => i.value || 0));
+  return (
+    <Stack spacing={0.75}>
+      {items.map((it, idx) => (
+        <Box key={`${it.label}-${idx}`}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.25 }}>
+            <Typography variant="caption" sx={{ mr: 1 }} noWrap title={it.label}>
+              {it.label.length > maxLabel ? `${it.label.slice(0, maxLabel)}…` : it.label}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">{it.value}</Typography>
+          </Box>
+          <Box sx={{ width: '100%', height: 8, bgcolor: theme.palette.action.hover, borderRadius: 4, overflow: 'hidden' }}>
+            <Box sx={{ width: `${Math.round((100 * (it.value || 0)) / maxVal)}%`, height: '100%', bgcolor: clr }} />
+          </Box>
+        </Box>
+      ))}
+    </Stack>
+  );
+};
+
+// Simple math helpers
+const average = (arr = []) => {
+  const nums = arr.map((n) => Number(n)).filter((n) => Number.isFinite(n));
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+};
+
+const median = (arr = []) => {
+  const nums = arr.map((n) => Number(n)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  if (!nums.length) return null;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+};
+
+const formatDuration = (seconds) => {
+  const s = Math.max(0, Math.round(Number(seconds || 0)));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rem = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${rem}s`;
+  return `${rem}s`;
+};
+
 // Segmented status distribution bar with legend
 const StatusDistribution = ({ counts = {}, selected = 'ALL', onSelect }) => {
   const theme = useTheme();
@@ -270,6 +373,24 @@ const Dashboard = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [scoredInCupCount, setScoredInCupCount] = useState(0);
   const [unmoderatedAutoApprovedCount, setUnmoderatedAutoApprovedCount] = useState(0);
+  const [activeCup, setActiveCup] = useState(null);
+  const [cupKpis, setCupKpis] = useState({
+    ratedPerHour: 0,
+    ratedPerHourRecent: 0,
+    ratedCount: 0,
+    totalInCup: 0,
+    avgScore: null,
+    medianScore: null,
+    avgJudges: 0,
+    avgWaitToScoreSec: 0,
+    avgVideoDurationSec: 0,
+    judgesActive: 0
+  });
+  const [cupViz, setCupViz] = useState({
+    rateBins: [],
+    durationBins: [],
+    topModerators: []
+  });
   // Summary stats for header and overview
   const [statusCounts, setStatusCounts] = useState({});
   const [warningsTotal, setWarningsTotal] = useState(0);
@@ -294,7 +415,7 @@ const Dashboard = () => {
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
   const summaryRefreshTimeoutRef = useRef(null);
-  const settingsSectionRef = useRef(null);
+  // Removed inline settings section; dedicated Settings tab now
   // Track selected channel id across renders to avoid refetch loops
   const selectedChannelIdRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -334,13 +455,14 @@ const Dashboard = () => {
 
   const availableTabs = useMemo(() => {
     const tabs = [{ value: 'overview', label: 'Overview' }];
+    if (canManageSettings) tabs.push({ value: 'settings', label: 'Queue Settings' });
     if (canProduce && Array.isArray(channels) && channels.length > 0) {
       tabs.push({ value: 'producer', label: 'Producer' });
       tabs.push({ value: 'cups', label: 'Manage Cups' });
     }
     if (canModerate) tabs.push({ value: 'moderation', label: 'Moderation' });
     return tabs;
-  }, [canProduce, canModerate, channels]);
+  }, [canProduce, canManageSettings, canModerate, channels]);
 
   // Auto-save with debounce
   const autoSaveSettings = useCallback(async (settingsToSave) => {
@@ -902,6 +1024,28 @@ const Dashboard = () => {
       }
       return;
     }
+    
+    if (requestedTab === 'settings') {
+      if (!canManageSettings) {
+        if (activeTab !== 'overview') {
+          setActiveTab('overview');
+        }
+        params.delete('tab');
+        const nextSearch = params.toString();
+        navigate(
+          {
+            pathname: location.pathname,
+            search: nextSearch ? `?${nextSearch}` : ''
+          },
+          { replace: true }
+        );
+        return;
+      }
+      if (activeTab !== 'settings') {
+        setActiveTab('settings');
+      }
+      return;
+    }
 
     if (activeTab !== 'overview') {
       setActiveTab('overview');
@@ -1057,6 +1201,9 @@ const Dashboard = () => {
     if (newValue === 'cups' && !canProduce) {
       return;
     }
+    if (newValue === 'settings' && !canManageSettings) {
+      return;
+    }
 
     setActiveTab(newValue);
     const params = new URLSearchParams(location.search);
@@ -1074,7 +1221,7 @@ const Dashboard = () => {
       },
       { replace: true }
     );
-  }, [activeTab, canModerate, canProduce, navigate, location.pathname, location.search]);
+  }, [activeTab, canModerate, canProduce, canManageSettings, navigate, location.pathname, location.search]);
 
   const warningCount = useMemo(
     () => moderationItems.filter((item) => item.moderationStatus === 'WARNING').length,
@@ -1168,11 +1315,167 @@ const Dashboard = () => {
     }
   }, [currentChannelId]);
 
+  // Load current active cup (isActive or LIVE)
+  const fetchActiveCup = useCallback(async () => {
+    if (!currentChannelId) {
+      setActiveCup(null);
+      return;
+    }
+    try {
+      const res = await axios.get(`/api/channels/${currentChannelId}/cups`, { withCredentials: true });
+      const cups = Array.isArray(res?.data?.cups) ? res.data.cups : [];
+      let current = cups.find((c) => c.isActive) || cups.find((c) => String(c.status).toUpperCase() === 'LIVE') || null;
+      setActiveCup(current || null);
+    } catch (err) {
+      setActiveCup(null);
+    }
+  }, [currentChannelId]);
+
+  // Compute Cup KPIs
+  const fetchCupKpis = useCallback(async () => {
+    if (!currentChannelId || !activeCup?.id) {
+      setCupKpis((prev) => ({ ...prev, ratedPerHour: 0, ratedPerHourRecent: 0, ratedCount: 0, totalInCup: 0 }));
+      return;
+    }
+    try {
+      // Pull submissions scoped to active cups, then filter to the exact cup id
+      const [subsResp, standingsResp, judgesResp] = await Promise.all([
+        axios.get(`/api/channels/${currentChannelId}/submissions`, {
+          params: { status: 'ALL', limit: 'ALL', activeCupsOnly: true },
+          withCredentials: true
+        }),
+        axios.get(`/api/channels/${currentChannelId}/cups/${activeCup.id}/standings`, { withCredentials: true }),
+        axios.get(`/api/channels/${currentChannelId}/cups/${activeCup.id}/judges`, { withCredentials: true }).catch(() => ({ data: { judges: [] } }))
+      ]);
+
+      const allSubs = Array.isArray(subsResp?.data?.submissions) ? subsResp.data.submissions : [];
+      const subs = allSubs.filter((it) => it?.cup?.id === activeCup.id);
+
+      const videos = Array.isArray(standingsResp?.data?.videos) ? standingsResp.data.videos : [];
+      const judges = Array.isArray(judgesResp?.data?.judges) ? judgesResp.data.judges : [];
+
+      // Counts
+      const statusCount = (s) => subs.filter((it) => String(it.status).toUpperCase() === s).length;
+      const ratedCount = statusCount('SCORED') + statusCount('PLAYED');
+      const totalInCup = subs.length;
+
+      // Time window calculations
+      const now = Date.now();
+      const startsAt = activeCup?.startsAt ? new Date(activeCup.startsAt).getTime() : null;
+      const fallbackStart = subs.reduce((min, it) => {
+        const t = (it.playedAt ? new Date(it.playedAt).getTime() : new Date(it.createdAt).getTime());
+        return min === null || t < min ? t : min;
+      }, null);
+      const startMs = startsAt || fallbackStart || now;
+      const elapsedHours = Math.max(0.0167, (now - startMs) / 3600000); // 1 minute minimum to avoid div/0
+
+      const ratedPerHour = ratedCount / elapsedHours;
+
+      const oneHourAgo = now - 3600000;
+      const recentRated = subs.filter((it) => {
+        const status = String(it.status).toUpperCase();
+        if (status !== 'SCORED' && status !== 'PLAYED') return false;
+        const t = it.playedAt ? new Date(it.playedAt).getTime() : null;
+        return t && t >= oneHourAgo;
+      }).length;
+      const ratedPerHourRecent = recentRated; // over last 60m
+
+      // Averages from videos (only terminal items with scores)
+      const avgScore = average(videos.map((v) => v.averageScore).filter((x) => x !== null));
+      const medScore = median(videos.map((v) => v.averageScore).filter((x) => x !== null));
+      const avgJudges = average(videos.map((v) => v.judgeCount));
+
+      // Wait time from submission to scored
+      const waitSeconds = videos
+        .map((v) => {
+          const a = v.createdAt ? new Date(v.createdAt).getTime() : null;
+          const b = v.playedAt ? new Date(v.playedAt).getTime() : null;
+          if (!a || !b || b < a) return null;
+          return (b - a) / 1000;
+        })
+        .filter((s) => s !== null);
+      const avgWaitToScoreSec = average(waitSeconds) || 0;
+
+      // Average video duration across cup (if durations known)
+      const avgVideoDurationSec = average(subs.map((it) => it.duration).filter((d) => Number.isFinite(Number(d))));
+
+      // Active judges
+      const judgesActive = judges.filter((j) => String(j.status).toUpperCase() === 'ACTIVE').length;
+
+      setCupKpis({
+        ratedPerHour: Number((ratedPerHour || 0).toFixed(2)),
+        ratedPerHourRecent: Number((ratedPerHourRecent || 0).toFixed(2)),
+        ratedCount,
+        totalInCup,
+        avgScore: avgScore !== null ? Number(avgScore.toFixed(2)) : null,
+        medianScore: medScore !== null ? Number(medScore.toFixed(2)) : null,
+        avgJudges: avgJudges !== null ? Number(avgJudges.toFixed(2)) : 0,
+        avgWaitToScoreSec: Math.max(0, Math.round(avgWaitToScoreSec || 0)),
+        avgVideoDurationSec: Math.max(0, Math.round(avgVideoDurationSec || 0)),
+        judgesActive
+      });
+
+      // Build lightweight viz datasets
+      // 1) Rate bins for last 3 hours, 10-minute bins
+      const BIN_MIN = 10;
+      const WINDOW_MIN = 180;
+      const BIN_MS = BIN_MIN * 60 * 1000;
+      const WINDOW_MS = WINDOW_MIN * 60 * 1000;
+      const startWindow = now - WINDOW_MS;
+      const binCount = Math.ceil(WINDOW_MS / BIN_MS);
+      const rateBins = new Array(binCount).fill(0);
+      subs.forEach((it) => {
+        const s = String(it.status).toUpperCase();
+        if ((s === 'SCORED' || s === 'PLAYED') && it.playedAt) {
+          const t = new Date(it.playedAt).getTime();
+          if (t >= startWindow) {
+            const idx = Math.min(binCount - 1, Math.max(0, Math.floor((t - startWindow) / BIN_MS)));
+            rateBins[idx] += 1;
+          }
+        }
+      });
+
+      // 2) Duration histogram bins in seconds
+      const dur = subs.map((it) => Number(it.duration || 0)).filter((n) => Number.isFinite(n) && n > 0);
+      const durationBins = [
+        { label: '0–1m', from: 0, to: 60, value: 0 },
+        { label: '1–3m', from: 60, to: 180, value: 0 },
+        { label: '3–5m', from: 180, to: 300, value: 0 },
+        { label: '5–10m', from: 300, to: 600, value: 0 },
+        { label: '10–20m', from: 600, to: 1200, value: 0 },
+        { label: '20m+', from: 1200, to: Infinity, value: 0 }
+      ];
+      dur.forEach((s) => {
+        const b = durationBins.find((b) => s >= b.from && s < b.to);
+        if (b) b.value += 1;
+      });
+
+      // 3) Top moderators by count (cup-scoped)
+      const modMap = new Map();
+      subs.forEach((it) => {
+        if (it.moderatedBy) {
+          const name = it.moderatedByDisplayName || it.moderatedBy;
+          modMap.set(name, (modMap.get(name) || 0) + 1);
+        }
+      });
+      const topModerators = Array.from(modMap.entries())
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+
+      setCupViz({ rateBins, durationBins, topModerators });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to compute Cup KPIs', err);
+    }
+  }, [currentChannelId, activeCup?.id, activeCup?.startsAt]);
+
   // Refresh status summary when channel changes (placed after function declarations to avoid TDZ)
   useEffect(() => {
     if (!currentChannelId) return;
     fetchStatusSummary();
     fetchPlayedInActiveCup();
+    fetchActiveCup();
   }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
 
   // Live-refresh summaries on queue events (debounced)
@@ -1182,6 +1485,8 @@ const Dashboard = () => {
       summaryRefreshTimeoutRef.current = setTimeout(() => {
         fetchStatusSummary();
         fetchPlayedInActiveCup();
+        fetchActiveCup();
+        fetchCupKpis();
       }, 500);
     };
 
@@ -1202,7 +1507,12 @@ const Dashboard = () => {
       if (status) removeChannelListener?.('queue:item_status', schedule);
       if (scored) removeChannelListener?.('queue:item_scored', schedule);
     };
-  }, [addChannelListener, removeChannelListener, fetchStatusSummary, fetchPlayedInActiveCup]);
+  }, [addChannelListener, removeChannelListener, fetchStatusSummary, fetchPlayedInActiveCup, fetchActiveCup, fetchCupKpis]);
+
+  // Recompute KPIs when activeCup changes
+  useEffect(() => {
+    fetchCupKpis();
+  }, [fetchCupKpis]);
 
   if (authLoading || loading) {
     return (
@@ -1390,26 +1700,228 @@ const Dashboard = () => {
                   >
                     Producer Console
                   </Button>
-                  {canManageSettings && (
-                    <Button
-                      variant="outlined"
-                      startIcon={<Settings />}
-                      onClick={() => settingsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                    >
-                      Queue Settings
-                    </Button>
-                  )}
+                  {/* Settings link moved to dedicated tab */}
                 </Box>
                 </Box>
               </CardContent>
             </Card>
 
-            {/* Queue Settings (compact) */}
-            {canManageSettings && (
-              <>
-                <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom ref={settingsSectionRef}>
-                  Queue Settings
+            {/* Queue Settings moved to dedicated tab */}
+
+            {/* Audio & Soundboard moved to Settings tab */}
+            {/* Stats Overview */}
+            <Grid container spacing={3} sx={{ mb: 4 }}>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<QueueMusic />}
+                  title="Queue Size"
+                  value={queueSize}
+                  color="info"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<PlayArrow />}
+                  title="Queue Status"
+                  value={queueEnabled ? "Open" : "Closed"}
+                  color={queueEnabled ? "success" : "default"}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<LiveTv />}
+                  title="Player Status"
+                  value={currentlyPlaying ? "Playing" : "Idle"}
+                  color={currentlyPlaying ? "error" : "default"}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<Person />}
+                  title="Judges Active"
+                  value={cupKpis.judgesActive}
+                  color="info"
+                />
+              </Grid>
+            </Grid>
+
+            {/* Links & Actions */}
+            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+              Links & Actions
+            </Typography>
+            {(() => {
+              const base = window.location.origin.replace(/\/$/, '');
+              const rows = [
+                { icon: <LiveTv color="primary" />, label: 'Queue Page', desc: 'Public list of videos in queue', url: `${base}/channel/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Viewer Hub', desc: 'Standings, queue, and cups', url: `${base}/viewer/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
+                { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
+                { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
+                { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
+              ];
+              return (
+                <Stack spacing={1.25} sx={{ mb: 4 }}>
+                  {rows.map((row, idx) => (
+                    <Box
+                      key={`${row.label}-${idx}`}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        border: '1px solid',
+                        borderColor: row.danger ? 'error.light' : 'divider',
+                        bgcolor: row.danger ? alpha(theme.palette.error.main, 0.05) : 'background.paper',
+                        borderRadius: 1.2,
+                        p: 1
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36 }}>{row.icon}</Box>
+                      <Box sx={{ minWidth: 220 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          {row.label}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {row.desc}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ flex: 1 }}>
+                        {row.url && (
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: 'monospace',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              px: 1.25,
+                              py: 0.75,
+                              borderRadius: 1,
+                              bgcolor: 'action.hover'
+                            }}
+                            title={row.url}
+                          >
+                            {row.url}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Stack direction="row" spacing={0.5}>
+                        {row.url && (
+                          <Tooltip title="Open in new tab">
+                            <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
+                              <OpenInNewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.url && (
+                          <Tooltip title="Copy URL">
+                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(row.url)}>
+                              <ContentCopy fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {row.onOpen && (
+                          <Tooltip title={row.danger ? (clearingQueue ? 'Clearing…' : 'Clear Queue') : 'Open'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant={row.danger ? 'outlined' : 'contained'}
+                                color={row.danger ? 'error' : 'primary'}
+                                disabled={row.danger && clearingQueue}
+                                onClick={row.onOpen}
+                              >
+                                {row.danger ? (clearingQueue ? 'Clearing…' : 'Clear') : 'Open'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              );
+            })()}
+
+            {/* Moderation KPIs (from Moderation tab) */}
+            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+              Moderation KPIs
+            </Typography>
+            <Grid container spacing={3} sx={{ mb: 3 }}>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<WarningAmber />}
+                  title="Active Warnings"
+                  value={warningsTotal}
+                  color={warningsTotal ? 'warning' : 'default'}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<ThumbUp />}
+                  title="Auto‑Approved (unmoderated)"
+                  value={autoApprovedTotal}
+                  color={autoApprovedTotal ? 'info' : 'default'}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <StatCard
+                  icon={<Person />}
+                  title="Top Moderator"
+                  value={topModerator.name ? `${topModerator.name} (${topModerator.count})` : '—'}
+                  color="secondary"
+                />
+              </Grid>
+            </Grid>
+
+            {/* removed limited access + auto-save indicator (in Settings tab now) */}
+          </>
+        )}
+          </>
+        )}
+
+        {activeTab === 'settings' && canManageSettings && (
+          <>
+            {!channel && !loading && (
+              <Paper
+                sx={{
+                  p: 6,
+                  textAlign: 'center',
+                  background: alpha(theme.palette.primary.main, 0.05),
+                  border: `2px dashed ${alpha(theme.palette.primary.main, 0.3)}`
+                }}
+              >
+                <LiveTv sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  Channel Not Found
                 </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Select a channel above to manage queue settings.
+                </Typography>
+              </Paper>
+            )}
+
+            {channel && (
+              <>
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                      Queue Settings
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Configure queue behavior and limits for {channel.displayName}.
+                    </Typography>
+                  </CardContent>
+                </Card>
+
+                {/* Auto-save indicator */}
+                {saving && (
+                  <Box display="flex" alignItems="center" justifyContent="flex-end" gap={1} mb={2}>
+                    <CircularProgress size={16} />
+                    <Typography variant="body2" color="text.secondary">
+                      Saving...
+                    </Typography>
+                  </Box>
+                )}
+
                 {(() => {
                   const rows = [
                     {
@@ -1501,7 +2013,7 @@ const Dashboard = () => {
                     }
                   ];
                   return (
-                    <Stack spacing={1.25} sx={{ mb: 4 }}>
+                    <Stack spacing={1.25}>
                       {rows.map((row) => (
                         <Box
                           key={row.label}
@@ -1530,329 +2042,94 @@ const Dashboard = () => {
                     </Stack>
                   );
                 })()}
-              </>
-            )}
 
-            {/* Audio & Soundboard */}
-            {(canProduce || canManageSettings) && (
-              <Stack spacing={2} sx={{ mb: 4 }}>
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" justifyContent="space-between" mb={1}>
-                      <Box display="flex" alignItems="flex-start">
+                {/* Audio & Soundboard */}
+                <Stack spacing={2} sx={{ mt: 3 }}>
+                  <Card>
+                    <CardContent>
+                      <Box display="flex" alignItems="flex-start" justifyContent="space-between" mb={1}>
+                        <Box display="flex" alignItems="flex-start">
+                          <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.info.main, 0.1), color: 'info.main' }}>
+                            <LiveTv />
+                          </Box>
+                          <Box>
+                            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                              Soundboard (per-channel)
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Upload short audio clips you can trigger for judges and the overlay.
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <IconButton size="small" onClick={() => setSbExpanded((v) => !v)} aria-label={sbExpanded ? 'Collapse' : 'Expand'}>
+                          {sbExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                        </IconButton>
+                      </Box>
+                      <Collapse in={sbExpanded} timeout="auto" unmountOnExit>
+                        <Stack spacing={2}>
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <input ref={sbFileInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleSbFileSelected} />
+                            <TextField size="small" label="Name" placeholder="e.g., Airhorn" value={sbName} onChange={(e) => setSbName(e.target.value)} sx={{ width: 260 }} />
+                            <Button variant="contained" onClick={triggerSbFilePicker} disabled={sbUploading || !channel?.id}>{sbUploading ? 'Uploading…' : 'Upload Sound'}</Button>
+                            <Button variant="outlined" onClick={refreshSoundboard} disabled={sbUploading}>Refresh</Button>
+                          </Box>
+                          {sbError && (<Alert severity="error">{sbError}</Alert>)}
+                          <List dense sx={{ borderTop: 1, borderColor: 'divider', mt: 1 }}>
+                            {soundboardItems.length === 0 ? (
+                              <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>No sounds uploaded yet.</Typography>
+                            ) : (
+                              soundboardItems.map((it) => (
+                                <ListItem key={it.id} sx={{ px: 1, '& .MuiListItemText-primary': { fontWeight: 600 }, '& .MuiListItemText-secondary': { color: 'text.secondary' } }}
+                                  secondaryAction={
+                                    <Stack direction="row" spacing={0.5} alignItems="center">
+                                      <IconButton size="small" aria-label="Play" onClick={() => handlePlaySound(it.id)} disabled={sbBusyId === it.id}><PlayArrow fontSize="small" /></IconButton>
+                                      <IconButton size="small" aria-label="Open" component="a" href={resolveItemUrl(it)} target="_blank" rel="noreferrer"><OpenInNewIcon fontSize="small" /></IconButton>
+                                      <IconButton size="small" aria-label="Copy URL" onClick={() => handleCopyUrl(it)}><ContentCopy fontSize="small" /></IconButton>
+                                      <IconButton size="small" aria-label="Delete" color="error" onClick={() => handleDeleteSound(it.id)}><Delete fontSize="small" /></IconButton>
+                                    </Stack>
+                                  }>
+                                  <ListItemText primary={it.name} secondary={new Date(it.createdAt).toLocaleString()} />
+                                </ListItem>
+                              ))
+                            )}
+                          </List>
+                        </Stack>
+                      </Collapse>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent>
+                      <Box display="flex" alignItems="flex-start" mb={1.5}>
                         <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.info.main, 0.1), color: 'info.main' }}>
                           <LiveTv />
                         </Box>
-                        <Box>
+                        <Box flex={1}>
                           <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-                            Soundboard (per-channel)
+                            Shuffle Audio
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
-                            Upload short audio clips you can trigger for judges and the overlay.
+                            Upload a custom audio track to play during queue shuffles.
                           </Typography>
                         </Box>
                       </Box>
-                      <IconButton size="small" onClick={() => setSbExpanded((v) => !v)} aria-label={sbExpanded ? 'Collapse' : 'Expand'}>
-                        {sbExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-                      </IconButton>
-                    </Box>
-                    <Collapse in={sbExpanded} timeout="auto" unmountOnExit>
                       <Stack spacing={2}>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Current: {shuffleAudioUrl ? shuffleAudioUrl : 'Default theme'}</Typography>
+                        </Box>
                         <Box display="flex" alignItems="center" gap={1}>
-                          <input ref={sbFileInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleSbFileSelected} />
-                          <TextField size="small" label="Name" placeholder="e.g., Airhorn" value={sbName} onChange={(e) => setSbName(e.target.value)} sx={{ width: 260 }} />
-                          <Button variant="contained" onClick={triggerSbFilePicker} disabled={sbUploading || !channel?.id}>{sbUploading ? 'Uploading…' : 'Upload Sound'}</Button>
-                          <Button variant="outlined" onClick={refreshSoundboard} disabled={sbUploading}>Refresh</Button>
+                          <input ref={fileInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleShuffleAudioSelected} />
+                          <Button variant="contained" onClick={triggerShuffleAudioDialog} disabled={uploadingAudio || !channel?.id}>{uploadingAudio ? 'Uploading…' : 'Upload Audio'}</Button>
+                          <Button variant="outlined" color="warning" onClick={handleResetShuffleAudio} disabled={uploadingAudio}>Reset to Default</Button>
                         </Box>
-                        {sbError && (<Alert severity="error">{sbError}</Alert>)}
-                        <List dense sx={{ borderTop: 1, borderColor: 'divider', mt: 1 }}>
-                          {soundboardItems.length === 0 ? (
-                            <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>No sounds uploaded yet.</Typography>
-                          ) : (
-                            soundboardItems.map((it) => (
-                              <ListItem key={it.id} sx={{ px: 1, '& .MuiListItemText-primary': { fontWeight: 600 }, '& .MuiListItemText-secondary': { color: 'text.secondary' } }}
-                                secondaryAction={
-                                  <Stack direction="row" spacing={0.5} alignItems="center">
-                                    <IconButton size="small" aria-label="Play" onClick={() => handlePlaySound(it.id)} disabled={sbBusyId === it.id}><PlayArrow fontSize="small" /></IconButton>
-                                    <IconButton size="small" aria-label="Open" component="a" href={resolveItemUrl(it)} target="_blank" rel="noreferrer"><OpenInNewIcon fontSize="small" /></IconButton>
-                                    <IconButton size="small" aria-label="Copy URL" onClick={() => handleCopyUrl(it)}><ContentCopy fontSize="small" /></IconButton>
-                                    <IconButton size="small" aria-label="Delete" color="error" onClick={() => handleDeleteSound(it.id)}><Delete fontSize="small" /></IconButton>
-                                  </Stack>
-                                }>
-                                <ListItemText primary={it.name} secondary={new Date(it.createdAt).toLocaleString()} />
-                              </ListItem>
-                            ))
-                          )}
-                        </List>
+                        {shuffleAudioUrl && (<audio controls src={shuffleAudioUrl} style={{ width: '100%' }} />)}
+                        {uploadError && (<Alert severity="error">{uploadError}</Alert>)}
                       </Stack>
-                    </Collapse>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent>
-                    <Box display="flex" alignItems="flex-start" mb={1.5}>
-                      <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.info.main, 0.1), color: 'info.main' }}>
-                        <LiveTv />
-                      </Box>
-                      <Box flex={1}>
-                        <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-                          Shuffle Audio
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Upload a custom audio track to play during queue shuffles.
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="body2" color="text.secondary">Current: {shuffleAudioUrl ? shuffleAudioUrl : 'Default theme'}</Typography>
-                      </Box>
-                      <Box display="flex" alignItems="center" gap={1}>
-                        <input ref={fileInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleShuffleAudioSelected} />
-                        <Button variant="contained" onClick={triggerShuffleAudioDialog} disabled={uploadingAudio || !channel?.id}>{uploadingAudio ? 'Uploading…' : 'Upload Audio'}</Button>
-                        <Button variant="outlined" color="warning" onClick={handleResetShuffleAudio} disabled={uploadingAudio}>Reset to Default</Button>
-                      </Box>
-                      {shuffleAudioUrl && (<audio controls src={shuffleAudioUrl} style={{ width: '100%' }} />)}
-                      {uploadError && (<Alert severity="error">{uploadError}</Alert>)}
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Stack>
-            )}
-            {/* Stats Overview */}
-            <Grid container spacing={3} sx={{ mb: 4 }}>
-              <Grid item xs={12} sm={6} md={3}>
-                <StatCard
-                  icon={<QueueMusic />}
-                  title="Queue Size"
-                  value={queueSize}
-                  color="info"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <StatCard
-                  icon={<PlayArrow />}
-                  title="Queue Status"
-                  value={queueEnabled ? "Open" : "Closed"}
-                  color={queueEnabled ? "success" : "default"}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <StatCard
-                  icon={<LiveTv />}
-                  title="Player Status"
-                  value={currentlyPlaying ? "Playing" : "Idle"}
-                  color={currentlyPlaying ? "error" : "default"}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <StatCard
-                  icon={<TrendingUp />}
-                  title="Total Views"
-                  value={0}
-                  color="warning"
-                />
-              </Grid>
-            </Grid>
-
-            {/* Quick Actions */}
-            <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-              Quick Actions
-            </Typography>
-            {(() => {
-              const base = window.location.origin.replace(/\/$/, '');
-              const rows = [
-                { icon: <LiveTv color="primary" />, label: 'Viewer Hub', desc: 'Public page (standings + queue)', url: `${base}/viewer/${channel.id}` },
-                { icon: <TrendingUp color="primary" />, label: 'Manage Cups', desc: 'Create & manage gameshow events', onOpen: () => navigate(`/channel/${channel.id}/cups`) },
-                { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
-                { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
-                { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
-                { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
-              ];
-              return (
-                <Stack spacing={1.25} sx={{ mb: 4 }}>
-                  {rows.map((row, idx) => (
-                    <Box
-                      key={`${row.label}-${idx}`}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        border: '1px solid',
-                        borderColor: row.danger ? 'error.light' : 'divider',
-                        bgcolor: row.danger ? alpha(theme.palette.error.main, 0.05) : 'background.paper',
-                        borderRadius: 1.2,
-                        p: 1
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36 }}>{row.icon}</Box>
-                      <Box sx={{ minWidth: 220 }}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                          {row.label}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {row.desc}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ flex: 1 }}>
-                        {row.url && (
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontFamily: 'monospace',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              px: 1.25,
-                              py: 0.75,
-                              borderRadius: 1,
-                              bgcolor: 'action.hover'
-                            }}
-                            title={row.url}
-                          >
-                            {row.url}
-                          </Typography>
-                        )}
-                      </Box>
-                      <Stack direction="row" spacing={0.5}>
-                        {row.url && (
-                          <Tooltip title="Open in new tab">
-                            <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
-                              <OpenInNewIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        {row.url && (
-                          <Tooltip title="Copy URL">
-                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(row.url)}>
-                              <ContentCopy fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        {row.onOpen && (
-                          <Tooltip title={row.danger ? (clearingQueue ? 'Clearing…' : 'Clear Queue') : 'Open'}>
-                            <span>
-                              <Button
-                                size="small"
-                                variant={row.danger ? 'outlined' : 'contained'}
-                                color={row.danger ? 'error' : 'primary'}
-                                disabled={row.danger && clearingQueue}
-                                onClick={row.onOpen}
-                              >
-                                {row.danger ? (clearingQueue ? 'Clearing…' : 'Clear') : 'Open'}
-                              </Button>
-                            </span>
-                          </Tooltip>
-                        )}
-                      </Stack>
-                    </Box>
-                  ))}
+                    </CardContent>
+                  </Card>
                 </Stack>
-              );
-            })()}
-
-            {/* removed bulky grid settings; replaced by compact rows above */}
-            {canManageSettings ? null : (
-              <Paper sx={{ p: 3, mt: 4 }} ref={settingsSectionRef}>
-                <Typography variant="h6" gutterBottom>
-                  Limited Access
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  You don&apos;t have owner or manager permissions for this channel, so queue settings are read-only.
-                  You can still use the Producer Console and Moderation tools based on your role.
-                </Typography>
-              </Paper>
+              </>
             )}
-
-            {/* Auto-save indicator */}
-            {saving && (
-              <Box display="flex" alignItems="center" justifyContent="flex-end" gap={1} mb={2}>
-                <CircularProgress size={16} />
-                <Typography variant="body2" color="text.secondary">
-                  Saving...
-                </Typography>
-              </Box>
-            )}
-
-            {/* Channel URLs */}
-            <Paper sx={{ p: 3, mt: 4 }}>
-              <Typography variant="h6" gutterBottom>
-                Share Your Channel
-              </Typography>
-
-              {(() => {
-                const base = window.location.origin.replace(/\/$/, '');
-                const rows = [
-                  { label: 'Queue Page', desc: 'Public list of videos in queue', url: `${base}/channel/${channel.id}` },
-                  { label: 'OBS Overlay', desc: 'Video player browser source', url: `${base}/player/${channel.id}` },
-                  { label: 'Viewer Hub', desc: 'Standings, queue, and cups', url: `${base}/viewer/${channel.id}` },
-                  { label: 'Queue Overlay', desc: 'Top 8 + queue overlay', url: `${base}/overlay/${channel.id}/queue` },
-                  { label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` }
-                ];
-
-                return (
-                  <Stack spacing={1.25} sx={{ mt: 1 }}>
-                    {rows.map((row) => (
-                      <Box
-                        key={row.label}
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 1,
-                          border: '1px solid',
-                          borderColor: 'divider',
-                          borderRadius: 1.2,
-                          p: 1,
-                          bgcolor: 'background.paper'
-                        }}
-                      >
-                        <Box sx={{ minWidth: 180 }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            {row.label}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {row.desc}
-                          </Typography>
-                        </Box>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            flex: 1,
-                            fontFamily: 'monospace',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            px: 1.25,
-                            py: 0.75,
-                            borderRadius: 1,
-                            bgcolor: 'action.hover'
-                          }}
-                          title={row.url}
-                        >
-                          {row.url}
-                        </Typography>
-                        <Tooltip title="Open in new tab">
-                          <IconButton size="small" component="a" href={row.url} target="_blank" rel="noreferrer">
-                            <OpenInNewIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Copy URL">
-                          <IconButton
-                            size="small"
-                            onClick={() => navigator.clipboard.writeText(row.url)}
-                          >
-                            <ContentCopy fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    ))}
-                  </Stack>
-                );
-              })()}
-            </Paper>
-          </>
-        )}
           </>
         )}
 
@@ -2063,18 +2340,147 @@ const Dashboard = () => {
                   </Grid>
                 </Grid>
 
-                {/* Status distribution */}
-                <Box sx={{ mb: 3 }}>
-                  {summaryLoading ? (
-                    <Skeleton variant="rectangular" width={420} height={20} sx={{ borderRadius: 1 }} />
-                  ) : (
-                    <StatusDistribution
-                      counts={statusCounts}
-                      selected={statusFilter}
-                      onSelect={setStatusFilter}
+            {/* Status distribution */}
+            <Box sx={{ mb: 3 }}>
+              {summaryLoading ? (
+                <Skeleton variant="rectangular" width={420} height={20} sx={{ borderRadius: 1 }} />
+              ) : (
+                <StatusDistribution
+                  counts={statusCounts}
+                  selected={statusFilter}
+                  onSelect={setStatusFilter}
+                />
+              )}
+            </Box>
+
+            {/* Cup KPIs */}
+            {activeCup && (
+              <>
+                <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                  Cup KPIs{activeCup?.title ? ` — ${activeCup.title}` : ''}
+                </Typography>
+                <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<PlayArrow />}
+                      title="Videos/hr (overall)"
+                      value={cupKpis.ratedPerHour}
+                      color="info"
                     />
-                  )}
-                </Box>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<PlayArrow />}
+                      title="Videos/hr (last 60m)"
+                      value={cupKpis.ratedPerHourRecent}
+                      color="primary"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<VideoLibrary />}
+                      title="Rated (total)"
+                      value={cupKpis.ratedCount}
+                      color="secondary"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<QueueMusic />}
+                      title="In Cup (all)"
+                      value={cupKpis.totalInCup}
+                      color="default"
+                    />
+                  </Grid>
+                </Grid>
+
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<ThumbUp />}
+                      title="Avg Score"
+                      value={cupKpis.avgScore ?? '—'}
+                      color="success"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<ThumbUp />}
+                      title="Median Score"
+                      value={cupKpis.medianScore ?? '—'}
+                      color="success"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<Person />}
+                      title="Avg Judges/Video"
+                      value={cupKpis.avgJudges}
+                      color="info"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<Timer />}
+                      title="Avg Wait (to score)"
+                      value={formatDuration(cupKpis.avgWaitToScoreSec)}
+                      color="warning"
+                    />
+                  </Grid>
+                </Grid>
+
+                {/* Visualizations */}
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} md={3}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Completion
+                        </Typography>
+                        <Donut value={cupKpis.ratedCount} total={cupKpis.totalInCup} color="success" label={`${cupKpis.ratedCount}/${cupKpis.totalInCup}`} />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={5}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Rated per 10m (last 3h)
+                        </Typography>
+                        <Sparkline data={cupViz.rateBins} width={300} height={72} color="primary" />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Duration mix
+                        </Typography>
+                        <BarList items={cupViz.durationBins} color="info" />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} md={6}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Top Moderators (this cup)
+                        </Typography>
+                        {cupViz.topModerators.length === 0 ? (
+                          <Typography variant="caption" color="text.secondary">No moderation yet.</Typography>
+                        ) : (
+                          <BarList items={cupViz.topModerators} color="secondary" />
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+              </>
+            )}
 
                 <Grid container spacing={3}>
                   <Grid item xs={12} md={4}>

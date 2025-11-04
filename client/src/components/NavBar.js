@@ -18,7 +18,8 @@ import {
   Dashboard,
   Login,
   Logout,
-  Security
+  Security,
+  Settings
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,6 +44,16 @@ const NavBar = () => {
         roles.add(channel.ownershipRole);
       }
       return ['OWNER', 'MANAGER', 'PRODUCER', 'MODERATOR'].some((role) => roles.has(role));
+    });
+  }, [user]);
+
+  const canManageSettings = React.useMemo(() => {
+    if (!user?.channels) return false;
+    return user.channels.some((channel) => {
+      if (!channel) return false;
+      const roles = new Set(channel.roles || []);
+      if (channel.ownershipRole) roles.add(channel.ownershipRole);
+      return roles.has('OWNER') || roles.has('MANAGER');
     });
   }, [user]);
 
@@ -201,6 +212,12 @@ const NavBar = () => {
                     <Dashboard sx={{ mr: 2, fontSize: 20 }} />
                     Dashboard
                   </MenuItem>
+                  {canManageSettings && (
+                    <MenuItem onClick={() => { handleMenuClose(); navigate('/dashboard?tab=settings'); }}>
+                      <Settings sx={{ mr: 2, fontSize: 20 }} />
+                      Settings
+                    </MenuItem>
+                  )}
                   {canModerate && (
                     <MenuItem onClick={handleModeration}>
                       <Security sx={{ mr: 2, fontSize: 20 }} />

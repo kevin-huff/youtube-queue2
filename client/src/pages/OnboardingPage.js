@@ -62,7 +62,7 @@ const OnboardingPage = () => {
         throw new Error(payload.error || 'Failed to create channel');
       }
       setCreateSuccess(`Channel ${payload.channel?.displayName || name} created`);
-      setTimeout(() => navigate('/dashboard'), 800);
+      setTimeout(() => navigate('/dashboard?tab=settings'), 800);
     } catch (err) {
       setCreateError(err.message || 'Failed to create channel');
     } finally {
@@ -157,7 +157,7 @@ Twitch username: ${user?.username}`;
               <Button variant="contained" onClick={handleCreateChannel} disabled={createLoading}>
                 {createLoading ? 'Creating…' : 'Create Channel'}
               </Button>
-              <Button color="inherit" onClick={() => navigate('/dashboard')}>Skip</Button>
+              <Button color="inherit" onClick={() => navigate('/dashboard?tab=settings')}>Skip</Button>
             </CardActions>
           </Card>
         </Grid>
@@ -209,7 +209,7 @@ Twitch username: ${user?.username}`;
               </Stack>
             </CardContent>
             <CardActions>
-              <Button color="inherit" onClick={() => navigate('/dashboard')}>Skip</Button>
+              <Button color="inherit" onClick={() => navigate('/dashboard?tab=settings')}>Skip</Button>
             </CardActions>
           </Card>
         </Grid>
@@ -219,4 +219,3 @@ Twitch username: ${user?.username}`;
 };
 
 export default OnboardingPage;
-
