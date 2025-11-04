@@ -716,13 +716,16 @@ function ViewerHub() {
                                     >
                                       #{entry.rank || index + 1}
                                     </Box>
-                                    <Typography 
-                                      component="span" 
-                                      variant="h6" 
-                                      sx={{ 
+                                    <Typography
+                                      component={RouterLink}
+                                      to={`/u/${entry.submitterUsername}`}
+                                      variant="h6"
+                                      sx={{
                                         flex: 1,
                                         color: 'white',
-                                        fontWeight: 600
+                                        fontWeight: 600,
+                                        textDecoration: 'none',
+                                        '&:hover': { textDecoration: 'underline' }
                                       }}
                                     >
                                       {formatName(entry.submitterAlias, entry.submitterUsername)}

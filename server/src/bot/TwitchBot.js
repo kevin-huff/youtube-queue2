@@ -2,6 +2,9 @@ const tmi = require('tmi.js');
 const logger = require('../utils/logger');
 const VideoService = require('../services/VideoService');
 
+// Base URL for public web app links
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
 class TwitchBot {
   constructor(channelManager, io) {
     this.channelManager = channelManager;
@@ -203,6 +206,15 @@ class TwitchBot {
     const displayName = userstate['display-name'] || username;
 
     switch (command) {
+      case 'profile':
+      case 'myscores': {
+        // Allow optional mention to fetch another user's profile link
+        const rawTarget = (args[1] || username).toString();
+        const cleanTarget = rawTarget.replace(/^@/, '').toLowerCase();
+        const url = `${CLIENT_URL}/u/${encodeURIComponent(cleanTarget)}`;
+        this.sendMessage(channel, `@${displayName} Profile link for ${cleanTarget}: ${url}`);
+        break;
+      }
       case 'queue':
         if (args[1]) {
           await this.handleQueueCommand(channel, channelId, userstate, args[1], isModerator);
@@ -411,6 +423,7 @@ class TwitchBot {
 
     if (isModerator) {
       helpMessages.push(
+        '!profile [@user] - Get profile link',
         '!queue on/off - Enable/disable queue',
         '!skip - Skip current video',
         '!clear - Clear entire queue',
@@ -419,6 +432,7 @@ class TwitchBot {
         '!unban @user - Unban user'
       );
     } else {
+      helpMessages.push('!profile - Get your profile link');
       helpMessages.push('Just drop YouTube/TikTok/Instagram links in chat when the queue is open!');
     }
 

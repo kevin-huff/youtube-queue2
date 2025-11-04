@@ -197,6 +197,273 @@ class Server {
     // API routes
     this.app.use('/api', apiRoutes);
 
+    // Dynamic meta routes for rich previews on shareable pages
+    const CLIENT_URL = process.env.CLIENT_URL || '';
+    const readBaseIndex = () => {
+      try {
+        const fs = require('fs');
+        const p = path.join(__dirname, '../public/index.html');
+        if (fs.existsSync(p)) {
+          return fs.readFileSync(p, 'utf8');
+        }
+      } catch (_) {}
+      // Minimal fallback
+      return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FREE* Mediashare</title></head><body><div id="root"></div></body></html>';
+    };
+
+    const injectMeta = (html, tags = []) => {
+      if (!html || !tags.length) return html;
+      const headClose = '</head>';
+      const idx = html.indexOf(headClose);
+      const metaStr = tags.join('\n');
+      if (idx !== -1) {
+        return html.slice(0, idx) + '\n' + metaStr + '\n' + html.slice(idx);
+      }
+      return metaStr + html;
+    };
+
+    const metaTags = ({ title, desc, url, image, type = 'website', extra = [] }) => {
+      const safe = (s) => (typeof s === 'string' ? s : '')
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const tags = [
+        `<title>${safe(title || 'FREE* Mediashare')}</title>`,
+        `<meta name="description" content="${safe(desc || '')}">`,
+        `<meta property="og:type" content="${safe(type)}">`,
+        `<meta property="og:title" content="${safe(title || '')}">`,
+        `<meta property="og:description" content="${safe(desc || '')}">`,
+        url ? `<meta property="og:url" content="${safe(url)}">` : '',
+        image ? `<meta property="og:image" content="${safe(image)}">` : '',
+        `<meta name="twitter:card" content="summary_large_image">`,
+        `<meta name="twitter:title" content="${safe(title || '')}">`,
+        `<meta name="twitter:description" content="${safe(desc || '')}">`,
+        image ? `<meta name="twitter:image" content="${safe(image)}">` : ''
+      ].filter(Boolean);
+      return tags.concat(extra);
+    };
+
+    const renderWithMeta = async (buildMeta) => {
+      const base = readBaseIndex();
+      const tags = await buildMeta();
+      return injectMeta(base, tags);
+    };
+
+    // Lightweight dynamic OG image generator (SVG)
+    const ogSvg = ({ title = 'FREE* Mediashare', subtitle = '', accent = '#9146ff' } = {}) => {
+      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b0b0d"/>
+      <stop offset="100%" stop-color="#16161a"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="${accent}" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#00f0ff" stop-opacity="0.35"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#g1)"/>
+  <circle cx="1050" cy="-50" r="350" fill="url(#g2)"/>
+  <circle cx="-80" cy="650" r="420" fill="url(#g2)"/>
+  <g transform="translate(80, 180)">
+    <text x="0" y="0" font-family="Inter, Arial, Helvetica, sans-serif" font-size="70" fill="#ffffff" font-weight="800">
+      ${esc(title)}
+    </text>
+    <text x="0" y="70" font-family="Inter, Arial, Helvetica, sans-serif" font-size="34" fill="#d2ccff" opacity="0.9">
+      ${esc(subtitle)}
+    </text>
+  </g>
+  <text x="80" y="560" font-family="Inter, Arial, Helvetica, sans-serif" font-size="24" fill="#9aa0aa" opacity="0.9">FREE* Mediashare • KevNetCloud × ChatGPT</text>
+</svg>`;
+    };
+
+    // OG image routes (SVG)
+    this.app.get('/og/u/:username.svg', async (req, res) => {
+      try {
+        const username = (req.params.username || '').toLowerCase();
+        const [items, groups] = await Promise.all([
+          this.channelManager.prisma.queueItem.count({
+            where: {
+              submitterUsername: { equals: username, mode: 'insensitive' },
+              judgeScores: { some: {} }
+            }
+          }),
+          this.channelManager.prisma.queueItem.groupBy({
+            by: ['cupId'],
+            where: {
+              submitterUsername: { equals: username, mode: 'insensitive' },
+              judgeScores: { some: {} },
+              cupId: { not: null }
+            },
+            _count: { _all: true }
+          }).catch(() => [])
+        ]);
+        const cupCount = Array.isArray(groups) ? groups.length : 0;
+        const svg = ogSvg({
+          title: `@${username} — Submitter Profile`,
+          subtitle: `${items} rated video${items === 1 ? '' : 's'} • ${cupCount} cup${cupCount === 1 ? '' : 's'}`,
+          accent: '#ff1cf7'
+        });
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Cache-Control', 'public, max-age=600');
+        return res.send(svg);
+      } catch (err) {
+        const svg = ogSvg({ title: 'Submitter Profile', subtitle: 'Rated videos across cups', accent: '#ff1cf7' });
+        res.set('Content-Type', 'image/svg+xml');
+        res.status(200).send(svg);
+      }
+    });
+
+    this.app.get('/og/channel/:channelName/:kind.svg', async (req, res) => {
+      try {
+        const channelName = (req.params.channelName || '').toLowerCase();
+        const kind = (req.params.kind || '').toLowerCase();
+        const info = await this.channelManager.getChannelInfo(channelName);
+        const display = info?.displayName || channelName;
+        const map = {
+          viewer: 'Viewer Hub',
+          queue: 'Submit to the Queue',
+          'queue-overlay': 'Queue Overlay',
+          leaderboard: 'Live Leaderboard',
+          player: 'Synchronized Player',
+          judge: 'Judge Console',
+          cups: 'Cup Admin'
+        };
+        const subtitle = map[kind] || 'Channel';
+        const svg = ogSvg({ title: `${display}`, subtitle, accent: '#00f0ff' });
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Cache-Control', 'public, max-age=600');
+        return res.send(svg);
+      } catch (err) {
+        const svg = ogSvg({ title: 'FREE* Mediashare', subtitle: 'KevNetCloud × ChatGPT', accent: '#00f0ff' });
+        res.set('Content-Type', 'image/svg+xml');
+        res.status(200).send(svg);
+      }
+    });
+
+    // Public share pages
+    this.app.get([
+      '/u/:username',
+      '/viewer/:channelName',
+      '/channel/:channelName',
+      '/overlay/:channelName/leaderboard',
+      '/overlay/:channelName/queue',
+      '/player/:channelName',
+      '/judge/:channelName/:cupId',
+      '/judge/:channelName/:cupId/overlay',
+      '/channel/:channelName/cups'
+    ], async (req, res, next) => {
+      try {
+        const channelManager = this.channelManager;
+        const baseUrl = CLIENT_URL || `${req.protocol}://${req.get('host')}`;
+        const fullUrl = baseUrl + req.originalUrl;
+
+        // Submitter profile: /u/:username
+        if (req.path.startsWith('/u/')) {
+          const username = (req.params.username || '').toLowerCase();
+          // Count rated videos + cups
+          const [items, groups] = await Promise.all([
+            channelManager.prisma.queueItem.count({
+              where: {
+                submitterUsername: { equals: username, mode: 'insensitive' },
+                judgeScores: { some: {} }
+              }
+            }),
+            channelManager.prisma.queueItem.groupBy({
+              by: ['cupId'],
+              where: {
+                submitterUsername: { equals: username, mode: 'insensitive' },
+                judgeScores: { some: {} },
+                cupId: { not: null }
+              },
+              _count: { _all: true }
+            }).catch(() => [])
+          ]);
+          const cupCount = Array.isArray(groups) ? groups.length : 0;
+          const title = `${username} — Submitter Profile (${items} rated videos across ${cupCount} cup${cupCount === 1 ? '' : 's'})`;
+          const desc = `See ${username}'s rated videos, judges’ scores, and standings across cups.`;
+          const img = `${baseUrl}/og/u/${encodeURIComponent(username)}.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        // Channel viewer hub / overlay meta
+        const channelName = (req.params.channelName || '').toLowerCase();
+        const channel = await channelManager.getChannelInfo(channelName);
+        const imageFallback = `${baseUrl}/logo192.png`;
+        const image = channel?.profileImageUrl || imageFallback;
+
+        if (req.path.startsWith('/viewer/')) {
+          const title = `${channel?.displayName || channelName} — Viewer Hub`;
+          const desc = `Live cups, queue status, standings, and more for ${channel?.displayName || channelName}.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/viewer.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.startsWith('/channel/')) {
+          const title = `Submit to ${channel?.displayName || channelName}`;
+          const desc = `Drop your best videos into ${channel?.displayName || channelName}'s mediashare queue.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/queue.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.includes('/overlay/leaderboard')) {
+          const title = `${channel?.displayName || channelName} — Live Leaderboard Overlay`;
+          const desc = `Realtime standings overlay for ${channel?.displayName || channelName}.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/leaderboard.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image, type: 'video.other' });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.includes('/overlay/queue')) {
+          const title = `${channel?.displayName || channelName} — Live Queue Overlay`;
+          const desc = `Queue overlay for ${channel?.displayName || channelName}: what’s playing and what’s next.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/queue-overlay.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image, type: 'video.other' });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.startsWith('/player/')) {
+          const title = `${channel?.displayName || channelName} — Player`;
+          const desc = `Synchronized YouTube player for ${channel?.displayName || channelName}.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/player.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image, type: 'video.movie' });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.startsWith('/judge/')) {
+          const title = `${channel?.displayName || channelName} — Judge Console`;
+          const desc = `Score videos live for cup ${req.params.cupId}. Lock in your vote, reveal the average, and help shape the standings.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/judge.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image, type: 'website' });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        if (req.path.startsWith('/channel/') && req.path.endsWith('/cups')) {
+          const title = `${channel?.displayName || channelName} — Cup Admin`;
+          const desc = `Manage cups, assign videos, and control the live show.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/cups.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
+        return next();
+      } catch (err) {
+        logger.warn('Dynamic meta route failed; falling back to static', { error: err?.message });
+        return next();
+      }
+    });
+
     // Serve uploaded assets (audio, etc.).
     const uploadsDir = process.env.UPLOADS_DIR
       ? path.resolve(process.env.UPLOADS_DIR)
