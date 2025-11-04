@@ -1142,29 +1142,26 @@ const Dashboard = () => {
   const fetchPlayedInActiveCup = useCallback(async () => {
     if (!currentChannelId) return;
     try {
-      const cupsRes = await axios.get(`/api/channels/${currentChannelId}/cups`, { withCredentials: true });
-      const cups = Array.isArray(cupsRes?.data?.cups) ? cupsRes.data.cups : [];
-      const activeCup = cups.find((c) => c.isActive) || cups[0];
-      if (!activeCup?.id) {
-        setScoredInCupCount(0);
-        setUnmoderatedAutoApprovedCount(0);
-        return;
-      }
-      const vidsRes = await axios.get(`/api/channels/${currentChannelId}/cups/${activeCup.id}/videos`, { withCredentials: true });
-      const videos = Array.isArray(vidsRes?.data?.videos) ? vidsRes.data.videos : [];
+      // Use submissions with activeCupsOnly to align with Moderation view
+      const res = await axios.get(`/api/channels/${currentChannelId}/submissions`, {
+        params: { status: 'ALL', limit: 'ALL', activeCupsOnly: true },
+        withCredentials: true
+      });
+      const list = Array.isArray(res?.data?.submissions) ? res.data.submissions : [];
       const TERMINAL = new Set(['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJECTED', 'ELIMINATED']);
+
       let scored = 0;
       let unmoderated = 0;
-      for (const v of videos) {
-        const s = String(v.status || '').toUpperCase();
+      for (const it of list) {
+        const s = String(it.status || '').toUpperCase();
         if (s === 'SCORED') scored += 1;
-        const autoApproved = v.moderationStatus !== 'WARNING' && !v.moderatedBy;
+        const autoApproved = it.moderationStatus !== 'WARNING' && !it.moderatedBy;
         if (autoApproved && !TERMINAL.has(s)) unmoderated += 1;
       }
       setScoredInCupCount(scored);
       setUnmoderatedAutoApprovedCount(unmoderated);
     } catch (err) {
-      console.warn('Failed to compute played-in-cup count:', err);
+      console.warn('Failed to compute cup KPIs:', err);
       setScoredInCupCount(0);
       setUnmoderatedAutoApprovedCount(0);
     }
