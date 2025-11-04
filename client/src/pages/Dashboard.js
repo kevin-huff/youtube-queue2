@@ -729,12 +729,7 @@ const Dashboard = () => {
     }
   }, [user]);
 
-  // Refresh status summary when channel changes
-  useEffect(() => {
-    if (!currentChannelId) return;
-    fetchStatusSummary();
-    fetchPlayedInActiveCup();
-  }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
+  // (moved) Refresh status summary when channel changes defined later
 
   // Keep a ref of the currently selected channel id to avoid setState loops
   useEffect(() => {
@@ -1071,6 +1066,13 @@ const Dashboard = () => {
       setPlayedInCupCount(0);
     }
   }, [currentChannelId]);
+
+  // Refresh status summary when channel changes (placed after function declarations to avoid TDZ)
+  useEffect(() => {
+    if (!currentChannelId) return;
+    fetchStatusSummary();
+    fetchPlayedInActiveCup();
+  }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
 
   if (authLoading || loading) {
     return (
