@@ -160,6 +160,93 @@ const StatCard = ({ icon, title, value, color = 'primary' }) => {
   );
 };
 
+// Segmented status distribution bar with legend
+const StatusDistribution = ({ counts = {}, selected = 'ALL', onSelect }) => {
+  const theme = useTheme();
+  const total = Object.values(counts).reduce((a, b) => a + (b || 0), 0) || 0;
+  const ORDER = ['PENDING', 'PLAYING', 'APPROVED', 'TOP_EIGHT', 'SCORED', 'PLAYED', 'REJECTED', 'SKIPPED', 'REMOVED', 'ELIMINATED'];
+  const META = {
+    PENDING: { label: 'Pending', color: theme.palette.warning.main, filterable: true },
+    PLAYING: { label: 'Playing', color: theme.palette.info.main, filterable: true },
+    APPROVED: { label: 'Approved', color: theme.palette.success.main, filterable: true },
+    TOP_EIGHT: { label: 'Top 8', color: theme.palette.secondary.main, filterable: true },
+    SCORED: { label: 'Scored', color: theme.palette.success.light, filterable: false },
+    PLAYED: { label: 'Played', color: theme.palette.success.dark, filterable: false },
+    REJECTED: { label: 'Rejected', color: theme.palette.error.main, filterable: false },
+    SKIPPED: { label: 'Skipped', color: theme.palette.error.main, filterable: false },
+    REMOVED: { label: 'Removed', color: theme.palette.error.main, filterable: false },
+    ELIMINATED: { label: 'Eliminated', color: theme.palette.error.main, filterable: false }
+  };
+
+  const entries = ORDER
+    .map((k) => [k, counts[k] || 0])
+    .filter(([, v]) => v > 0);
+
+  return (
+    <Box>
+      <Box
+        sx={{
+          display: 'flex',
+          height: 14,
+          borderRadius: 7,
+          overflow: 'hidden',
+          bgcolor: 'action.hover',
+          border: `1px solid ${alpha(theme.palette.divider, 0.6)}`,
+        }}
+      >
+        {total === 0 ? (
+          <Box sx={{ flex: 1 }} />
+        ) : (
+          entries.map(([k, v], idx) => {
+            const meta = META[k] || { label: k, color: theme.palette.grey[600], filterable: false };
+            const pct = (v / total) * 100;
+            const dim = selected !== 'ALL' && selected !== k;
+            return (
+              <Tooltip key={k} title={`${meta.label}: ${v} (${Math.round(pct)}%)`} arrow>
+                <Box
+                  onClick={meta.filterable ? () => onSelect?.(k) : undefined}
+                  sx={{
+                    flex: v,
+                    bgcolor: meta.color,
+                    opacity: dim ? 0.45 : 1,
+                    cursor: meta.filterable ? 'pointer' : 'default',
+                    borderRight: idx < entries.length - 1 ? `2px solid ${alpha('#000', 0.25)}` : 'none'
+                  }}
+                />
+              </Tooltip>
+            );
+          })
+        )}
+      </Box>
+      <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+        <Chip
+          size="small"
+          variant={selected === 'ALL' ? 'filled' : 'outlined'}
+          label="All"
+          onClick={() => onSelect?.('ALL')}
+        />
+        {entries.map(([k, v]) => {
+          const meta = META[k] || { label: k, color: theme.palette.grey[600], filterable: false };
+          return (
+            <Chip
+              key={k}
+              size="small"
+              label={`${meta.label}: ${v}`}
+              icon={<Box component="span" sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: meta.color }} />}
+              onClick={meta.filterable ? () => onSelect?.(k) : undefined}
+              variant={selected === k ? 'filled' : 'outlined'}
+              sx={{
+                pl: 0.5,
+                '& .MuiChip-icon': { mr: 0.5 }
+              }}
+            />
+          );
+        })}
+      </Box>
+    </Box>
+  );
+};
+
 const Dashboard = () => {
   const theme = useTheme();
   const { user, loading: authLoading, hasChannelRole, findChannelAccess } = useAuth();
@@ -180,6 +267,7 @@ const Dashboard = () => {
   const [moderationError, setModerationError] = useState(null);
   const [moderationActionId, setModerationActionId] = useState(null);
   const [showAutoOnly, setShowAutoOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [playedInCupCount, setPlayedInCupCount] = useState(0);
   // Summary stats for header and overview
   const [statusCounts, setStatusCounts] = useState({});
@@ -994,11 +1082,17 @@ const Dashboard = () => {
   const warningActionInFlight = Boolean(warningTarget && moderationActionId === warningTarget.id);
   const warningNoteLength = warningNote.length;
   const filteredModerationItems = useMemo(
-    () => (showAutoOnly
-      ? moderationItems.filter((item) => item.moderationStatus !== 'WARNING' && !item.moderatedBy)
-      : moderationItems
-    ),
-    [moderationItems, showAutoOnly]
+    () => {
+      const base = moderationItems.filter((item) => {
+        if (statusFilter === 'ALL') return true;
+        const s = String(item.status || '').toUpperCase();
+        return s === statusFilter;
+      });
+      return showAutoOnly
+        ? base.filter((item) => item.moderationStatus !== 'WARNING' && !item.moderatedBy)
+        : base;
+    },
+    [moderationItems, showAutoOnly, statusFilter]
   );
 
   const fetchStatusSummary = useCallback(async () => {
@@ -1141,36 +1235,6 @@ const Dashboard = () => {
                 )}
               </Box>
 
-              {/* Status counts under channel access */}
-              <Box mt={1.5} display="flex" alignItems="center" gap={1} flexWrap="wrap">
-                {summaryLoading && (
-                  <Skeleton variant="rectangular" width={240} height={28} sx={{ borderRadius: 1 }} />
-                )}
-                {!summaryLoading && (
-                  <>
-                    {Object.entries(statusCounts).filter(([, v]) => v > 0).map(([k, v]) => {
-                      const s = String(k).toUpperCase();
-                      const label = `${s.replace('_', ' ')}: ${v}`;
-                      let color = 'default';
-                      if (s === 'PENDING') color = 'warning';
-                      else if (s === 'APPROVED' || s === 'PLAYED' || s === 'SCORED') color = 'success';
-                      else if (s === 'PLAYING') color = 'info';
-                      else if (s === 'TOP_EIGHT') color = 'secondary';
-                      else if (s === 'REJECTED' || s === 'REMOVED' || s === 'ELIMINATED' || s === 'SKIPPED') color = 'error';
-                      return (
-                        <Chip key={s} size="small" color={color} variant={s === 'PENDING' ? 'filled' : 'outlined'} label={label} />
-                      );
-                    })}
-                    {warningsTotal > 0 && (
-                      <Chip size="small" color="warning" label={`WARNING: ${warningsTotal}`} />
-                    )}
-                    {autoApprovedTotal > 0 && (
-                      <Chip size="small" color="success" variant="outlined" label={`Auto‑approved: ${autoApprovedTotal}`} />
-                    )}
-                    <Chip size="small" variant="outlined" label={`Top Mod: ${topModerator.name || '—'}${topModerator.count ? ` (${topModerator.count})` : ''}`} />
-                  </>
-                )}
-              </Box>
             </Box>
           )}
         </Box>
@@ -1247,21 +1311,6 @@ const Dashboard = () => {
 
             {channel && (
               <>
-            {/* Played in active cup */}
-            <Card sx={{ mb: 2 }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" justifyContent="space-between">
-                  <Box>
-                    <Typography color="text.secondary" variant="body2" gutterBottom>
-                      Videos Played This Cup
-                    </Typography>
-                    <Typography variant="h4" fontWeight={700}>
-                      {playedInCupCount}
-                    </Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
             {/* Channel Header Card */}
             <Card sx={{ mb: 4 }}>
               <CardContent>
@@ -1927,7 +1976,7 @@ const Dashboard = () => {
 
             {channel && canModerate && (
               <>
-                <Grid container spacing={3} sx={{ mb: 4 }}>
+                <Grid container spacing={3} sx={{ mb: 2 }}>
                   <Grid item xs={12} sm={6} md={4}>
                     <StatCard
                       icon={<QueueMusic />}
@@ -1960,7 +2009,28 @@ const Dashboard = () => {
                       color="secondary"
                     />
                   </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <StatCard
+                      icon={<VideoLibrary />}
+                      title="Played This Cup"
+                      value={playedInCupCount}
+                      color="secondary"
+                    />
+                  </Grid>
                 </Grid>
+
+                {/* Status distribution */}
+                <Box sx={{ mb: 3 }}>
+                  {summaryLoading ? (
+                    <Skeleton variant="rectangular" width={420} height={20} sx={{ borderRadius: 1 }} />
+                  ) : (
+                    <StatusDistribution
+                      counts={statusCounts}
+                      selected={statusFilter}
+                      onSelect={setStatusFilter}
+                    />
+                  )}
+                </Box>
 
                 <Grid container spacing={3}>
                   <Grid item xs={12} md={4}>
