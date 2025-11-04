@@ -635,6 +635,148 @@ router.get('/channels/public/:channelName/cups/:cupId/standings', async (req, re
   }
 });
 
+// Public: Submitter profile across all channels and cups
+// Returns all rated videos (with judge scores) grouped by cup
+router.get('/public/submitters/:username', async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const prisma = channelManager.prisma;
+
+    const usernameParam = (req.params.username || '').toString().trim();
+    if (!usernameParam) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+
+    // Find all items for this submitter that have any judge scores (i.e., have been rated)
+    const items = await prisma.queueItem.findMany({
+      where: {
+        submitterUsername: { equals: usernameParam, mode: 'insensitive' },
+        judgeScores: { some: {} }
+      },
+      include: {
+        judgeScores: true,
+        cup: {
+          select: { id: true, title: true, slug: true, status: true, channelId: true }
+        },
+        channel: {
+          select: { id: true, displayName: true, profileImageUrl: true }
+        }
+      },
+      orderBy: [
+        { playedAt: 'asc' },
+        { createdAt: 'asc' }
+      ]
+    });
+
+    if (!items.length) {
+      return res.json({
+        submitter: { username: usernameParam },
+        cups: [],
+        stats: { totalVideos: 0, totalJudgeCount: 0 }
+      });
+    }
+
+    // Group items by cup
+    const byCup = new Map();
+    for (const item of items) {
+      if (!item.cup) {
+        // Skip items not assigned to a cup for this view
+        continue;
+      }
+      const cupKey = item.cup.id;
+      if (!byCup.has(cupKey)) {
+        byCup.set(cupKey, {
+          cup: item.cup,
+          channel: item.channel || { id: item.cup.channelId, displayName: item.cup.channelId, profileImageUrl: null },
+          videos: [],
+          stats: { videoCount: 0, judgeCount: 0 }
+        });
+      }
+
+      const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
+      const judgeCount = judgeScores.length;
+      let totalScore = null;
+      let averageScore = null;
+      if (judgeCount > 0) {
+        const sum = judgeScores.reduce((s, x) => s + Number(x.score), 0);
+        totalScore = Number(sum.toFixed(5));
+        averageScore = Number((sum / judgeCount).toFixed(5));
+      }
+
+      const videoPayload = {
+        queueItemId: item.id,
+        videoId: item.videoId,
+        videoUrl: item.videoUrl,
+        title: item.title,
+        thumbnailUrl: item.thumbnailUrl,
+        status: item.status,
+        playedAt: item.playedAt,
+        createdAt: item.createdAt,
+        judgeCount,
+        totalScore,
+        averageScore,
+        judgeScores: judgeScores.map((score) => ({
+          id: score.id,
+          score: Number(score.score),
+          comment: score.comment || null,
+          isLocked: score.isLocked,
+          lockType: score.lockType || null,
+          lockedAt: score.lockedAt || null,
+          judgeName: score.judgeName || 'Anonymous'
+        }))
+      };
+
+      const entry = byCup.get(cupKey);
+      entry.videos.push(videoPayload);
+      entry.stats.videoCount += 1;
+      entry.stats.judgeCount += judgeCount;
+    }
+
+    // Fetch standings summaries for this submitter for the cups we found
+    const cupIds = Array.from(byCup.keys());
+    const standings = await prisma.cupStanding.findMany({
+      where: {
+        cupId: { in: cupIds },
+        submitterUsername: { equals: usernameParam, mode: 'insensitive' }
+      },
+      select: {
+        cupId: true,
+        averageScore: true,
+        totalScore: true,
+        judgeCount: true,
+        rank: true,
+        metadata: true
+      }
+    });
+    const standingByCup = new Map(standings.map((s) => [s.cupId, s]));
+
+    const cups = Array.from(byCup.values()).map((group) => ({
+      cup: group.cup,
+      channel: group.channel,
+      stats: {
+        videoCount: group.stats.videoCount,
+        judgeCount: group.stats.judgeCount
+      },
+      standing: standingByCup.get(group.cup.id) || null,
+      videos: group.videos
+    }));
+
+    const totals = cups.reduce((acc, c) => ({
+      totalVideos: acc.totalVideos + (c?.stats?.videoCount || 0),
+      totalJudgeCount: acc.totalJudgeCount + (c?.stats?.judgeCount || 0)
+    }), { totalVideos: 0, totalJudgeCount: 0 });
+
+    res.json({
+      submitter: { username: usernameParam },
+      cups,
+      stats: totals
+    });
+  } catch (error) {
+    logger.error('Error getting public submitter profile:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to get submitter profile' });
+  }
+});
+
 // Cup management routes
 router.post('/channels/:channelId/cups',
   requireAuth,

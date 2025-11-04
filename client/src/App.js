@@ -20,6 +20,7 @@ import JudgeOverlay from './pages/JudgeOverlay';
 import CupAdmin from './pages/CupAdmin';
 import ViewerHub from './pages/ViewerHub';
 import OnboardingPage from './pages/OnboardingPage';
+import SubmitterProfile from './pages/SubmitterProfile';
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -64,6 +65,7 @@ function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/viewer/:channelName" element={<ViewerHub />} />
               <Route path="/channel/:channelName" element={<ChannelQueue />} />
+              <Route path="/u/:username" element={<SubmitterProfile />} />
               <Route path="/player/:channelName" element={<PlayerOverlay />} />
               <Route path="/overlay/:channelName/queue" element={<QueueOverlay />} />
               <Route path="/overlay/:channelName/leaderboard" element={<LeaderboardOverlay />} />
