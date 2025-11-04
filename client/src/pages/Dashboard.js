@@ -1841,6 +1841,135 @@ const Dashboard = () => {
               );
             })()}
 
+            {/* Cup KPIs */}
+            {activeCup && (
+              <>
+                <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                  Cup KPIs{activeCup?.title ? ` — ${activeCup.title}` : ''}
+                </Typography>
+                <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<PlayArrow />}
+                      title="Videos/hr (overall)"
+                      value={cupKpis.ratedPerHour}
+                      color="info"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<PlayArrow />}
+                      title="Videos/hr (last 60m)"
+                      value={cupKpis.ratedPerHourRecent}
+                      color="primary"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<VideoLibrary />}
+                      title="Rated (total)"
+                      value={cupKpis.ratedCount}
+                      color="secondary"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<QueueMusic />}
+                      title="In Cup (all)"
+                      value={cupKpis.totalInCup}
+                      color="default"
+                    />
+                  </Grid>
+                </Grid>
+
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<ThumbUp />}
+                      title="Avg Score"
+                      value={cupKpis.avgScore ?? '—'}
+                      color="success"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<ThumbUp />}
+                      title="Median Score"
+                      value={cupKpis.medianScore ?? '—'}
+                      color="success"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<Person />}
+                      title="Avg Judges/Video"
+                      value={cupKpis.avgJudges}
+                      color="info"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <StatCard
+                      icon={<Timer />}
+                      title="Avg Wait (to score)"
+                      value={formatDuration(cupKpis.avgWaitToScoreSec)}
+                      color="warning"
+                    />
+                  </Grid>
+                </Grid>
+
+                {/* Visualizations */}
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} md={3}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Completion
+                        </Typography>
+                        <Donut value={cupKpis.ratedCount} total={cupKpis.totalInCup} color="success" label={`${cupKpis.ratedCount}/${cupKpis.totalInCup}`} />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={5}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Rated per 10m (last 3h)
+                        </Typography>
+                        <Sparkline data={cupViz.rateBins} width={300} height={72} color="primary" />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Duration mix
+                        </Typography>
+                        <BarList items={cupViz.durationBins} color="info" />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  <Grid item xs={12} md={6}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Top Moderators (this cup)
+                        </Typography>
+                        {cupViz.topModerators.length === 0 ? (
+                          <Typography variant="caption" color="text.secondary">No moderation yet.</Typography>
+                        ) : (
+                          <BarList items={cupViz.topModerators} color="secondary" />
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+              </>
+            )}
+
             {/* Moderation KPIs (from Moderation tab) */}
             <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
               Moderation KPIs
@@ -2353,134 +2482,7 @@ const Dashboard = () => {
               )}
             </Box>
 
-            {/* Cup KPIs */}
-            {activeCup && (
-              <>
-                <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-                  Cup KPIs{activeCup?.title ? ` — ${activeCup.title}` : ''}
-                </Typography>
-                <Grid container spacing={3} sx={{ mb: 3 }}>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<PlayArrow />}
-                      title="Videos/hr (overall)"
-                      value={cupKpis.ratedPerHour}
-                      color="info"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<PlayArrow />}
-                      title="Videos/hr (last 60m)"
-                      value={cupKpis.ratedPerHourRecent}
-                      color="primary"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<VideoLibrary />}
-                      title="Rated (total)"
-                      value={cupKpis.ratedCount}
-                      color="secondary"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<QueueMusic />}
-                      title="In Cup (all)"
-                      value={cupKpis.totalInCup}
-                      color="default"
-                    />
-                  </Grid>
-                </Grid>
-
-                <Grid container spacing={3} sx={{ mb: 4 }}>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<ThumbUp />}
-                      title="Avg Score"
-                      value={cupKpis.avgScore ?? '—'}
-                      color="success"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<ThumbUp />}
-                      title="Median Score"
-                      value={cupKpis.medianScore ?? '—'}
-                      color="success"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<Person />}
-                      title="Avg Judges/Video"
-                      value={cupKpis.avgJudges}
-                      color="info"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <StatCard
-                      icon={<Timer />}
-                      title="Avg Wait (to score)"
-                      value={formatDuration(cupKpis.avgWaitToScoreSec)}
-                      color="warning"
-                    />
-                  </Grid>
-                </Grid>
-
-                {/* Visualizations */}
-                <Grid container spacing={3} sx={{ mb: 4 }}>
-                  <Grid item xs={12} md={3}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          Completion
-                        </Typography>
-                        <Donut value={cupKpis.ratedCount} total={cupKpis.totalInCup} color="success" label={`${cupKpis.ratedCount}/${cupKpis.totalInCup}`} />
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                  <Grid item xs={12} md={5}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          Rated per 10m (last 3h)
-                        </Typography>
-                        <Sparkline data={cupViz.rateBins} width={300} height={72} color="primary" />
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          Duration mix
-                        </Typography>
-                        <BarList items={cupViz.durationBins} color="info" />
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                </Grid>
-
-                <Grid container spacing={3} sx={{ mb: 4 }}>
-                  <Grid item xs={12} md={6}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          Top Moderators (this cup)
-                        </Typography>
-                        {cupViz.topModerators.length === 0 ? (
-                          <Typography variant="caption" color="text.secondary">No moderation yet.</Typography>
-                        ) : (
-                          <BarList items={cupViz.topModerators} color="secondary" />
-                        )}
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                </Grid>
-              </>
-            )}
+            {/* Cup KPIs moved to Overview */}
 
                 <Grid container spacing={3}>
                   <Grid item xs={12} md={4}>
