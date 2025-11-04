@@ -293,6 +293,7 @@ const Dashboard = () => {
   const [sbExpanded, setSbExpanded] = useState(false);
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
+  const summaryRefreshTimeoutRef = useRef(null);
   const settingsSectionRef = useRef(null);
   // Track selected channel id across renders to avoid refetch loops
   const selectedChannelIdRef = useRef(null);
@@ -1173,6 +1174,35 @@ const Dashboard = () => {
     fetchStatusSummary();
     fetchPlayedInActiveCup();
   }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
+
+  // Live-refresh summaries on queue events (debounced)
+  useEffect(() => {
+    const schedule = () => {
+      try { if (summaryRefreshTimeoutRef.current) clearTimeout(summaryRefreshTimeoutRef.current); } catch (_) {}
+      summaryRefreshTimeoutRef.current = setTimeout(() => {
+        fetchStatusSummary();
+        fetchPlayedInActiveCup();
+      }, 500);
+    };
+
+    const added = addChannelListener?.('queue:video_added', schedule);
+    const updated = addChannelListener?.('queue:item_updated', schedule);
+    const removed = addChannelListener?.('queue:video_removed', schedule);
+    const status = addChannelListener?.('queue:item_status', schedule);
+    const scored = addChannelListener?.('queue:item_scored', schedule);
+
+    return () => {
+      if (summaryRefreshTimeoutRef.current) {
+        clearTimeout(summaryRefreshTimeoutRef.current);
+        summaryRefreshTimeoutRef.current = null;
+      }
+      if (added) removeChannelListener?.('queue:video_added', schedule);
+      if (updated) removeChannelListener?.('queue:item_updated', schedule);
+      if (removed) removeChannelListener?.('queue:video_removed', schedule);
+      if (status) removeChannelListener?.('queue:item_status', schedule);
+      if (scored) removeChannelListener?.('queue:item_scored', schedule);
+    };
+  }, [addChannelListener, removeChannelListener, fetchStatusSummary, fetchPlayedInActiveCup]);
 
   if (authLoading || loading) {
     return (
@@ -2126,15 +2156,15 @@ const Dashboard = () => {
                               }
                               label="Only Auto‑approved"
                             />
-                            <Button
-                              variant="outlined"
-                              size="small"
-                              onClick={loadPendingSubmissions}
-                              disabled={moderationLoading}
-                            >
-                              Refresh
-                            </Button>
-                          </Box>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => { loadPendingSubmissions(); fetchStatusSummary(); fetchPlayedInActiveCup(); }}
+                            disabled={moderationLoading}
+                          >
+                            Refresh
+                          </Button>
+                        </Box>
                         </Box>
 
                         {moderationError && (
