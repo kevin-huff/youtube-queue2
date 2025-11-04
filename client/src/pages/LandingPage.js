@@ -8,12 +8,10 @@ import {
   Stack,
   Link,
   Grid,
-  TextField,
   useTheme,
   alpha
 } from '@mui/material';
 import { 
-  Security, 
   LiveTv,
   CheckCircleOutline,
   Layers,
@@ -30,7 +28,7 @@ const LandingPage = () => {
   const theme = useTheme();
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const [viewerChannel, setViewerChannel] = React.useState('');
+  // Viewer tools removed from landing page per request
 
   React.useEffect(() => {
     if (isAuthenticated) {
@@ -108,7 +106,12 @@ const LandingPage = () => {
               boxShadow: `0 20px 80px ${alpha('#000', 0.45)}`,
             }}
           >
-            <Stack direction="row" spacing={1} justifyContent="center" sx={{ mb: 2 }}>
+            <Stack direction="row" spacing={1} justifyContent="center" sx={{ mb: 2, flexWrap: 'wrap' }}>
+              <Chip 
+                label={<span>Free<sup>*</sup> mediashare</span>} 
+                size="small" 
+                sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.blue, 0.12), color: theme.palette.neon.blue, border: `1px solid ${alpha(theme.palette.neon.blue, 0.4)}` }} 
+              />
               <Chip label="Live gameshow" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.blue, 0.12), color: theme.palette.neon.blue, border: `1px solid ${alpha(theme.palette.neon.blue, 0.4)}` }} />
               <Chip label="Scores + reveal" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.pink, 0.12), color: theme.palette.neon.pink, border: `1px solid ${alpha(theme.palette.neon.pink, 0.4)}` }} />
               <Chip label="OBS overlays" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.purple, 0.12), color: theme.palette.neon.purple, border: `1px solid ${alpha(theme.palette.neon.purple, 0.4)}` }} />
@@ -138,28 +141,11 @@ const LandingPage = () => {
               color="text.secondary" 
               sx={{ mb: 3, maxWidth: 880, mx: 'auto', fontWeight: 400 }}
             >
-              Your streamer runs the show. Viewers drop clips, judges score, reveals hit live, and the leaderboard climbs. Its mediashare — turned into a gameshow.
+              Your streamer runs the show. Viewers drop clips, judges score with 5‑decimal precision, reveals hit live, and the leaderboard climbs. It’s Free<sup>*</sup> mediashare — turned into a gameshow.
             </Typography>
 
             {/* Dual CTA: Watch a show (viewer) and Start a show (creator) */}
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="center" alignItems="stretch">
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ width: { xs: '100%', md: 540 } }}>
-                <TextField
-                  label="Channel ID (e.g., yourtwitchname)"
-                  value={viewerChannel}
-                  onChange={(e) => setViewerChannel(e.target.value.trim().toLowerCase())}
-                  fullWidth
-                  size="small"
-                />
-                <Button
-                  variant="outlined"
-                  disabled={!viewerChannel}
-                  href={viewerChannel ? `/viewer/${viewerChannel}` : undefined}
-                  startIcon={<LinkIcon />}
-                >
-                  Watch Viewer Hub
-                </Button>
-              </Stack>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="center" alignItems="center">
               <Button 
                 variant="contained" 
                 size="large" 
@@ -205,7 +191,11 @@ const LandingPage = () => {
           >
             {/* What it is */}
             <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }}>
-              What is FREE* Mediashare?
+              What is {""}
+              <Box component="span" sx={{ display: 'inline' }}>
+                Free<sup>*</sup> mediashare
+              </Box>
+              ?
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mb: 4, maxWidth: 900 }}>
               A mediashare that plays like a competition. Viewers submit clips, judges score with precision, and standings update live. Overlays keep everyone in on the reveal.
@@ -231,7 +221,7 @@ const LandingPage = () => {
                     <Typography variant="h6" fontWeight={700}>Cups + Judging</Typography>
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
-                    Precision scores, lock + reveal moments, standings, and easy judge links for your panel.
+                    5‑star ratings with 5‑decimal precision (0.00000–5.00000), lock + reveal, live standings, and guest judge links you can share in one click.
                   </Typography>
                 </Stack>
               </Grid>
@@ -284,13 +274,41 @@ const LandingPage = () => {
               </Grid>
             </Box>
 
+            {/* Judging system details */}
+            <Box sx={{ mt: 5 }}>
+              <Typography variant="h5" sx={{ fontWeight: 800, mb: 1 }}>
+                Judging System
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={6}>
+                  <Stack spacing={1}>
+                    <Typography variant="subtitle1" fontWeight={700}>5‑star, 5‑decimal precision</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Judges rate each clip from 0.00000 to 5.00000 using a precision slider and quick‑set buttons. Scores lock until reveal.
+                    </Typography>
+                  </Stack>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Stack spacing={1}>
+                    <Typography variant="subtitle1" fontWeight={700}>Guest judges</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Invite friends or community members with secure, expiring judge links. No account required to judge your cup.
+                    </Typography>
+                  </Stack>
+                </Grid>
+              </Grid>
+            </Box>
+
             {/* About */}
             <Box sx={{ mt: 5, pt: 4, borderTop: `1px dashed ${alpha(theme.palette.divider, 0.6)}` }}>
               <Typography variant="h5" sx={{ fontWeight: 800, mb: 1 }}>
                 About
               </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                Built by Kevin Huff. Visuals and front‑page redesign crafted with help from an AI coding assistant in the Codex CLI. Open‑source and tuned for shows.
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                I’m Kevin (aka ZilchGnu) — a Senior DevOps/Software Engineer specializing in PHP, Drupal, Node.js and infrastructure automation. On the side I stream on Twitch (the world's only telsa/uber/twitch streamer) and build tools for creators. GitHub: 
+                <Link href="https://github.com/kevin-huff" target="_blank" rel="noopener" underline="hover">github.com/kevin-huff</Link> 
+                {" "}| Twitch: {" "}
+                <Link href="https://twitch.tv/zilchgnu" target="_blank" rel="noopener" underline="hover">twitch.tv/zilchgnu</Link>
               </Typography>
               <Stack direction="row" spacing={2} alignItems="center">
                 <Link href="https://github.com/kevin-huff/youtube-queue2" target="_blank" rel="noopener" underline="hover" color="inherit">
@@ -301,51 +319,7 @@ const LandingPage = () => {
           </Box>
         </Box>
 
-        {/* Viewer quick links */}
-        <Box sx={{ mx: 'auto', mb: 12, maxWidth: 1100, px: { xs: 2, md: 4 } }}>
-          <Box
-            sx={{
-              p: { xs: 3, md: 4 },
-              borderRadius: 3,
-              background: `linear-gradient(180deg, ${alpha(theme.palette.background.paper, 0.6)}, ${alpha(theme.palette.background.paper, 0.4)})`,
-              backdropFilter: 'blur(12px) saturate(120%)',
-              border: `1px solid ${alpha(theme.palette.neon.blue, 0.25)}`,
-              boxShadow: `0 16px 64px ${alpha('#000', 0.35)}`,
-            }}
-          >
-            <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>
-              For Viewers
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
-              Jump straight to a channel’s public pages. Enter a channel ID to get links you can open in a new tab or add as OBS browser sources.
-            </Typography>
-
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }} sx={{ mb: 2 }}>
-              <TextField
-                label="Channel ID (e.g., yourtwitchname)"
-                value={viewerChannel}
-                onChange={(e) => setViewerChannel(e.target.value.trim().toLowerCase())}
-                fullWidth
-                size="small"
-              />
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
-                <Button variant="outlined" disabled={!viewerChannel} href={viewerChannel ? `/viewer/${viewerChannel}` : undefined}>
-                  Viewer Hub
-                </Button>
-                <Button variant="outlined" disabled={!viewerChannel} href={viewerChannel ? `/overlay/${viewerChannel}/queue` : undefined}>
-                  Queue Overlay
-                </Button>
-                <Button variant="outlined" disabled={!viewerChannel} href={viewerChannel ? `/overlay/${viewerChannel}/leaderboard` : undefined}>
-                  Leaderboard Overlay
-                </Button>
-              </Stack>
-            </Stack>
-
-            <Typography variant="caption" color="text.disabled">
-              Pro tip: Paste overlay links into OBS as Browser Sources at your canvas size.
-            </Typography>
-          </Box>
-        </Box>
+        {/* Viewer quick links removed per request */}
       </Container>
     </Box>
   );

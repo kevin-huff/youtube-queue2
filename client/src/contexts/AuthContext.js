@@ -6,8 +6,15 @@ import {
   DialogContent,
   DialogContentText,
   DialogActions,
-  Button
+  Button,
+  Stack,
+  Chip,
+  Typography,
+  Box,
+  useTheme,
+  alpha
 } from '@mui/material';
+import { Login as LoginIcon, Security as SecurityIcon } from '@mui/icons-material';
 
 const AuthContext = createContext();
 const POST_LOGIN_REDIRECT_KEY = 'auth.postLoginRedirect';
@@ -21,6 +28,7 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
+  const theme = useTheme();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -249,19 +257,93 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={value}>
       {children}
-      <Dialog open={loginDialogOpen} onClose={closeLoginDialog} maxWidth="xs" fullWidth>
-        <DialogTitle>Sign in with Twitch</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            FREE* Mediashare uses Twitch OAuth to confirm your identity. You&rsquo;ll be redirected to
-            Twitch to authorize KevNetCloud × ChatGPT and then returned here.
+      <Dialog 
+        open={loginDialogOpen} 
+        onClose={closeLoginDialog} 
+        maxWidth="xs" 
+        fullWidth
+        BackdropProps={{
+          sx: {
+            backdropFilter: 'blur(6px)',
+            backgroundColor: 'rgba(0,0,0,0.5)'
+          }
+        }}
+        PaperProps={{
+          sx: {
+            overflow: 'hidden',
+            borderRadius: 3,
+            background: `linear-gradient(180deg, ${alpha(theme.palette.background.paper, 0.85)}, ${alpha(theme.palette.background.paper, 0.6)})`,
+            border: `1px solid ${alpha(theme.palette.neon.blue, 0.25)}`,
+            boxShadow: `0 24px 80px ${alpha('#000', 0.55)}`,
+            backdropFilter: 'saturate(120%) blur(12px)'
+          }
+        }}
+      >
+        <DialogTitle sx={{ pb: 1.5 }}>
+          <Typography
+            variant="h6"
+            sx={{
+              m: 0,
+              fontWeight: 800,
+              background: theme.palette.gradients?.primary,
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              textShadow: `0 0 24px ${alpha(theme.palette.neon.pink, 0.25)}`,
+            }}
+          >
+            Sign in with Twitch
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 0 }}>
+          <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
+            <Chip 
+              icon={<SecurityIcon sx={{ color: theme.palette.neon.blue }} />} 
+              label="Secure OAuth"
+              size="small"
+              sx={{ 
+                bgcolor: alpha(theme.palette.neon.blue, 0.12), 
+                color: theme.palette.neon.blue,
+                border: `1px solid ${alpha(theme.palette.neon.blue, 0.35)}`,
+                fontWeight: 700
+              }}
+            />
+            <Chip 
+              label={<span>Free<sup>*</sup> mediashare</span>} 
+              size="small"
+              sx={{ 
+                bgcolor: alpha(theme.palette.neon.pink, 0.12), 
+                color: theme.palette.neon.pink,
+                border: `1px solid ${alpha(theme.palette.neon.pink, 0.35)}`,
+                fontWeight: 700
+              }}
+            />
+          </Stack>
+          <DialogContentText sx={{ color: 'text.secondary' }}>
+            Free<sup>*</sup> mediashare uses Twitch to confirm your identity. You’ll be redirected to Twitch to authorize access and then returned here.
           </DialogContentText>
+          <Box sx={{ mt: 2, p: 1.5, borderRadius: 2, bgcolor: alpha(theme.palette.background.elevated || theme.palette.background.paper, 0.6), border: `1px dashed ${alpha(theme.palette.divider, 0.6)}` }}>
+            <Typography variant="caption" color="text.secondary">
+              We only request the minimum needed to identify your account and connect your channel. No passwords are stored.
+            </Typography>
+          </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 3 }}>
           <Button onClick={closeLoginDialog} color="inherit">
             Cancel
           </Button>
-          <Button variant="contained" onClick={startOAuthLogin} autoFocus>
+          <Button 
+            variant="contained" 
+            onClick={startOAuthLogin} 
+            autoFocus
+            startIcon={<LoginIcon />}
+            sx={{
+              background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
+              '&:hover': {
+                background: `linear-gradient(135deg, ${theme.palette.primary.light} 0%, ${theme.palette.primary.main} 100%)`,
+              }
+            }}
+          >
             Continue with Twitch
           </Button>
         </DialogActions>

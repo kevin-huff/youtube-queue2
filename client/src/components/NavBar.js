@@ -103,7 +103,8 @@ const NavBar = () => {
                   WebkitTextFillColor: 'transparent',
                 }}
               >
-                FREE* Mediashare
+                {/* Brand with superscript star */}
+                <span>Free<sup>*</sup> mediashare</span>
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
                 KevNetCloud × ChatGPT
