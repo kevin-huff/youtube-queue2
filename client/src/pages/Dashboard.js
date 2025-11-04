@@ -59,6 +59,7 @@ import axios from 'axios';
 import { MenuItem } from '@mui/material';
 import { useSocket } from '../contexts/SocketContext';
 import ChannelQueue from './ChannelQueue';
+import CupAdmin from './CupAdmin';
 
 const DEFAULT_CHANNEL_SETTINGS = {
   queue_enabled: 'false',
@@ -236,6 +237,7 @@ const Dashboard = () => {
     const tabs = [{ value: 'overview', label: 'Overview' }];
     if (canProduce && Array.isArray(channels) && channels.length > 0) {
       tabs.push({ value: 'producer', label: 'Producer' });
+      tabs.push({ value: 'cups', label: 'Manage Cups' });
     }
     if (canModerate) tabs.push({ value: 'moderation', label: 'Moderation' });
     return tabs;
@@ -778,6 +780,28 @@ const Dashboard = () => {
       return;
     }
 
+    if (requestedTab === 'cups') {
+      if (!canProduce) {
+        if (activeTab !== 'overview') {
+          setActiveTab('overview');
+        }
+        params.delete('tab');
+        const nextSearch = params.toString();
+        navigate(
+          {
+            pathname: location.pathname,
+            search: nextSearch ? `?${nextSearch}` : ''
+          },
+          { replace: true }
+        );
+        return;
+      }
+      if (activeTab !== 'cups') {
+        setActiveTab('cups');
+      }
+      return;
+    }
+
     if (activeTab !== 'overview') {
       setActiveTab('overview');
     }
@@ -927,6 +951,9 @@ const Dashboard = () => {
       return;
     }
     if (newValue === 'producer' && !canProduce) {
+      return;
+    }
+    if (newValue === 'cups' && !canProduce) {
       return;
     }
 
@@ -1135,6 +1162,7 @@ const Dashboard = () => {
                     variant="contained"
                     startIcon={<QueueMusic />}
                     onClick={() => navigate(`/channel/${channel.id}`)}
+                    endIcon={<OpenInNewIcon />}
                   >
                     Producer Console
                   </Button>
@@ -1651,6 +1679,59 @@ const Dashboard = () => {
                 </Card>
                 <Box sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
                   <ChannelQueue channelName={channel.id} embedded />
+                </Box>
+              </>
+            )}
+          </>
+        )}
+
+        {activeTab === 'cups' && canProduce && (
+          <>
+            {!channel && !loading && (
+              <Paper
+                sx={{
+                  p: 6,
+                  textAlign: 'center',
+                  background: alpha(theme.palette.primary.main, 0.05),
+                  border: `2px dashed ${alpha(theme.palette.primary.main, 0.3)}`
+                }}
+              >
+                <LiveTv sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  Channel Not Found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Select a channel above to manage your cups.
+                </Typography>
+              </Paper>
+            )}
+
+            {channel && (
+              <>
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2}>
+                      <Box>
+                        <Typography variant="h6" gutterBottom>
+                          Manage Cups
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Create cups, manage judges, and view videos for {channel.displayName}.
+                        </Typography>
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        <Button
+                          variant="outlined"
+                          onClick={() => window.open(`/channel/${channel.id}/cups`, '_blank')}
+                        >
+                          Open in New Tab
+                        </Button>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+                <Box sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
+                  <CupAdmin channelName={channel.id} embedded />
                 </Box>
               </>
             )}

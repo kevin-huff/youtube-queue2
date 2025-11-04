@@ -46,8 +46,9 @@ import { useSocket } from '../contexts/SocketContext';
 const getSubmitterUsername = (item) =>
   item?.submitter?.twitchUsername || item?.submitterUsername || 'Unknown';
 
-const CupAdmin = () => {
-  const { channelName } = useParams();
+const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
+  const params = useParams();
+  const channelName = channelNameProp || params.channelName;
   const [cups, setCups] = useState([]);
   const [selectedCup, setSelectedCup] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -140,7 +141,7 @@ const CupAdmin = () => {
   }, [channelName, fetchCups]);
 
   useEffect(() => {
-    if (!channelName) {
+    if (!channelName || embedded) {
       return;
     }
 
@@ -148,7 +149,7 @@ const CupAdmin = () => {
     return () => {
       disconnectFromChannel();
     };
-  }, [channelName, connectToChannel, disconnectFromChannel]);
+  }, [channelName, embedded, connectToChannel, disconnectFromChannel]);
 
   useEffect(() => {
     if (!selectedCup?.id || !channelId || channelId !== channelName?.toLowerCase()) {
