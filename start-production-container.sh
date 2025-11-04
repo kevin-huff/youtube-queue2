@@ -32,9 +32,21 @@ if [ -n "${DATABASE_URL}" ]; then
     cd server
     if npx prisma migrate deploy; then
       echo "[entrypoint] Migrations deployed successfully"
+      # Also reconcile any schema drift (e.g., if DB was initialized via db push previously)
+      # This is safe for additive changes; it won't drop columns unless explicitly allowed.
+      echo "[entrypoint] Reconciling schema drift with prisma db push"
+      if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
+        npx prisma db push --accept-data-loss || true
+      else
+        npx prisma db push || true
+      fi
     else
       echo "[entrypoint] migrate deploy failed, trying prisma db push"
-      npx prisma db push
+      if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
+        npx prisma db push --accept-data-loss
+      else
+        npx prisma db push
+      fi
     fi
     # Ensure Prisma client is generated for runtime
     echo "[entrypoint] Generating Prisma client"
