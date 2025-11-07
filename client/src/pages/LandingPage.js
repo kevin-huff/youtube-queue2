@@ -115,6 +115,7 @@ const LandingPage = () => {
               <Chip label="Live gameshow" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.blue, 0.12), color: theme.palette.neon.blue, border: `1px solid ${alpha(theme.palette.neon.blue, 0.4)}` }} />
               <Chip label="Scores + reveal" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.pink, 0.12), color: theme.palette.neon.pink, border: `1px solid ${alpha(theme.palette.neon.pink, 0.4)}` }} />
               <Chip label="OBS overlays" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.neon.purple, 0.12), color: theme.palette.neon.purple, border: `1px solid ${alpha(theme.palette.neon.purple, 0.4)}` }} />
+              <Chip label="Ad auto‑announcements" size="small" sx={{ fontWeight: 600, bgcolor: alpha(theme.palette.success.main, 0.12), color: theme.palette.success.main, border: `1px solid ${alpha(theme.palette.success.main, 0.4)}` }} />
             </Stack>
 
             <Typography 
@@ -233,6 +234,17 @@ const LandingPage = () => {
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
                     Player, queue, leaderboard, and judge overlays — built for OBS and synced to the show.
+                  </Typography>
+                </Stack>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Stack spacing={1.5} alignItems="flex-start">
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <GraphicEq sx={{ color: theme.palette.success.main }} />
+                    <Typography variant="h6" fontWeight={700}>Ad auto‑announcements</Typography>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    Automatically warn chat 30 seconds before ad breaks and welcome them back when ads end. Per‑channel toggle with custom messages.
                   </Typography>
                 </Stack>
               </Grid>

@@ -10,6 +10,7 @@ FREE* Mediashare is a modern, multi‑channel media queue and gameshow toolkit f
 - “Cups” judging system: 5‑decimal precision scores, lock/reveal flow, standings
 - Per‑channel uploads: shuffle audio + soundboard controls
 - Public Viewer Hub and production‑ready overlays (player, queue, leaderboard)
+- Ad break auto‑announcements (EventSub + Ads API): 30‑sec pre‑warn + end message; per‑channel toggle with custom text
 - Twitch bot: link detection + commands for producers/mods
 - Prisma + PostgreSQL (SQLite supported for quick local dev)
 - Secure by default: sessions, CSRF‑resistant flows, helmet CSP, rate limits
@@ -59,8 +60,9 @@ npm run dev        # runs server + client with live reload
 1) Create a Twitch Application:
 - Go to https://dev.twitch.tv/console/apps
 - Create an app and set redirect URI to:
-  `http://localhost:5000/api/auth/twitch/callback`
+ `http://localhost:5000/api/auth/twitch/callback`
 - Put `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` into `server/.env`
+  - The app requests `channel:read:ads` to enable ad announcements.
 
 2) Create a Twitch Bot account (optional but recommended):
 - Create a separate Twitch account for the bot
@@ -108,6 +110,13 @@ npm run dev        # runs server + client with live reload
 - Judge overlay: `http://localhost:3000/judge/{channel}/{cupId}/overlay`
 
 Tip: In OBS, add a “Browser Source” at your canvas size (e.g., 1920×1080) and paste the overlay URL.
+
+### Ad Announcements
+- What it does: posts a warning message 30 seconds before ad breaks and a friendly message when ads end.
+- How it works: integrates with Twitch EventSub (channel.ad_break.begin) and the Ads Schedule API. It runs per channel, automatically.
+- Setup: broadcasters just log in (OAuth requests channel:read:ads). No extra bot commands or env tokens required.
+- Configure: Owners/Managers open Dashboard → Producer tab → “Ad Announcements”. Toggle on/off and set the three messages. It’s enabled by default.
+- Notes: announcements are API‑driven; manual `!ads` commands are not needed.
 
 ### Public Viewer Pages
 - Viewer Hub: `http://localhost:3000/viewer/{channel}` (cups, standings, queue)

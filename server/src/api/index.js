@@ -1551,15 +1551,19 @@ router.put('/channels/:channelId/settings/:key', requireAuth, [
 ], validate, async (req, res) => {
   try {
     const channelManager = getChannelManager(req);
-    const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+    const key = String(req.params.key || '');
+    // Restrict ad_* settings to Owner/Manager
+    const normalizedChannelId = key.startsWith('ad_')
+      ? await ensureOwnerOrManager(channelManager, req.user.id, req.params.channelId)
+      : await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
     const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
 
-    await queueService.updateSetting(req.params.key, req.body.value);
+    await queueService.updateSetting(key, req.body.value);
 
     res.json({
       success: true,
       channelId: normalizedChannelId,
-      key: req.params.key,
+      key,
       value: req.body.value
     });
   } catch (error) {
