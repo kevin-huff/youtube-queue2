@@ -427,6 +427,47 @@ const Dashboard = () => {
   const sbFileInputRef = useRef(null);
   const currentChannelId = channel?.id || null;
 
+  // Overview: Next Ad timer (visible to anyone with channel access)
+  const [ovNextAdAt, setOvNextAdAt] = useState(null);
+  const [ovAdLive, setOvAdLive] = useState(null);
+  const [ovAdLoading, setOvAdLoading] = useState(false);
+  const [ovAdUpdatedAt, setOvAdUpdatedAt] = useState(null);
+  const [ovNowTs, setOvNowTs] = useState(Date.now());
+
+  const refreshOverviewNextAd = useCallback(async () => {
+    if (!currentChannelId) return;
+    try {
+      setOvAdLoading(true);
+      const res = await axios.get(`/api/channels/${currentChannelId}/ads/next`, { withCredentials: true });
+      const { nextAdAt: iso, live } = res.data || {};
+      setOvAdLive(live === null ? null : Boolean(live));
+      setOvNextAdAt(iso ? new Date(iso).getTime() : null);
+      setOvAdUpdatedAt(Date.now());
+    } catch (_) {
+      setOvAdLive(null);
+      setOvNextAdAt(null);
+    } finally {
+      setOvAdLoading(false);
+    }
+  }, [currentChannelId]);
+
+  useEffect(() => {
+    refreshOverviewNextAd();
+    const t = setInterval(() => setOvNowTs(Date.now()), 1000);
+    const p = setInterval(refreshOverviewNextAd, 60 * 1000);
+    return () => { clearInterval(t); clearInterval(p); };
+  }, [refreshOverviewNextAd]);
+
+  const ovAdCountdown = useMemo(() => {
+    if (!ovNextAdAt || !ovAdLive) return null;
+    const ms = Math.max(0, ovNextAdAt - ovNowTs);
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}` : `${m}:${s.toString().padStart(2,'0')}`;
+  }, [ovNextAdAt, ovNowTs, ovAdLive]);
+
   const channelAccess = useMemo(
     () => findChannelAccess(currentChannelId || undefined),
     [currentChannelId, findChannelAccess]
@@ -1750,6 +1791,30 @@ const Dashboard = () => {
               </Grid>
             </Grid>
 
+            {/* Next Ad (read-only) */}
+            <Card sx={{ mb: 3 }}>
+              <CardContent>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <Chip
+                    size="small"
+                    color={ovAdLive ? 'success' : 'default'}
+                    label={ovAdLive === null ? 'Ads' : ovAdLive ? 'Live' : 'Offline'}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Next ad {ovAdLoading ? 'loading…' : (ovAdLive ? (ovNextAdAt ? `in ${ovAdCountdown}` : 'schedule not available') : '—')}
+                  </Typography>
+                  {ovAdUpdatedAt && (
+                    <Typography variant="caption" color="text.secondary">
+                      Updated {new Date(ovAdUpdatedAt).toLocaleTimeString()}
+                    </Typography>
+                  )}
+                  <Box sx={{ ml: 'auto' }}>
+                    <Button onClick={refreshOverviewNextAd} size="small" disabled={ovAdLoading}>Refresh</Button>
+                  </Box>
+                </Box>
+              </CardContent>
+            </Card>
+
             
 
             {/* Cup KPIs */}
@@ -2315,60 +2380,7 @@ const Dashboard = () => {
                   </CardContent>
                 </Card>
 
-                {canManageSettings && (
-                  <Card sx={{ mb: 2 }}>
-                    <CardContent>
-                      <Box display="flex" alignItems="flex-start" mb={1.5}>
-                        <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.success.main, 0.1), color: 'success.main' }}>
-                          <LiveTv />
-                        </Box>
-                        <Box flex={1}>
-                          <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
-                            Ad Announcements
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Automatically warn chat 30 seconds before ad breaks and greet viewers when ads end.
-                          </Typography>
-                        </Box>
-                      </Box>
-                      <Stack spacing={2}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={(settings.ad_announcements_enabled || 'true') === 'true'}
-                              onChange={(e) => handleSettingChange('ad_announcements_enabled', e.target.checked)}
-                            />
-                          }
-                          label={(settings.ad_announcements_enabled || 'true') === 'true' ? 'Announcements Enabled' : 'Announcements Disabled'}
-                        />
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label="30s Warning Message"
-                          value={settings.ad_warn_message || ''}
-                          onChange={(e) => handleSettingChange('ad_warn_message', e.target.value)}
-                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
-                        />
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label="Ad Start Message"
-                          value={settings.ad_start_message || ''}
-                          onChange={(e) => handleSettingChange('ad_start_message', e.target.value)}
-                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
-                        />
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label="Ad End Message"
-                          value={settings.ad_end_message || ''}
-                          onChange={(e) => handleSettingChange('ad_end_message', e.target.value)}
-                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
-                        />
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                )}
+                
 
                 <Box sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
                   <ChannelQueue channelName={channel.id} embedded />

@@ -421,6 +421,31 @@ class AdEventService {
     }
   }
 
+  async getNextAdForChannel(channelId) {
+    try {
+      const prisma = this.channelManager.prisma;
+      const chan = await prisma.channel.findUnique({ where: { id: String(channelId).toLowerCase() }, select: { twitchUserId: true } });
+      const broadcasterId = chan?.twitchUserId ? String(chan.twitchUserId) : null;
+      if (!broadcasterId) {
+        return { live: false, nextAdAt: null, duration: null };
+      }
+      const live = await this._isLive(broadcasterId);
+      if (!live) {
+        return { live: false, nextAdAt: null, duration: null };
+      }
+      const rec = TokenStore.getByTwitchUserId(broadcasterId);
+      const bearer = rec?.accessToken || null;
+      const data = await this._getAdSchedule(broadcasterId, bearer);
+      const entry = Array.isArray(data?.data) ? data.data[0] : null;
+      const nextAdAt = entry?.next_ad_at || entry?.next_ad_time || null;
+      const duration = typeof entry?.duration_seconds === 'number' ? entry.duration_seconds : null;
+      return { live: true, nextAdAt, duration };
+    } catch (err) {
+      logger.warn('AdEventService: getNextAdForChannel failed', { channelId, error: err?.message, data: err?.response?.data });
+      return { live: null, nextAdAt: null, duration: null };
+    }
+  }
+
   async _getAppAccessToken() {
     const now = Date.now();
     if (this.appToken && now < this.appTokenExpiresAt - 10_000) {

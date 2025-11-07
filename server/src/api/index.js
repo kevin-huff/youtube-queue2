@@ -1530,6 +1530,22 @@ router.get('/channels/:channelId/settings', requireAuth, async (req, res) => {
   }
 });
 
+// Next ad info (producer/owners)
+router.get('/channels/:channelId/ads/next', requireAuth, async (req, res) => {
+  try {
+    const adService = req.app.get('adEventService');
+    if (!adService || !adService.enabled) {
+      return res.status(503).json({ error: 'Ad service unavailable' });
+    }
+    const channelId = await requireChannelOwnership(getChannelManager(req), req.user.id, req.params.channelId);
+    const result = await adService.getNextAdForChannel(channelId);
+    return res.json(result || { live: null, nextAdAt: null, duration: null });
+  } catch (error) {
+    logger.error('Error getting next ad info:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to get next ad info' });
+  }
+});
+
 // Authenticated VIP list for channel owners
 router.get('/channels/:channelId/vip', requireAuth, async (req, res) => {
   try {

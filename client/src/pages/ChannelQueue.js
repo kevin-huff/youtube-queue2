@@ -15,6 +15,8 @@ import {
   CircularProgress,
   Stack,
   TextField,
+  Switch,
+  FormControlLabel,
   MenuItem,
   IconButton,
   Tooltip,
@@ -1132,6 +1134,53 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const showOverlayDisabled = !canOperatePlayback || !hasVideo || isVotingActive;
   const hideOverlayDisabled = !canOperatePlayback || !hasVideo;
 
+  // Next Ad schedule (producers/owners)
+  const [nextAdAt, setNextAdAt] = useState(null); // ms epoch
+  const [nextAdDuration, setNextAdDuration] = useState(null);
+  const [adLive, setAdLive] = useState(null);
+  const [adLoading, setAdLoading] = useState(false);
+  const [adError, setAdError] = useState(null);
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [adUpdatedAt, setAdUpdatedAt] = useState(null);
+
+  const refreshNextAd = useCallback(async () => {
+    if (!channel?.id || !canOperatePlayback) return;
+    try {
+      setAdLoading(true);
+      setAdError(null);
+      const res = await axios.get(`/api/channels/${channel.id}/ads/next`, { withCredentials: true });
+      const { nextAdAt: iso, duration, live } = res.data || {};
+      setAdLive(live === null ? null : Boolean(live));
+      setNextAdDuration(typeof duration === 'number' ? duration : null);
+      setNextAdAt(iso ? new Date(iso).getTime() : null);
+      setAdUpdatedAt(Date.now());
+    } catch (err) {
+      setAdError(err?.response?.data?.error || err?.message || 'Failed to load ad schedule');
+      setAdLive(null);
+      setNextAdAt(null);
+      setNextAdDuration(null);
+    } finally {
+      setAdLoading(false);
+    }
+  }, [channel?.id, canOperatePlayback]);
+
+  useEffect(() => {
+    refreshNextAd();
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    const p = setInterval(refreshNextAd, 60 * 1000);
+    return () => { clearInterval(t); clearInterval(p); };
+  }, [refreshNextAd]);
+
+  const adCountdown = useMemo(() => {
+    if (!nextAdAt || !adLive) return null;
+    const ms = Math.max(0, nextAdAt - nowTs);
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}` : `${m}:${s.toString().padStart(2,'0')}`;
+  }, [nextAdAt, nowTs, adLive]);
+
   const handleVolumeChange = (_, value) => {
     const next = Array.isArray(value) ? value[0] : value;
     if (typeof next !== 'number' || Number.isNaN(next)) {
@@ -1922,6 +1971,66 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     )}
               </CardContent>
             </Card>
+
+            {canManageRoles && (
+              <Card>
+                <CardContent>
+                  <Box display="flex" alignItems="flex-start" mb={1.5}>
+                    <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.success.main, 0.1), color: 'success.main' }}>
+                      <LiveTv />
+                    </Box>
+                    <Box flex={1}>
+                      <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                        Ad Announcements
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Automatically warn chat 30 seconds before ad breaks and greet viewers when ads end.
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Stack spacing={2}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={(settings?.ad_announcements_enabled || 'true') === 'true'}
+                          onChange={async (e) => {
+                            try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_announcements_enabled`, { value: e.target.checked }, { withCredentials: true }); } catch (_) {}
+                          }}
+                        />
+                      }
+                      label={(settings?.ad_announcements_enabled || 'true') === 'true' ? 'Announcements Enabled' : 'Announcements Disabled'}
+                    />
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label="30s Warning Message"
+                      value={settings?.ad_warn_message || ''}
+                      onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_warn_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
+                      disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                    />
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label="Ad Start Message"
+                      value={settings?.ad_start_message || ''}
+                      onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_start_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
+                      disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                    />
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label="Ad End Message"
+                      value={settings?.ad_end_message || ''}
+                      onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_end_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
+                      disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                    />
+                    {adError && (
+                      <Alert severity="warning">{adError}</Alert>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            )}
           )}
 
           {/* Access & Roles moved to bottom of column */}
@@ -2339,6 +2448,25 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     >
                       Open Overlay Player
                     </Button>
+                  )}
+
+                  {canOperatePlayback && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                      <Chip
+                        size="small"
+                        color={adLive ? 'success' : 'default'}
+                        label={adLive === null ? 'Ads' : adLive ? 'Live' : 'Offline'}
+                      />
+                      <Typography variant="body2" color="text.secondary">
+                        Next ad {adLoading ? 'loading…' : (adLive ? (nextAdAt ? `in ${adCountdown}` : 'schedule not available') : '—')}
+                      </Typography>
+                      {adUpdatedAt && (
+                        <Typography variant="caption" color="text.secondary">
+                          Updated {new Date(adUpdatedAt).toLocaleTimeString()}
+                        </Typography>
+                      )}
+                      <Button onClick={refreshNextAd} size="small" disabled={adLoading}>Refresh</Button>
+                    </Box>
                   )}
 
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
