@@ -16,6 +16,7 @@ const apiRoutes = require('./api');
 const socketHandler = require('./socket');
 const TwitchBot = require('./bot/TwitchBot');
 const ChannelManager = require('./services/ChannelManager');
+const AdEventService = require('./services/AdEventService');
 const VideoService = require('./services/VideoService');
 const RoleService = require('./services/RoleService');
 require('./auth/passport'); // Initialize passport strategies
@@ -42,6 +43,7 @@ class Server {
     this.channelManager = null;
     this.videoService = null;
     this.roleService = null;
+    this.adEventService = null;
   }
 
   async initialize() {
@@ -73,6 +75,9 @@ class Server {
 
       // Initialize Twitch bot
       await this.initializeTwitchBot();
+
+      // Initialize ad events (EventSub + Ads schedule polling)
+      await this.initializeAdEvents();
 
       logger.info('Server initialization complete');
     } catch (error) {
@@ -198,7 +203,7 @@ class Server {
     this.app.use('/api', apiRoutes);
 
     // Dynamic meta routes for rich previews on shareable pages
-    const CLIENT_URL = process.env.CLIENT_URL || '';
+    const CLIENT_URL = (process.env.CLIENT_URL || '').replace(/\/+$/, '');
     const readBaseIndex = () => {
       try {
         const fs = require('fs');
@@ -355,7 +360,7 @@ class Server {
     ], async (req, res, next) => {
       try {
         const channelManager = this.channelManager;
-        const baseUrl = CLIENT_URL || `${req.protocol}://${req.get('host')}`;
+        const baseUrl = (CLIENT_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
         const fullUrl = baseUrl + req.originalUrl;
 
         // Submitter profile: /u/:username
@@ -525,6 +530,17 @@ class Server {
     } catch (error) {
       logger.error('Failed to initialize Twitch bot:', error);
       // Don't fail server startup if bot fails
+    }
+  }
+
+  async initializeAdEvents() {
+    try {
+      this.adEventService = new AdEventService(this.channelManager, this.bot);
+      await this.adEventService.initialize();
+      // Make available to routes
+      this.app.set('adEventService', this.adEventService);
+    } catch (err) {
+      logger.warn('Ad events initialization failed; continuing without it', { error: err?.message });
     }
   }
 

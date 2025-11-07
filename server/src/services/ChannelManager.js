@@ -10,7 +10,12 @@ const DEFAULT_CHANNEL_SETTINGS = {
   max_queue_size: 0,
   submission_cooldown: 30,
   max_video_duration: 300,
-  max_per_user: 3
+  max_per_user: 3,
+  // Ad announcement defaults
+  ad_announcements_enabled: true,
+  ad_warn_message: 'Heads up: ads will run in 30 seconds. BRB!',
+  ad_start_message: 'Ad break starting now — see you after the ads!',
+  ad_end_message: 'Ads are over — welcome back!'
 };
 
 const normalizeChannelSettings = (rawSettings = {}) => {

@@ -269,7 +269,15 @@ const TWITCH_AUTH_ENABLED = Boolean(
 
 if (TWITCH_AUTH_ENABLED) {
   router.get('/auth/twitch',
-    passport.authenticate('twitch', { scope: ['user:read:email', 'channel:read:subscriptions'] })
+    passport.authenticate('twitch', {
+      scope: [
+        'user:read:email',
+        'channel:read:subscriptions',
+        // Needed for ad schedule + EventSub ad break subscriptions
+        'channel:read:ads'
+        // Optionally: 'channel:manage:ads' if you want to trigger commercials
+      ]
+    })
   );
 
   router.get('/auth/twitch/callback',
@@ -278,6 +286,7 @@ if (TWITCH_AUTH_ENABLED) {
     try {
       const channelManager = req.app.get('channelManager');
       const bot = req.app.get('bot');
+      const adService = req.app.get('adEventService');
 
       if (channelManager && req.user?.channels?.length) {
         for (const channel of req.user.channels) {
@@ -294,11 +303,14 @@ if (TWITCH_AUTH_ENABLED) {
           }
         }
       }
+
+      // Hint ad service to refresh subscriptions/polling now that we may have tokens
+      try { if (adService?.refreshSubscriptions) await adService.refreshSubscriptions(); } catch (_) {}
     } catch (error) {
       logger.error('Post-auth channel initialization failed:', error);
     }
 
-    const redirectUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const redirectUrl = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '');
     const hasAnyChannel = Array.isArray(req.user?.channels) && req.user.channels.length > 0;
     const targetPath = hasAnyChannel ? '/dashboard' : '/onboarding';
     res.redirect(`${redirectUrl}${targetPath}`);
@@ -1038,7 +1050,7 @@ router.post('/channels/:channelId/cups/:cupId/judge-link',
       // Construct the full URL
       const protocol = req.protocol;
       const host = req.get('host');
-      const clientUrl = process.env.CLIENT_URL || `${protocol}://${host.replace(':5000', ':3000')}`;
+      const clientUrl = (process.env.CLIENT_URL || `${protocol}://${host.replace(':5000', ':3000')}`).replace(/\/+$/, '');
       const judgeUrl = `${clientUrl}/judge/${normalizedChannelId}/${cupId}?token=${token}`;
 
       logger.info(`Generated judge link for cup ${cupId} in channel ${normalizedChannelId}`);
@@ -1495,16 +1507,21 @@ router.get('/channels/:channelId/settings', requireAuth, async (req, res) => {
     const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
     const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
 
-    const settings = {
-      queue_enabled: await queueService.getSetting('queue_enabled', 'false'),
-      max_queue_size: await queueService.getSetting('max_queue_size', '0'),
-      submission_cooldown: await queueService.getSetting('submission_cooldown', '30'),
-      max_video_duration: await queueService.getSetting('max_video_duration', '300'),
-      auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
-      current_volume: await queueService.getSetting('current_volume', '75'),
-      max_per_user: await queueService.getSetting('max_per_user', '3'),
-      shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', '')
-    };
+  const settings = {
+    queue_enabled: await queueService.getSetting('queue_enabled', 'false'),
+    max_queue_size: await queueService.getSetting('max_queue_size', '0'),
+    submission_cooldown: await queueService.getSetting('submission_cooldown', '30'),
+    max_video_duration: await queueService.getSetting('max_video_duration', '300'),
+    auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
+    current_volume: await queueService.getSetting('current_volume', '75'),
+    max_per_user: await queueService.getSetting('max_per_user', '3'),
+    shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', ''),
+    // Ad announcements
+    ad_announcements_enabled: await queueService.getSetting('ad_announcements_enabled', 'true'),
+    ad_warn_message: await queueService.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!'),
+    ad_start_message: await queueService.getSetting('ad_start_message', 'Ad break starting now — see you after the ads!'),
+    ad_end_message: await queueService.getSetting('ad_end_message', 'Ads are over — welcome back!')
+  };
 
     res.json({ channelId: normalizedChannelId, settings });
   } catch (error) {
@@ -1918,7 +1935,7 @@ router.post('/channels/:channelId/cups/:cupId/judges/:judgeId/regenerate',
       // Build judge overlay/url for convenience
       const protocol = req.protocol;
       const host = req.get('host');
-      const clientUrl = process.env.CLIENT_URL || `${protocol}://${host.replace(':5000', ':3000')}`;
+      const clientUrl = (process.env.CLIENT_URL || `${protocol}://${host.replace(':5000', ':3000')}`).replace(/\/+$/, '');
       const judgeUrl = `${clientUrl}/judge/${normalizedChannelId}/${req.params.cupId}?token=${token}`;
 
       res.json({ token, url: judgeUrl, session });

@@ -2,8 +2,8 @@ const tmi = require('tmi.js');
 const logger = require('../utils/logger');
 const VideoService = require('../services/VideoService');
 
-// Base URL for public web app links
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+// Base URL for public web app links (strip trailing slashes)
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
 class TwitchBot {
   constructor(channelManager, io) {
@@ -250,6 +250,8 @@ class TwitchBot {
         }
         break;
 
+      // ads command removed; announcements handled via Twitch API
+
       case 'ban':
         if (isModerator && args[1]) {
           await this.handleBanCommand(channel, channelId, args[1]);
@@ -416,6 +418,8 @@ class TwitchBot {
       await queueService.logSubmission('system', 'UNBAN_USER', { username });
     }
   }
+
+  // ads command removed; announcements handled via Twitch API
 
   showHelp(channel, displayName, isModerator) {
     const helpMessages = [

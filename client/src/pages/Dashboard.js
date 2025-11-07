@@ -66,7 +66,12 @@ const DEFAULT_CHANNEL_SETTINGS = {
   max_queue_size: '0',
   submission_cooldown: '30',
   max_video_duration: '300',
-  max_per_user: '3'
+  max_per_user: '3',
+  // Ad announcements
+  ad_announcements_enabled: 'true',
+  ad_warn_message: 'Heads up: ads will run in 30 seconds. BRB!',
+  ad_start_message: 'Ad break starting now — see you after the ads!',
+  ad_end_message: 'Ads are over — welcome back!'
 };
 
 const normalizeSettings = (raw = {}) => {
@@ -2309,6 +2314,62 @@ const Dashboard = () => {
                     </Box>
                   </CardContent>
                 </Card>
+
+                {canManageSettings && (
+                  <Card sx={{ mb: 2 }}>
+                    <CardContent>
+                      <Box display="flex" alignItems="flex-start" mb={1.5}>
+                        <Box sx={{ mr: 2, p: 1, borderRadius: 1, bgcolor: alpha(theme.palette.success.main, 0.1), color: 'success.main' }}>
+                          <LiveTv />
+                        </Box>
+                        <Box flex={1}>
+                          <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>
+                            Ad Announcements
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Automatically warn chat 30 seconds before ad breaks and greet viewers when ads end.
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Stack spacing={2}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={(settings.ad_announcements_enabled || 'true') === 'true'}
+                              onChange={(e) => handleSettingChange('ad_announcements_enabled', e.target.checked)}
+                            />
+                          }
+                          label={(settings.ad_announcements_enabled || 'true') === 'true' ? 'Announcements Enabled' : 'Announcements Disabled'}
+                        />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="30s Warning Message"
+                          value={settings.ad_warn_message || ''}
+                          onChange={(e) => handleSettingChange('ad_warn_message', e.target.value)}
+                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
+                        />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Ad Start Message"
+                          value={settings.ad_start_message || ''}
+                          onChange={(e) => handleSettingChange('ad_start_message', e.target.value)}
+                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
+                        />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Ad End Message"
+                          value={settings.ad_end_message || ''}
+                          onChange={(e) => handleSettingChange('ad_end_message', e.target.value)}
+                          disabled={(settings.ad_announcements_enabled || 'true') !== 'true'}
+                        />
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                )}
+
                 <Box sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
                   <ChannelQueue channelName={channel.id} embedded />
                 </Box>

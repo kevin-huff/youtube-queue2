@@ -2,6 +2,7 @@ const passport = require('passport');
 const TwitchStrategy = require('passport-twitch-new').Strategy;
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../utils/logger');
+const TokenStore = require('../services/TokenStore');
 
 const prisma = new PrismaClient();
 
@@ -195,6 +196,27 @@ if (!hasTwitchOAuth) {
           email
         }
       });
+    }
+
+    // Store fresh OAuth tokens in memory for downstream services (ad events)
+    try {
+      TokenStore.setToken({
+        accountId: account.id,
+        twitchUserId,
+        accessToken,
+        refreshToken,
+        scopes: Array.isArray(profile?.scope) ? profile.scope : []
+      });
+    } catch (_) {}
+
+    // If a Channel exists with the same id as this username, associate its twitchUserId
+    try {
+      await prisma.channel.updateMany({
+        where: { id: username, OR: [ { twitchUserId: null }, { twitchUserId: { not: twitchUserId } } ] },
+        data: { twitchUserId }
+      });
+    } catch (err) {
+      logger.warn('Failed to associate channel twitchUserId on login', { channelId: username, error: err?.message });
     }
 
     // Note: Do not auto-create channels here. Ownership and channel creation
