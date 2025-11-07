@@ -207,6 +207,7 @@ class TwitchBot {
 
     switch (command) {
       case 'profile':
+      case 'myscore':
       case 'myscores': {
         // Allow optional mention to fetch another user's profile link
         const rawTarget = (args[1] || username).toString();
@@ -423,7 +424,7 @@ class TwitchBot {
 
     if (isModerator) {
       helpMessages.push(
-        '!profile [@user] - Get profile link',
+        '!profile or !myscore [@user] - Get profile link',
         '!queue on/off - Enable/disable queue',
         '!skip - Skip current video',
         '!clear - Clear entire queue',
@@ -432,7 +433,7 @@ class TwitchBot {
         '!unban @user - Unban user'
       );
     } else {
-      helpMessages.push('!profile - Get your profile link');
+      helpMessages.push('!profile or !myscore - Get your profile link');
       helpMessages.push('Just drop YouTube/TikTok/Instagram links in chat when the queue is open!');
     }
 
