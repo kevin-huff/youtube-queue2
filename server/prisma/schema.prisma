@@ -17,6 +17,10 @@ model Account {
   displayName     String?  @map("display_name")
   profileImageUrl String?  @map("profile_image_url")
   email           String?
+  twitchAccessToken   String?   @map("twitch_access_token")
+  twitchRefreshToken  String?   @map("twitch_refresh_token")
+  twitchTokenExpiresAt DateTime? @map("twitch_token_expires_at")
+  twitchTokenScope     String?   @map("twitch_token_scope")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

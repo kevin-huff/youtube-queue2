@@ -26,6 +26,9 @@ class AdEventService {
     this.pollIntervals = new Map(); // broadcaster_user_id -> timer
     this.warnTimers = new Map(); // channelId -> timer for 30s pre-ad
     this.endTimers = new Map(); // channelId -> timer for end-of-ad
+    this.appToken = null;
+    this.appTokenExpiresAt = 0;
+    this.liveCache = new Map(); // broadcasterId -> { live: boolean, ts: number }
   }
 
   _loadCredentials() { return {}; }
@@ -42,6 +45,7 @@ class AdEventService {
     }
 
     this.enabled = true;
+    await this._primeFromDatabase();
     await this._connectWebSocket();
 
     // Start ad schedule polling as a best-effort for 30s pre-warn
@@ -77,6 +81,8 @@ class AdEventService {
         try {
           const msg = JSON.parse(raw.toString());
           const type = msg?.metadata?.message_type || msg?.metadata?.messageType || msg?.metadata?.message_type;
+          // Any message indicates liveness; re-arm keepalive with a friendly buffer
+          this._armKeepalive((msg?.payload?.session?.keepalive_timeout_seconds) || 10);
           if (type === 'session_welcome') {
             this.sessionId = msg?.payload?.session?.id;
             logger.info('AdEventService: session established', { sessionId: this.sessionId });
@@ -119,7 +125,10 @@ class AdEventService {
 
   _armKeepalive(timeoutSec) {
     if (this.keepaliveTimeout) clearTimeout(this.keepaliveTimeout);
-    const ms = Math.max(5, Number(timeoutSec || 10) - 1) * 1000;
+    // Give a generous buffer beyond Twitch's advertised timeout to avoid flapping
+    const base = Number(timeoutSec || 10);
+    const sec = (Number.isFinite(base) ? base : 10) + 5; // +5s cushion
+    const ms = Math.max(5000, sec * 1000);
     this.keepaliveTimeout = setTimeout(() => {
       try { logger.warn('AdEventService: keepalive timeout; reconnecting'); } catch (_) {}
       if (this.ws) try { this.ws.terminate(); } catch (_) {}
@@ -140,6 +149,28 @@ class AdEventService {
     return TokenStore.listBroadcasterCredentials();
   }
 
+  async _primeFromDatabase() {
+    try {
+      const prisma = this.channelManager.prisma;
+      const accounts = await prisma.account.findMany({
+        where: { twitchId: { not: null }, twitchAccessToken: { not: null } },
+        select: { id: true, twitchId: true, twitchAccessToken: true, twitchRefreshToken: true, twitchTokenScope: true }
+      });
+      for (const acc of accounts) {
+        TokenStore.setToken({
+          accountId: acc.id,
+          twitchUserId: acc.twitchId,
+          accessToken: acc.twitchAccessToken,
+          refreshToken: acc.twitchRefreshToken || null,
+          scopes: (acc.twitchTokenScope || '').split(/\s+/).filter(Boolean)
+        });
+      }
+      logger.info(`AdEventService: primed ${accounts.length} broadcaster token(s) from DB`);
+    } catch (err) {
+      logger.warn('AdEventService: failed to prime tokens from DB', { error: err?.message });
+    }
+  }
+
   async _subscribeToAdBreaks() {
     if (!this.sessionId) return;
     const entries = this._getAllCredentials();
@@ -150,14 +181,21 @@ class AdEventService {
         await this._createSubscription('channel.ad_break.begin', '1', { broadcaster_user_id: String(broadcasterId) }, cred.access_token);
         logger.info('AdEventService: subscribed to ad breaks', { broadcasterId });
       } catch (err) {
-        logger.warn('AdEventService: subscription failed', { broadcasterId, error: err?.message });
+        const status = err?.response?.status;
+        const data = err?.response?.data;
+        logger.warn('AdEventService: subscription failed', { broadcasterId, error: err?.message, status, data });
+        if (status === 400) {
+          logger.warn('AdEventService: tip — broadcaster likely needs to re-login so we can capture a token with channel:read:ads scope');
+        } else if (status === 403) {
+          logger.warn('AdEventService: tip — token may not belong to the specified broadcaster');
+        }
       }
     }
   }
 
   async _createSubscription(type, version, condition, userAccessToken) {
     const token = userAccessToken; // For channel.* events, user token is typically required.
-    const resp = await axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', {
+    const makeReq = async (bearer) => axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', {
       type,
       version,
       condition,
@@ -168,10 +206,26 @@ class AdEventService {
     }, {
       headers: {
         'Client-ID': this.clientId,
-        'Authorization': `Bearer ${token}`,
+        'Authorization': `Bearer ${bearer}`,
         'Content-Type': 'application/json'
       }
     });
+    let resp;
+    try {
+      resp = await makeReq(token);
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 401 || status === 400) {
+        const refreshed = await this._refreshTokenFor(condition.broadcaster_user_id);
+        if (refreshed) {
+          resp = await makeReq(refreshed);
+        } else {
+          throw e;
+        }
+      } else {
+        throw e;
+      }
+    }
     return resp?.data;
   }
 
@@ -246,6 +300,22 @@ class AdEventService {
       if (this.pollIntervals.has(broadcasterId)) continue;
       const poll = async () => {
         try {
+          // Skip work if the channel is not live (checked via app token)
+          const live = await this._isLive(String(broadcasterId));
+          if (!live) {
+            // Clear any pending warn timers if the channel went offline
+            try {
+              const prisma = this.channelManager.prisma;
+              const chan = await prisma.channel.findFirst({ where: { twitchUserId: String(broadcasterId) } });
+              const channelId = chan?.id || null;
+              if (channelId && this.warnTimers.has(channelId)) {
+                clearTimeout(this.warnTimers.get(channelId));
+                this.warnTimers.delete(channelId);
+              }
+            } catch (_) {}
+            return;
+          }
+
           const data = await this._getAdSchedule(broadcasterId, cred.access_token);
           const nextAtIso = data?.data?.[0]?.next_ad_at || data?.data?.[0]?.next_ad_time;
           const durationSec = Number(data?.data?.[0]?.duration_seconds || 0);
@@ -325,14 +395,122 @@ class AdEventService {
   }
 
   async _getAdSchedule(broadcasterId, userAccessToken) {
+    // Optional guard: avoid Helix call if offline
+    const live = await this._isLive(String(broadcasterId));
+    if (!live) return null;
     const url = `https://api.twitch.tv/helix/channels/ads?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
-    const resp = await axios.get(url, {
+    const makeReq = async (bearer) => axios.get(url, {
       headers: {
         'Client-ID': this.clientId,
-        'Authorization': `Bearer ${userAccessToken}`
+        'Authorization': `Bearer ${bearer}`
       }
     });
-    return resp?.data || null;
+    try {
+      const resp = await makeReq(userAccessToken);
+      return resp?.data || null;
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 401 || status === 400) {
+        const refreshed = await this._refreshTokenFor(String(broadcasterId));
+        if (refreshed) {
+          const resp2 = await makeReq(refreshed);
+          return resp2?.data || null;
+        }
+      }
+      throw e;
+    }
+  }
+
+  async _getAppAccessToken() {
+    const now = Date.now();
+    if (this.appToken && now < this.appTokenExpiresAt - 10_000) {
+      return this.appToken;
+    }
+    const params = new URLSearchParams();
+    params.append('client_id', this.clientId);
+    params.append('client_secret', this.clientSecret);
+    params.append('grant_type', 'client_credentials');
+    const resp = await axios.post('https://id.twitch.tv/oauth2/token', params);
+    const body = resp?.data || {};
+    this.appToken = body.access_token;
+    const expiresIn = Number(body.expires_in || 0);
+    this.appTokenExpiresAt = expiresIn > 0 ? now + expiresIn * 1000 : now + 3600 * 1000;
+    return this.appToken;
+  }
+
+  async _isLive(broadcasterId) {
+    try {
+      const cached = this.liveCache.get(broadcasterId);
+      const now = Date.now();
+      if (cached && (now - cached.ts) < 60_000) {
+        return cached.live;
+      }
+      const token = await this._getAppAccessToken();
+      const resp = await axios.get(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(broadcasterId)}`, {
+        headers: {
+          'Client-ID': this.clientId,
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const arr = Array.isArray(resp?.data?.data) ? resp.data.data : [];
+      const live = arr.length > 0 && String(arr[0]?.type || '').toLowerCase() === 'live';
+      this.liveCache.set(broadcasterId, { live, ts: now });
+      return live;
+    } catch (err) {
+      logger.debug?.('AdEventService: _isLive check failed', { broadcasterId, error: err?.message });
+      // If rate-limited or failed, default to true to avoid missing schedules while live
+      const fallback = true;
+      this.liveCache.set(broadcasterId, { live: fallback, ts: Date.now() });
+      return fallback;
+    }
+  }
+
+  async _refreshTokenFor(broadcasterId) {
+    try {
+      const prisma = this.channelManager.prisma;
+      const account = await prisma.account.findFirst({ where: { twitchId: String(broadcasterId) } });
+      if (!account?.twitchRefreshToken) {
+        logger.warn('AdEventService: no refresh token for broadcaster', { broadcasterId });
+        return null;
+      }
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('refresh_token', account.twitchRefreshToken);
+      params.append('client_id', this.clientId);
+      params.append('client_secret', this.clientSecret);
+      const resp = await axios.post('https://id.twitch.tv/oauth2/token', params);
+      const body = resp?.data || {};
+      const newAccess = body.access_token;
+      const newRefresh = body.refresh_token || account.twitchRefreshToken;
+      const expiresIn = Number(body.expires_in || 0);
+      const scopesArr = Array.isArray(body.scope) ? body.scope : (account.twitchTokenScope ? account.twitchTokenScope.split(/\s+/) : []);
+      const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null;
+
+      await prisma.account.update({
+        where: { id: account.id },
+        data: {
+          twitchAccessToken: newAccess,
+          twitchRefreshToken: newRefresh,
+          twitchTokenScope: scopesArr.join(' '),
+          twitchTokenExpiresAt: expiresAt
+        }
+      });
+
+      // Update in-memory token
+      TokenStore.setToken({
+        accountId: account.id,
+        twitchUserId: broadcasterId,
+        accessToken: newAccess,
+        refreshToken: newRefresh,
+        scopes: scopesArr
+      });
+
+      logger.info('AdEventService: refreshed broadcaster token', { broadcasterId });
+      return newAccess;
+    } catch (err) {
+      logger.warn('AdEventService: token refresh failed', { broadcasterId, error: err?.message, data: err?.response?.data });
+      return null;
+    }
   }
 
   async _getAdSettings(channelId) {

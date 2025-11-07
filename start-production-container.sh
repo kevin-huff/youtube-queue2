@@ -30,27 +30,27 @@ if [ -n "${DATABASE_URL}" ]; then
   # Try migrate deploy; if it fails (no migrations) fall back to db push
   (
     cd server
-    if npx prisma migrate deploy; then
+    if npx --yes prisma migrate deploy; then
       echo "[entrypoint] Migrations deployed successfully"
       # Also reconcile any schema drift (e.g., if DB was initialized via db push previously)
       # This is safe for additive changes; it won't drop columns unless explicitly allowed.
       echo "[entrypoint] Reconciling schema drift with prisma db push"
       if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
-        npx prisma db push --accept-data-loss || true
+        npx --yes prisma db push --accept-data-loss || true
       else
-        npx prisma db push || true
+        npx --yes prisma db push || true
       fi
     else
       echo "[entrypoint] migrate deploy failed, trying prisma db push"
       if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
-        npx prisma db push --accept-data-loss
+        npx --yes prisma db push --accept-data-loss
       else
-        npx prisma db push
+        npx --yes prisma db push
       fi
     fi
     # Ensure Prisma client is generated for runtime
     echo "[entrypoint] Generating Prisma client"
-    npx prisma generate
+    npx --yes prisma generate
   )
 else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"

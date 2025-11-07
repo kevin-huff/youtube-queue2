@@ -1,6 +1,7 @@
 const passport = require('passport');
 const TwitchStrategy = require('passport-twitch-new').Strategy;
 const { PrismaClient } = require('@prisma/client');
+const axios = require('axios');
 const logger = require('../utils/logger');
 const TokenStore = require('../services/TokenStore');
 
@@ -208,6 +209,31 @@ if (!hasTwitchOAuth) {
         scopes: Array.isArray(profile?.scope) ? profile.scope : []
       });
     } catch (_) {}
+
+    // Persist tokens to DB with expiry and scopes (for restart survival)
+    try {
+      // Validate token to get expires_in and scopes
+      const resp = await axios.get('https://id.twitch.tv/oauth2/validate', {
+        headers: { Authorization: `OAuth ${accessToken}` }
+      }).catch((e) => e?.response ? e : Promise.reject(e));
+      const data = resp?.data || {};
+      const expiresIn = Number(data?.expires_in || 0);
+      const scopes = Array.isArray(data?.scopes) ? data.scopes : (Array.isArray(profile?.scope) ? profile.scope : []);
+      const scopeStr = scopes.join(' ');
+      const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null;
+
+      await prisma.account.update({
+        where: { id: account.id },
+        data: {
+          twitchAccessToken: accessToken,
+          twitchRefreshToken: refreshToken || account.twitchRefreshToken || null,
+          twitchTokenScope: scopeStr || null,
+          twitchTokenExpiresAt: expiresAt
+        }
+      });
+    } catch (persistErr) {
+      logger.warn('Failed to persist Twitch tokens on login', { error: persistErr?.message });
+    }
 
     // If a Channel exists with the same id as this username, associate its twitchUserId
     try {

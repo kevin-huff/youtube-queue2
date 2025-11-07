@@ -63,6 +63,7 @@ npm run dev        # runs server + client with live reload
  `http://localhost:5000/api/auth/twitch/callback`
 - Put `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` into `server/.env`
   - The app requests `channel:read:ads` to enable ad announcements.
+  - Tokens are stored in the database (with refresh token + expiry) so subscriptions survive restarts.
 
 2) Create a Twitch Bot account (optional but recommended):
 - Create a separate Twitch account for the bot
