@@ -310,7 +310,7 @@ class ChannelManager {
       byVideo.set(item.videoId, arr);
     }
     const prevAvgByItemId = new Map();
-    for (const [videoId, items] of byVideo.entries()) {
+    for (const [_videoId, items] of byVideo.entries()) {
       // items already sorted
       const averages = items.map((it) => {
         const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];

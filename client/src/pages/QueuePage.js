@@ -19,8 +19,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Divider,
-  LinearProgress,
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -434,8 +432,6 @@ const QueuePage = () => {
     skipCurrent,
     settings,
     cupStandings,
-    cupVideoSummaries,
-    scoresByItem,
     refreshCupStandings,
     votingState,
     startVotingSession,

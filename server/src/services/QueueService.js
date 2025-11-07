@@ -21,7 +21,6 @@ const SUBMITTER_SELECT = {
   role: true
 };
 
-const MAX_ALIAS_ATTEMPTS = Math.max(anonNames.length * 2, 200);
 const MAX_MODERATION_NOTE_LENGTH = 280;
 const DEFAULT_SOCIAL_MIN_VOTES = 3;
 const DEFAULT_SOCIAL_GLOBAL_MEAN = 3.4;
@@ -34,32 +33,9 @@ const VOTING_STAGES = {
   CANCELLED: 'cancelled'
 };
 
-const createSeededRandom = (seed) => {
-  let value = Number.isFinite(seed) ? seed : Date.now();
-  if (Number.isNaN(value)) {
-    value = Date.now();
-  }
+// removed unused: createSeededRandom
 
-  return () => {
-    value |= 0;
-    value = (value + 0x6D2B79F5) | 0;
-    let t = Math.imul(value ^ (value >>> 15), 1 | value);
-    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const shuffleWithSeed = (items, seed) => {
-  const random = createSeededRandom(seed);
-  const arr = [...items];
-
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-
-  return arr;
-};
+// removed unused: MAX_ALIAS_ATTEMPTS, shuffleWithSeed
 
 // Cryptographically-strong Fisher–Yates shuffle for unbiased selection/order
 const _cryptoRandomInt = (maxExclusive) => {
@@ -809,7 +785,7 @@ class QueueService {
         byVideo.set(item.videoId, arr);
       }
       const prevAvgByItemId = new Map();
-      for (const [videoId, items] of byVideo.entries()) {
+      for (const [_videoId, items] of byVideo.entries()) {
         const averages = items.map((it) => {
           const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];
           if (!scores.length) return null;

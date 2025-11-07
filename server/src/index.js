@@ -493,7 +493,7 @@ class Server {
     });
 
     // Error handler (respect status from upstream middleware like express.static)
-    this.app.use((err, req, res, next) => {
+    this.app.use((err, req, res, _next) => {
       const status = err.status || err.statusCode || (err.code === 'ENOENT' ? 404 : 500);
       if (status >= 500) {
         logger.error('Unhandled error:', err);

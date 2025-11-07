@@ -18,7 +18,6 @@ const RING_TILT_DEG = 16;
 // Phase timing (must sum to <= SHUFFLE_DURATION_MS)
 const SCATTER_END_MS = 9000;   // initial scatter
 const RIFFLE_END_MS = 14000;   // card-like shuffle interleave
-const STAR_PHASE_START_MS = RIFFLE_END_MS; // maintain legacy name usage
 const SCATTER_PHASE_MS = 20000; // end of star flyby, then settle
 
 const STAR_POSITIONS = [
@@ -247,7 +246,7 @@ const QueueOverlay = () => {
   const [audioError, setAudioError] = useState(false);
   const [sbAudioError, setSbAudioError] = useState(false);
   // Removed predicted placement feature; no active cup tracking needed
-  const [socialRevealActive, setSocialRevealActive] = useState(false);
+  // removed social reveal state (unused)
   const shuffleSignatureRef = useRef(null);
   const audioRef = useRef(null);
   // Track multiple concurrent soundboard audio instances
@@ -354,7 +353,6 @@ const QueueOverlay = () => {
       lockedJudgeIdsRef.current = new Set();
       previousVotingItemRef.current = null;
       socialRevealItemRef.current = null;
-      setSocialRevealActive(false);
       return;
     }
 
@@ -362,7 +360,6 @@ const QueueOverlay = () => {
       lockedJudgeIdsRef.current = new Set();
       previousVotingItemRef.current = votingState.queueItemId;
       socialRevealItemRef.current = votingState.queueItemId;
-      setSocialRevealActive(false);
     }
 
     const knownLocks = new Set(lockedJudgeIdsRef.current);
@@ -380,22 +377,12 @@ const QueueOverlay = () => {
   useEffect(() => {
     if (!votingState) {
       socialRevealItemRef.current = null;
-      setSocialRevealActive(false);
       return;
     }
 
     const currentItemId = votingState.queueItemId ?? null;
     if (socialRevealItemRef.current !== currentItemId) {
       socialRevealItemRef.current = currentItemId;
-      setSocialRevealActive(false);
-    }
-
-    const stage = (votingState.stage || '').toLowerCase();
-    const revealedSocial =
-      typeof votingState.revealedSocial === 'number' ||
-      Boolean(votingState.socialBreakdown);
-    if (stage === 'social' || stage === 'completed' || revealedSocial) {
-      setSocialRevealActive(true);
     }
   }, [votingState]);
 
@@ -547,7 +534,7 @@ const QueueOverlay = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener, channelConnected]);
+  }, [addChannelListener, removeChannelListener, channelConnected, SERVER_BASE]);
 
   // Cleanup all active soundboard audio on unmount
   useEffect(() => () => {
@@ -619,15 +606,7 @@ const QueueOverlay = () => {
     return sortedQueue;
   }, [shuffleVisual, shuffleSeed, topEight, sortedQueue]);
 
-  const finalRankMap = useMemo(() => {
-    const map = new Map();
-    if (shuffleVisual?.payload?.finalOrder?.length) {
-      shuffleVisual.payload.finalOrder.forEach((item, index) => {
-        map.set(item.id, index + 1);
-      });
-    }
-    return map;
-  }, [shuffleVisual]);
+  // removed finalRankMap (unused)
 
 const ringLayout = useMemo(() => {
     if (!shuffleItems.length) {
@@ -660,7 +639,7 @@ const ringLayout = useMemo(() => {
     });
 
     return groups;
-  }, [shuffleItems]);
+  }, [shuffleItems, shuffleSeed]);
 
   const overlayBackground = `
     radial-gradient(circle at 18% 15%, rgba(66, 189, 255, 0.18), transparent 40%),
@@ -854,7 +833,7 @@ const ringLayout = useMemo(() => {
 
                   return ringItems.map(({ item, globalIndex, indexWithin }) => {
                     const angle = offsetDeg + (360 / ringCount) * indexWithin;
-                    const rank = finalRankMap.get(item.id);
+                    // rank removed; not used in rendering
                     const seed = computeCardSeed(item, globalIndex);
                     const scatter = getScatterTransform(seed);
                     const finalTransform = `rotateZ(${angle}deg) translateY(-${radius}px) rotateZ(${-angle}deg) rotateX(${-RING_TILT_DEG}deg)`;

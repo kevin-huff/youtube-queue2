@@ -229,15 +229,7 @@ class AdEventService {
     return resp?.data;
   }
 
-  _resolveChannelNameByBroadcasterId(broadcasterId) {
-    const channels = this.channelManager.getAllChannels();
-    for (const channelId of channels) {
-      const info = this.channelManager.getChannelInfo ? null : null;
-      // ChannelManager doesn’t expose a direct getter for Channel record here.
-      // Use the Prisma client to lookup by twitchUserId.
-    }
-    return null;
-  }
+  // removed unused helper: broadcaster id → channel id
 
   async _handleAdBreakBegin(event) {
     try {
@@ -265,7 +257,7 @@ class AdEventService {
         this.warnTimers.delete(wKey);
       }
 
-      const { enabled, startMsg, endMsg } = await this._getAdSettings(channelId);
+      const { enabled, startMsg } = await this._getAdSettings(channelId);
       if (!enabled) return;
       this._sendMessage(chatChannel, this._formatMsg(startMsg, { durationSec }));
 
@@ -347,7 +339,7 @@ class AdEventService {
             const chatChannel = `#${channelId}`;
             const timer = setTimeout(async () => {
               try {
-                const { enabled, warnMsg, endMsg } = await this._getAdSettings(channelId);
+                const { enabled, warnMsg } = await this._getAdSettings(channelId);
                 if (enabled) {
                   this._sendMessage(chatChannel, this._formatMsg(warnMsg, { durationSec }));
                   // Also schedule end message as a fallback if EventSub notification is missed

@@ -820,7 +820,7 @@ const Dashboard = () => {
     } finally {
       setSbBusyId(null);
     }
-  }, [channel?.id, soundboardItems]);
+  }, [channel?.id, soundboardItems, SERVER_BASE]);
 
   const resolveItemUrl = useCallback((item) => {
     const base = (SERVER_BASE || '').replace(/\/$/, '');
@@ -994,7 +994,7 @@ const Dashboard = () => {
     if (user) {
       fetchChannels();
     }
-  }, [user]);
+  }, [user, fetchChannels]);
 
   // (moved) Refresh status summary when channel changes defined later
 
@@ -1105,7 +1105,7 @@ const Dashboard = () => {
     if (activeTab !== 'overview') {
       setActiveTab('overview');
     }
-  }, [location.pathname, location.search, canModerate, canProduce, navigate, activeTab, authLoading, loading]);
+  }, [location.pathname, location.search, canModerate, canProduce, canManageSettings, navigate, activeTab, authLoading, loading]);
 
   // Connect to channel socket when channel is loaded
   useEffect(() => {
@@ -1531,7 +1531,7 @@ const Dashboard = () => {
     fetchStatusSummary();
     fetchPlayedInActiveCup();
     fetchActiveCup();
-  }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup]);
+  }, [currentChannelId, fetchStatusSummary, fetchPlayedInActiveCup, fetchActiveCup]);
 
   // Live-refresh summaries on queue events (debounced)
   useEffect(() => {

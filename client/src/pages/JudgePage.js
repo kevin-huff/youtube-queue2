@@ -68,7 +68,6 @@ const JudgePage = () => {
     playLocal,
     pauseLocal,
     seekLocal,
-    getCurrentTime,
     setVolume: setPlayerVolume,
     toggleMute,
     currentTime,
@@ -144,7 +143,7 @@ const JudgePage = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener, channelConnected]);
+  }, [addChannelListener, removeChannelListener, channelConnected, SERVER_BASE]);
 
   // Cleanup all active soundboard audio on unmount
   useEffect(() => () => {

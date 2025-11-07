@@ -24,23 +24,7 @@ const techReveal = keyframes`
   }
 `;
 
-// High-tech hide animation
-const techHide = keyframes`
-  0% {
-    opacity: 1;
-    transform: scale(1) rotateX(0deg);
-    filter: blur(0) brightness(1);
-  }
-  60% {
-    opacity: 0.3;
-    filter: blur(8px) brightness(0.6);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.85) rotateX(-12deg);
-    filter: blur(20px) brightness(0.2);
-  }
-`;
+// High-tech hide animation (removed; not used)
 
 // Glowing border pulse
 const borderPulse = keyframes`
@@ -167,7 +151,6 @@ const PlayerOverlay = () => {
   const [pendingSeek, setPendingSeek] = useState(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [shouldShowPlayer, setShouldShowPlayer] = useState(false);
-  const [previousVideoId, setPreviousVideoId] = useState(null);
 
   const currentVideoId = currentlyPlaying?.id ?? null;
   
@@ -238,16 +221,10 @@ const PlayerOverlay = () => {
   // Hide player when voting is active; otherwise honor manual override if present
   useEffect(() => {
     const vidId = currentlyPlaying?.videoId;
-    const autoShow = Boolean(vidId) && !votingActive;
     const manual = (overlayShowPlayer === true || overlayShowPlayer === false) ? overlayShowPlayer : null;
     const finalShow = !votingActive && (manual !== null ? manual : Boolean(vidId));
 
     setShouldShowPlayer(finalShow);
-    if (finalShow && vidId) {
-      setPreviousVideoId(vidId);
-    } else if (!vidId) {
-      setPreviousVideoId(null);
-    }
   }, [currentlyPlaying?.videoId, votingActive, overlayShowPlayer]);
 
   const {

@@ -176,7 +176,7 @@ class VideoService {
   }
 
   // TikTok metadata (web scraping fallback)
-  async getTikTokMetadata(url) {
+  async getTikTokMetadata(_url) {
     try {
       // For now, return basic metadata
       // In production, you might want to use a proper scraping service
@@ -196,7 +196,7 @@ class VideoService {
   }
 
   // Instagram metadata (web scraping fallback)
-  async getInstagramMetadata(url) {
+  async getInstagramMetadata(_url) {
     try {
       // For now, return basic metadata
       // In production, you might want to use a proper scraping service
@@ -254,7 +254,7 @@ class VideoService {
     let validEntries = 0;
     let expiredEntries = 0;
 
-    for (const [key, value] of this.cache.entries()) {
+    for (const [, value] of this.cache.entries()) {
       if (now - value.timestamp < this.cacheExpiry) {
         validEntries++;
       } else {

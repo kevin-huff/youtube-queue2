@@ -6,7 +6,7 @@ const fs = require('fs');
 const multer = require('multer');
 const logger = require('../utils/logger');
 const { requireAuth, requireChannelRole } = require('../auth/middleware');
-const { authenticateJudgeToken, generateJudgeToken, verifyJudgeToken } = require('../auth/judgeToken');
+const { authenticateJudgeToken, generateJudgeToken } = require('../auth/judgeToken');
 
 const router = express.Router();
 
@@ -841,8 +841,8 @@ router.post('/channels/:channelId/cups',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
-      const { db } = channelManager;
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
 
       const cup = await channelManager.prisma.cup.create({
         data: {
@@ -870,7 +870,8 @@ router.get('/channels/:channelId/cups',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
 
       const cups = await channelManager.prisma.cup.findMany({
         where: { channelId: normalizedChannelId },
@@ -900,7 +901,8 @@ router.patch('/channels/:channelId/cups/:cupId/set-active',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
       const { cupId } = req.params;
 
       // First, deactivate all cups for this channel
@@ -934,7 +936,8 @@ router.get('/channels/:channelId/cups/:cupId/videos',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
       const { cupId } = req.params;
 
       // Get videos assigned to this cup
@@ -984,7 +987,7 @@ router.patch('/channels/:channelId/cups/:cupId/videos/:videoId/unassign',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const _normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const { cupId, videoId } = req.params;
 
       // Unassign the video from the cup
@@ -1020,7 +1023,7 @@ router.post('/channels/:channelId/cups/:cupId/judge-link',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const _normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const cupId = req.params.cupId;
 
       // Verify cup exists and belongs to this channel
@@ -3049,6 +3052,7 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
       const channelManager = getChannelManager(req);
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const judgeService = channelManager.getJudgeService(normalizedChannelId);
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
 
       if (!judgeService) {
         return res.status(500).json({ error: 'Judge service not available' });
@@ -3264,7 +3268,7 @@ router.get('/health', (req, res) => {
   });
 });
 
-router.use((error, req, res, next) => {
+router.use((error, req, res, _next) => {
   logger.error('API Error:', error);
   res.status(500).json({
     error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message

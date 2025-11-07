@@ -82,7 +82,7 @@ class TwitchBot {
     // Chat events
     this.client.on('message', this.handleMessage.bind(this));
   // Cheer events (bits)
-  this.client.on('cheer', this.handleCheer ? this.handleCheer.bind(this) : (channel, userstate, message) => {});
+  this.client.on('cheer', this.handleCheer ? this.handleCheer.bind(this) : (_channel, _userstate, _message) => {});
     this.client.on('join', this.handleJoin.bind(this));
     this.client.on('part', this.handlePart.bind(this));
 
@@ -117,7 +117,7 @@ class TwitchBot {
     const username = userstate.username.toLowerCase();
     const displayName = userstate['display-name'] || username;
     const isModerator = userstate.mod || userstate.badges?.broadcaster;
-    const isSubscriber = userstate.subscriber;
+    const _isSubscriber = userstate.subscriber;
 
     try {
       // Check if channel is active
@@ -150,7 +150,7 @@ class TwitchBot {
     try {
       const channelId = channel.substring(1).toLowerCase();
       const username = (userstate.username || '').toLowerCase();
-      const displayName = userstate['display-name'] || username;
+      const _displayName = userstate['display-name'] || username;
 
       if (!this.channelManager.isChannelActive(channelId)) return;
 
