@@ -430,6 +430,7 @@ const Dashboard = () => {
   // Overview: Next Ad timer (visible to anyone with channel access)
   const [ovNextAdAt, setOvNextAdAt] = useState(null);
   const [ovAdLive, setOvAdLive] = useState(null);
+  const [ovNextAdDuration, setOvNextAdDuration] = useState(null);
   const [ovAdLoading, setOvAdLoading] = useState(false);
   const [ovAdUpdatedAt, setOvAdUpdatedAt] = useState(null);
   const [ovNowTs, setOvNowTs] = useState(Date.now());
@@ -439,9 +440,10 @@ const Dashboard = () => {
     try {
       setOvAdLoading(true);
       const res = await axios.get(`/api/channels/${currentChannelId}/ads/next`, { withCredentials: true });
-      const { nextAdAt: iso, live } = res.data || {};
+      const { nextAdAt: iso, live, duration } = res.data || {};
       setOvAdLive(live === null ? null : Boolean(live));
       setOvNextAdAt(iso ? new Date(iso).getTime() : null);
+      setOvNextAdDuration(typeof duration === 'number' ? duration : null);
       setOvAdUpdatedAt(Date.now());
     } catch (_) {
       setOvAdLive(null);
@@ -467,6 +469,13 @@ const Dashboard = () => {
     const s = total % 60;
     return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}` : `${m}:${s.toString().padStart(2,'0')}`;
   }, [ovNextAdAt, ovNowTs, ovAdLive]);
+
+  const ovAdDurationText = useMemo(() => {
+    if (typeof ovNextAdDuration !== 'number' || !Number.isFinite(ovNextAdDuration) || ovNextAdDuration <= 0) return null;
+    const m = Math.floor(ovNextAdDuration / 60);
+    const s = Math.floor(ovNextAdDuration % 60);
+    return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
+  }, [ovNextAdDuration]);
 
   const channelAccess = useMemo(
     () => findChannelAccess(currentChannelId || undefined),
@@ -1801,7 +1810,7 @@ const Dashboard = () => {
                     label={ovAdLive === null ? 'Ads' : ovAdLive ? 'Live' : 'Offline'}
                   />
                   <Typography variant="body2" color="text.secondary">
-                    Next ad {ovAdLoading ? 'loading…' : (ovAdLive ? (ovNextAdAt ? `in ${ovAdCountdown}` : 'schedule not available') : '—')}
+                    Next ad {ovAdLoading ? 'loading…' : (ovAdLive ? (ovNextAdAt ? `in ${ovAdCountdown}${ovAdDurationText ? ` • duration ${ovAdDurationText}` : ''}` : 'schedule not available') : '—')}
                   </Typography>
                   {ovAdUpdatedAt && (
                     <Typography variant="caption" color="text.secondary">

@@ -267,14 +267,14 @@ class AdEventService {
 
       const { enabled, startMsg, endMsg } = await this._getAdSettings(channelId);
       if (!enabled) return;
-      this._sendMessage(chatChannel, startMsg);
+      this._sendMessage(chatChannel, this._formatMsg(startMsg, { durationSec }));
 
       if (Number.isFinite(durationSec) && durationSec > 0) {
         if (this.endTimers.has(eKey)) clearTimeout(this.endTimers.get(eKey));
         const timer = setTimeout(async () => {
           try {
             const { enabled: en2, endMsg: em2 } = await this._getAdSettings(channelId);
-            if (en2) this._sendMessage(chatChannel, em2);
+            if (en2) this._sendMessage(chatChannel, this._formatMsg(em2, { durationSec }));
           } finally {
             this.endTimers.delete(eKey);
           }
@@ -349,7 +349,7 @@ class AdEventService {
               try {
                 const { enabled, warnMsg, endMsg } = await this._getAdSettings(channelId);
                 if (enabled) {
-                  this._sendMessage(chatChannel, warnMsg);
+                  this._sendMessage(chatChannel, this._formatMsg(warnMsg, { durationSec }));
                   // Also schedule end message as a fallback if EventSub notification is missed
                   if (Number.isFinite(durationSec) && durationSec > 0) {
                     const endKey = channelId;
@@ -358,7 +358,7 @@ class AdEventService {
                     const endTimer = setTimeout(async () => {
                       try {
                         const { enabled: en3, endMsg: em3 } = await this._getAdSettings(channelId);
-                        if (en3) this._sendMessage(chatChannel, em3);
+                        if (en3) this._sendMessage(chatChannel, this._formatMsg(em3, { durationSec }));
                       } finally {
                         this.endTimers.delete(endKey);
                       }
@@ -554,6 +554,27 @@ class AdEventService {
         startMsg: 'Ad break starting now — see you after the ads!',
         endMsg: 'Ads are over — welcome back!'
       };
+    }
+  }
+
+  _formatMsg(template, { durationSec = null } = {}) {
+    try {
+      let msg = String(template || '');
+      if (typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0) {
+        const m = Math.floor(durationSec / 60);
+        const s = Math.floor(durationSec % 60);
+        const mmss = `${m}:${s.toString().padStart(2, '0')}`;
+        const human = m > 0 ? `${m}m${s ? ` ${s}s` : ''}` : `${s}s`;
+        msg = msg
+          .replaceAll('{duration}', String(durationSec))
+          .replaceAll('{duration_sec}', String(durationSec))
+          .replaceAll('{duration_min}', String(m))
+          .replaceAll('{duration_mmss}', mmss)
+          .replaceAll('{duration_human}', human);
+      }
+      return msg;
+    } catch (_) {
+      return template || '';
     }
   }
 }

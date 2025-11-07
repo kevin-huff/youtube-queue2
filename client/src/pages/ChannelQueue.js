@@ -1181,6 +1181,13 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}` : `${m}:${s.toString().padStart(2,'0')}`;
   }, [nextAdAt, nowTs, adLive]);
 
+  const adDurationText = useMemo(() => {
+    if (typeof nextAdDuration !== 'number' || !Number.isFinite(nextAdDuration) || nextAdDuration <= 0) return null;
+    const m = Math.floor(nextAdDuration / 60);
+    const s = Math.floor(nextAdDuration % 60);
+    return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
+  }, [nextAdDuration]);
+
   const handleVolumeChange = (_, value) => {
     const next = Array.isArray(value) ? value[0] : value;
     if (typeof next !== 'number' || Number.isNaN(next)) {
@@ -1866,7 +1873,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       </Stack>
                     </Stack>
 
-                    {votingState ? (
+                    {votingState && (
                       <Stack spacing={1.5} mt={1}>
                         <Divider sx={{ my: 1 }} />
                         <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center">
@@ -1964,7 +1971,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           )}
                         </Stack>
                       </Stack>
-                    ) : (
+                    )}
+                    {!votingState && (
                       <Typography variant="body2" color="text.secondary">
                         When you start voting, judges will appear here so you can monitor their lock-ins and reveals.
                       </Typography>
@@ -2007,6 +2015,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       value={settings?.ad_warn_message || ''}
                       onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_warn_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
                       disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                      helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                     />
                     <TextField
                       size="small"
@@ -2015,6 +2024,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       value={settings?.ad_start_message || ''}
                       onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_start_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
                       disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                      helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                     />
                     <TextField
                       size="small"
@@ -2023,6 +2033,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       value={settings?.ad_end_message || ''}
                       onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_end_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
                       disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                      helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                     />
                     {adError && (
                       <Alert severity="warning">{adError}</Alert>
@@ -2458,7 +2469,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                         label={adLive === null ? 'Ads' : adLive ? 'Live' : 'Offline'}
                       />
                       <Typography variant="body2" color="text.secondary">
-                        Next ad {adLoading ? 'loading…' : (adLive ? (nextAdAt ? `in ${adCountdown}` : 'schedule not available') : '—')}
+                        Next ad {adLoading ? 'loading…' : (adLive ? (nextAdAt ? `in ${adCountdown}${adDurationText ? ` • duration ${adDurationText}` : ''}` : 'schedule not available') : '—')}
                       </Typography>
                       {adUpdatedAt && (
                         <Typography variant="caption" color="text.secondary">
