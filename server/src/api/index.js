@@ -127,6 +127,33 @@ const getChannelManager = (req) => {
   return manager;
 };
 
+// Admin utilities (gate by Twitch user id)
+const ADMIN_TWITCH_IDS = (process.env.ADMIN_TWITCH_IDS || '77292575')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const channelManager = getChannelManager(req);
+    const account = await channelManager.prisma.account.findUnique({
+      where: { id: req.user.id },
+      select: { twitchId: true, username: true }
+    });
+    const twitchId = account?.twitchId ? String(account.twitchId) : null;
+    if (twitchId && ADMIN_TWITCH_IDS.includes(twitchId)) {
+      return next();
+    }
+    return res.status(403).json({ error: 'Admin access required' });
+  } catch (err) {
+    logger.error('Admin check failed', { error: err?.message });
+    return res.status(500).json({ error: 'Admin check failed' });
+  }
+};
+
 const requireChannelOwnership = async (channelManager, accountId, channelId) => {
   const normalizedChannelId = channelId.toLowerCase();
   const owned = await channelManager.getUserChannels(accountId);
@@ -371,6 +398,95 @@ router.get('/channels', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Error getting user channels:', error);
     res.status(error.status || 500).json({ error: error.message || 'Failed to get channels' });
+  }
+});
+
+// Admin: system/debug info (admin-only)
+router.get('/admin/debug/info', requireAdmin, async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const prisma = channelManager.prisma;
+    const account = await prisma.account.findUnique({ where: { id: req.user.id }, select: { id: true, username: true, twitchId: true, displayName: true } });
+    const adService = req.app.get('adEventService');
+    const adStatus = adService ? {
+      enabled: !!adService.enabled,
+      sessionId: adService.sessionId || null,
+      pollers: adService.pollIntervals ? adService.pollIntervals.size : 0
+    } : null;
+    const activeChannels = channelManager.getActiveChannels();
+    const totalChannels = await prisma.channel.count();
+    const adminIds = ADMIN_TWITCH_IDS;
+    res.json({
+      admin: true,
+      adminIds,
+      user: {
+        id: account?.id || null,
+        username: account?.username || null,
+        displayName: account?.displayName || null,
+        twitchId: account?.twitchId || null
+      },
+      adService: adStatus,
+      channels: {
+        active: activeChannels,
+        total: totalChannels
+      }
+    });
+  } catch (err) {
+    logger.error('admin/debug/info failed', { error: err?.message });
+    res.status(500).json({ error: 'Failed to load debug info' });
+  }
+});
+
+// Admin: list channels (id, displayName, twitchUserId, isActive)
+router.get('/admin/channels', requireAdmin, async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const rows = await channelManager.prisma.channel.findMany({
+      select: { id: true, displayName: true, twitchUserId: true, isActive: true }
+    });
+    res.json({ channels: rows });
+  } catch (err) {
+    logger.error('admin/channels failed', { error: err?.message });
+    res.status(500).json({ error: 'Failed to list channels' });
+  }
+});
+
+// Admin: ads next for any channel (no ownership required)
+router.get('/admin/debug/ads/next', requireAdmin, async (req, res) => {
+  try {
+    const channelId = String(req.query.channelId || '').toLowerCase();
+    if (!channelId) return res.status(400).json({ error: 'channelId required' });
+    const adService = req.app.get('adEventService');
+    if (!adService || !adService.enabled) {
+      return res.status(503).json({ error: 'Ad service unavailable' });
+    }
+    const result = await adService.getNextAdForChannel(channelId);
+    res.json({ channelId, ...result });
+  } catch (err) {
+    logger.error('admin/debug/ads/next failed', { error: err?.message });
+    res.status(500).json({ error: 'Failed to load next ad' });
+  }
+});
+
+// Admin: tail logs (app|error|exceptions)
+router.get('/admin/logs', requireAdmin, async (req, res) => {
+  try {
+    const which = String(req.query.file || 'app');
+    const linesReq = Number(req.query.lines || 200);
+    const lines = Number.isFinite(linesReq) ? Math.max(1, Math.min(2000, Math.floor(linesReq))) : 200;
+    const nameMap = { app: 'app.log', error: 'error.log', exceptions: 'exceptions.log' };
+    const fname = nameMap[which] || nameMap.app;
+    const p = path.join(process.cwd(), 'logs', fname);
+    if (!fs.existsSync(p)) {
+      return res.json({ file: fname, lines: [], note: 'log file not found' });
+    }
+    const data = fs.readFileSync(p, 'utf8');
+    const arr = data.split(/\r?\n/);
+    const slice = arr.slice(-lines).filter((l) => l && l.trim().length > 0);
+    res.json({ file: fname, lines: slice });
+  } catch (err) {
+    logger.error('admin/logs failed', { error: err?.message });
+    res.status(500).json({ error: 'Failed to read logs' });
   }
 });
 
@@ -1542,6 +1658,15 @@ router.get('/channels/:channelId/ads/next', requireAuth, async (req, res) => {
     }
     const channelId = await requireChannelOwnership(getChannelManager(req), req.user.id, req.params.channelId);
     const result = await adService.getNextAdForChannel(channelId);
+    try {
+      logger.info('ads/next', {
+        channelId,
+        requester: req.user?.id || null,
+        live: result?.live ?? null,
+        nextAdAt: result?.nextAdAt || null,
+        duration: typeof result?.duration === 'number' ? result.duration : null
+      });
+    } catch (_) {}
     return res.json(result || { live: null, nextAdAt: null, duration: null });
   } catch (error) {
     logger.error('Error getting next ad info:', error);

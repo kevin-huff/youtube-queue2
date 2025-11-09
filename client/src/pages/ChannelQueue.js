@@ -1149,11 +1149,31 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       setAdError(null);
       const res = await axios.get(`/api/channels/${channel.id}/ads/next`, { withCredentials: true });
       const { nextAdAt: iso, duration, live } = res.data || {};
+      // Debug: log raw and parsed values for ads/next
+      try {
+        const parsedTs = iso ? new Date(iso).getTime() : null;
+        const now = Date.now();
+        // eslint-disable-next-line no-console
+        console.info('[ads][producer] /ads/next response', {
+          channelId: channel?.id,
+          raw: res?.data || null,
+          parsed: {
+            live: live === null ? null : Boolean(live),
+            nextAdAtIso: iso || null,
+            nextAdAtMs: parsedTs,
+            duration: typeof duration === 'number' ? duration : null,
+            now,
+            deltaSec: parsedTs ? Math.max(0, Math.floor((parsedTs - now) / 1000)) : null
+          }
+        });
+      } catch (_) { /* no-op */ }
       setAdLive(live === null ? null : Boolean(live));
       setNextAdDuration(typeof duration === 'number' ? duration : null);
       setNextAdAt(iso ? new Date(iso).getTime() : null);
       setAdUpdatedAt(Date.now());
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ads][producer] /ads/next failed', err?.response?.data || err?.message || err);
       setAdError(err?.response?.data?.error || err?.message || 'Failed to load ad schedule');
       setAdLive(null);
       setNextAdAt(null);

@@ -21,6 +21,7 @@ import CupAdmin from './pages/CupAdmin';
 import ViewerHub from './pages/ViewerHub';
 import OnboardingPage from './pages/OnboardingPage';
 import SubmitterProfile from './pages/SubmitterProfile';
+import AdminDebug from './pages/AdminDebug';
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -110,7 +111,22 @@ function App() {
               
               {/* Legacy Routes - Redirect or Remove */}
               <Route path="/queue" element={<Navigate to="/" replace />} />
-              <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
+              <Route 
+                path="/admin" 
+                element={
+                  <ProtectedRoute>
+                    <AdminDebug />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/admin/debug" 
+                element={
+                  <ProtectedRoute>
+                    <AdminDebug />
+                  </ProtectedRoute>
+                } 
+              />
               
               {/* Catch all */}
               <Route path="*" element={<Navigate to="/" replace />} />

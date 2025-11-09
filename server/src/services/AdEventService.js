@@ -45,6 +45,7 @@ class AdEventService {
     }
 
     this.enabled = true;
+    logger.info('AdEventService initialized');
     await this._primeFromDatabase();
     await this._connectWebSocket();
 
@@ -257,6 +258,7 @@ class AdEventService {
         this.warnTimers.delete(wKey);
       }
 
+      try { logger.info('AdEventService: ad break begin', { channelId, broadcasterId, durationSec: Number.isFinite(durationSec) ? durationSec : null }); } catch (_) {}
       const { enabled, startMsg } = await this._getAdSettings(channelId);
       if (!enabled) return;
       this._sendMessage(chatChannel, this._formatMsg(startMsg, { durationSec }));
@@ -267,6 +269,7 @@ class AdEventService {
           try {
             const { enabled: en2, endMsg: em2 } = await this._getAdSettings(channelId);
             if (en2) this._sendMessage(chatChannel, this._formatMsg(em2, { durationSec }));
+            try { logger.info('AdEventService: end message (event) fired', { channelId, broadcasterId, durationSec }); } catch (_) {}
           } finally {
             this.endTimers.delete(eKey);
           }
@@ -339,6 +342,13 @@ class AdEventService {
             const chatChannel = `#${channelId}`;
             const timer = setTimeout(async () => {
               try {
+                try {
+                  logger.info('AdEventService: pre-warn fired', {
+                    channelId,
+                    broadcasterId,
+                    durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
+                  });
+                } catch (_) {}
                 const { enabled, warnMsg } = await this._getAdSettings(channelId);
                 if (enabled) {
                   this._sendMessage(chatChannel, this._formatMsg(warnMsg, { durationSec }));
@@ -349,6 +359,7 @@ class AdEventService {
                     const endDelay = 30_000 + (durationSec * 1000);
                     const endTimer = setTimeout(async () => {
                       try {
+                        try { logger.info('AdEventService: end message (fallback) fired', { channelId, broadcasterId, durationSec }); } catch (_) {}
                         const { enabled: en3, endMsg: em3 } = await this._getAdSettings(channelId);
                         if (en3) this._sendMessage(chatChannel, this._formatMsg(em3, { durationSec }));
                       } finally {
@@ -363,6 +374,16 @@ class AdEventService {
               }
             }, timeoutMs);
             this.warnTimers.set(key, timer);
+            try {
+              logger.info('AdEventService: pre-warn scheduled', {
+                channelId,
+                broadcasterId,
+                warnAtIso: new Date(warnAt).toISOString(),
+                nextAdAtIso: nextAtIso,
+                inSec: Math.round(timeoutMs / 1000),
+                durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
+              });
+            } catch (_) {}
           }
         } catch (err) {
           logger.debug?.('AdEventService: ad schedule poll failed', { err: err?.message });
@@ -427,10 +448,22 @@ class AdEventService {
       }
       const rec = TokenStore.getByTwitchUserId(broadcasterId);
       const bearer = rec?.accessToken || null;
+      if (!bearer) {
+        try { logger.info('AdEventService: no user token; attempting schedule with refresh', { channelId, broadcasterId }); } catch (_) {}
+      }
       const data = await this._getAdSchedule(broadcasterId, bearer);
       const entry = Array.isArray(data?.data) ? data.data[0] : null;
       const nextAdAt = entry?.next_ad_at || entry?.next_ad_time || null;
       const duration = typeof entry?.duration_seconds === 'number' ? entry.duration_seconds : null;
+      try {
+        logger.info('AdEventService: next ad info', {
+          channelId,
+          broadcasterId,
+          live: true,
+          nextAdAt: nextAdAt || null,
+          duration: typeof duration === 'number' ? duration : null
+        });
+      } catch (_) {}
       return { live: true, nextAdAt, duration };
     } catch (err) {
       logger.warn('AdEventService: getNextAdForChannel failed', { channelId, error: err?.message, data: err?.response?.data });

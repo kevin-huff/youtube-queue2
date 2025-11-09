@@ -441,11 +441,31 @@ const Dashboard = () => {
       setOvAdLoading(true);
       const res = await axios.get(`/api/channels/${currentChannelId}/ads/next`, { withCredentials: true });
       const { nextAdAt: iso, live, duration } = res.data || {};
+      // Debug: log raw and parsed values for ads/next
+      try {
+        const parsedTs = iso ? new Date(iso).getTime() : null;
+        const now = Date.now();
+        // eslint-disable-next-line no-console
+        console.info('[ads][dashboard] /ads/next response', {
+          channelId: currentChannelId,
+          raw: res?.data || null,
+          parsed: {
+            live: live === null ? null : Boolean(live),
+            nextAdAtIso: iso || null,
+            nextAdAtMs: parsedTs,
+            duration: typeof duration === 'number' ? duration : null,
+            now,
+            deltaSec: parsedTs ? Math.max(0, Math.floor((parsedTs - now) / 1000)) : null
+          }
+        });
+      } catch (_) { /* no-op */ }
       setOvAdLive(live === null ? null : Boolean(live));
       setOvNextAdAt(iso ? new Date(iso).getTime() : null);
       setOvNextAdDuration(typeof duration === 'number' ? duration : null);
       setOvAdUpdatedAt(Date.now());
     } catch (_) {
+      // eslint-disable-next-line no-console
+      console.warn('[ads][dashboard] /ads/next failed');
       setOvAdLive(null);
       setOvNextAdAt(null);
     } finally {
