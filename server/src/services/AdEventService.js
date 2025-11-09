@@ -20,9 +20,8 @@ class AdEventService {
     this.clientId = process.env.TWITCH_CLIENT_ID || null;
     this.clientSecret = process.env.TWITCH_CLIENT_SECRET || null;
     this.credentials = {}; // No env fallbacks; credentials provided via TokenStore
-    this.ws = null;
-    this.sessionId = null;
-    this.keepaliveTimeout = null;
+    // Per-broadcaster EventSub sessions: broadcasterId -> session record
+    this.sessions = new Map();
     this.pollIntervals = new Map(); // broadcaster_user_id -> timer
     this.warnTimers = new Map(); // channelId -> timer for 30s pre-ad
     this.endTimers = new Map(); // channelId -> timer for end-of-ad
@@ -47,7 +46,7 @@ class AdEventService {
     this.enabled = true;
     logger.info('AdEventService initialized');
     await this._primeFromDatabase();
-    await this._connectWebSocket();
+    await this._ensureSessions();
 
     // Start ad schedule polling as a best-effort for 30s pre-warn
     this._startSchedulePolling();
@@ -55,17 +54,108 @@ class AdEventService {
 
   async shutdown() {
     this.enabled = false;
-    if (this.ws) {
-      try { this.ws.close(); } catch (_) {}
-      this.ws = null;
+    // Close all EventSub sessions
+    for (const sess of this.sessions.values()) {
+      try { if (sess.keepaliveTimeout) clearTimeout(sess.keepaliveTimeout); } catch (_) {}
+      try { if (sess.ws) sess.ws.close(); } catch (_) {}
     }
-    if (this.keepaliveTimeout) clearTimeout(this.keepaliveTimeout);
+    this.sessions.clear();
     for (const t of this.pollIntervals.values()) clearInterval(t);
     for (const t of this.warnTimers.values()) clearTimeout(t);
     for (const t of this.endTimers.values()) clearTimeout(t);
     this.pollIntervals.clear();
     this.warnTimers.clear();
     this.endTimers.clear();
+  }
+
+  // ---- Per‑broadcaster EventSub sessions ----
+  async _ensureSessions() {
+    const entries = this._getAllCredentials();
+    for (const [broadcasterId, cred] of entries) {
+      const key = String(broadcasterId);
+      if (!this.sessions.has(key)) {
+        await this._connectSession(key, cred.access_token);
+      }
+    }
+  }
+
+  _armKeepaliveFor(session, timeoutSec) {
+    if (!session) return;
+    if (session.keepaliveTimeout) clearTimeout(session.keepaliveTimeout);
+    const base = Number(timeoutSec || 10);
+    const sec = (Number.isFinite(base) ? base : 10) + 5;
+    const ms = Math.max(5000, sec * 1000);
+    session.keepaliveTimeout = setTimeout(() => {
+      try { logger.warn('AdEventService: keepalive timeout; reconnecting', { broadcasterId: session.broadcasterId }); } catch (_) {}
+      try { if (session.ws) session.ws.terminate(); } catch (_) {}
+    }, ms);
+    session.lastKeepaliveAt = Date.now();
+  }
+
+  async _connectSession(broadcasterId, userAccessToken) {
+    try {
+      const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+      const session = { ws, sessionId: null, keepaliveTimeout: null, broadcasterId, userAccessToken, lastKeepaliveAt: null, reconnectUrl: null };
+      this.sessions.set(broadcasterId, session);
+      logger.info('AdEventService: connecting to EventSub WebSocket', { broadcasterId });
+
+      const bindHandlers = () => {
+        const s = session; // local alias
+        if (!s || !s.ws) return;
+        s.ws.on('open', () => {
+          logger.info('AdEventService: EventSub WebSocket open', { broadcasterId });
+        });
+
+        s.ws.on('message', async (raw) => {
+          try {
+            const msg = JSON.parse(raw.toString());
+            const type = msg?.metadata?.message_type || msg?.metadata?.messageType || msg?.metadata?.message_type;
+            const keep = (msg?.payload?.session?.keepalive_timeout_seconds) || 10;
+            this._armKeepaliveFor(s, keep);
+            if (type === 'session_welcome') {
+              s.sessionId = msg?.payload?.session?.id;
+              logger.info('AdEventService: session established', { sessionId: s.sessionId, broadcasterId });
+              await this._createSubscriptionFor(s, 'channel.ad_break.begin', '1', { broadcaster_user_id: broadcasterId }, s.userAccessToken);
+              this._armKeepaliveFor(s, keep);
+            } else if (type === 'session_keepalive') {
+              this._armKeepaliveFor(s, keep);
+            } else if (type === 'session_reconnect') {
+              const reconnectUrl = msg?.payload?.session?.reconnect_url;
+              s.reconnectUrl = reconnectUrl;
+              logger.info('AdEventService: reconnect requested', { broadcasterId, reconnectUrl });
+              try { if (s.ws) s.ws.close(); } catch (_) {}
+              s.ws = new WebSocket(reconnectUrl);
+              bindHandlers(); // re-bind to the new socket
+            } else if (type === 'notification') {
+              const subType = msg?.payload?.subscription?.type;
+              if (subType === 'channel.ad_break.begin') {
+                await this._handleAdBreakBegin(msg?.payload?.event);
+              }
+            } else if (type === 'revocation') {
+              logger.warn('AdEventService: subscription revoked', { broadcasterId, sub: msg?.payload?.subscription });
+            }
+          } catch (err) {
+            logger.warn('AdEventService: failed to process EventSub message', { err: err?.message, broadcasterId });
+          }
+        });
+
+        s.ws.on('close', (code, reason) => {
+          logger.warn('AdEventService: EventSub WebSocket closed', { broadcasterId, code, reason: reason?.toString?.() });
+          s.sessionId = null;
+          if (this.enabled) {
+            setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), 2000);
+          }
+        });
+
+        s.ws.on('error', (err) => {
+          logger.error('AdEventService: WebSocket error', { broadcasterId, error: err?.message });
+        });
+      };
+
+      bindHandlers();
+    } catch (err) {
+      logger.error('AdEventService: failed to connect EventSub WebSocket', { broadcasterId, error: err?.message });
+    }
   }
 
   async _connectWebSocket() {
@@ -137,12 +227,8 @@ class AdEventService {
   }
 
   async _reconnect(url) {
-    try {
-      if (this.ws) try { this.ws.close(); } catch (_) {}
-      this.ws = new WebSocket(url);
-    } catch (err) {
-      logger.error('AdEventService: reconnect failed', { error: err?.message });
-    }
+    // Legacy single-session reconnect not used in per-session mode
+    try { logger.warn('AdEventService: legacy reconnect invoked; ignored'); } catch (_) {}
   }
 
   _getAllCredentials() {
@@ -172,29 +258,9 @@ class AdEventService {
     }
   }
 
-  async _subscribeToAdBreaks() {
-    if (!this.sessionId) return;
-    const entries = this._getAllCredentials();
-    if (!entries.length) return;
+  async _subscribeToAdBreaks() { /* no-op with per-session subscribe on welcome */ }
 
-    for (const [broadcasterId, cred] of entries) {
-      try {
-        await this._createSubscription('channel.ad_break.begin', '1', { broadcaster_user_id: String(broadcasterId) }, cred.access_token);
-        logger.info('AdEventService: subscribed to ad breaks', { broadcasterId });
-      } catch (err) {
-        const status = err?.response?.status;
-        const data = err?.response?.data;
-        logger.warn('AdEventService: subscription failed', { broadcasterId, error: err?.message, status, data });
-        if (status === 400) {
-          logger.warn('AdEventService: tip — broadcaster likely needs to re-login so we can capture a token with channel:read:ads scope');
-        } else if (status === 403) {
-          logger.warn('AdEventService: tip — token may not belong to the specified broadcaster');
-        }
-      }
-    }
-  }
-
-  async _createSubscription(type, version, condition, userAccessToken) {
+  async _createSubscriptionFor(session, type, version, condition, userAccessToken) {
     const token = userAccessToken; // For channel.* events, user token is typically required.
     const makeReq = async (bearer) => axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', {
       type,
@@ -202,7 +268,7 @@ class AdEventService {
       condition,
       transport: {
         method: 'websocket',
-        session_id: this.sessionId
+        session_id: session.sessionId
       }
     }, {
       headers: {
@@ -398,8 +464,8 @@ class AdEventService {
 
   async refreshSubscriptions() {
     try {
-      // Try to subscribe for any new broadcasters (won't duplicate existing subs server-side)
-      await this._subscribeToAdBreaks();
+      // Ensure sessions exist for any new broadcasters; per-session subscribe on welcome
+      await this._ensureSessions();
       // Start polling timers for any new broadcasters
       this._startSchedulePolling();
     } catch (err) {
@@ -601,6 +667,28 @@ class AdEventService {
     } catch (_) {
       return template || '';
     }
+  }
+
+  // ---- Admin helpers ----
+  listSessions() {
+    const list = [];
+    for (const [broadcasterId, s] of this.sessions.entries()) {
+      const connected = !!s.ws && s.ws.readyState === 1; // OPEN
+      list.push({
+        broadcasterId,
+        sessionId: s.sessionId || null,
+        connected,
+        lastKeepaliveAt: s.lastKeepaliveAt || null,
+        hasReconnectUrl: !!s.reconnectUrl
+      });
+    }
+    return list;
+  }
+
+  async reconnectSessionFor(broadcasterId) {
+    const s = this.sessions.get(String(broadcasterId));
+    if (!s) return false;
+    try { if (s.ws) s.ws.terminate(); return true; } catch (_) { return false; }
   }
 }
 
