@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   Avatar,
   Alert,
@@ -449,6 +449,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [vipActionId, setVipActionId] = useState(null);
   const [vipError, setVipError] = useState(null);
 
+  // Ad announcements form state (decoupled from socket settings to avoid keystroke drops)
+  const [adEnabled, setAdEnabled] = useState(true);
+  const [adWarn, setAdWarn] = useState('');
+  const [adStart, setAdStart] = useState('');
+  const [adEnd, setAdEnd] = useState('');
+  const [adSaving, setAdSaving] = useState(false);
+  const adSaveTimeoutRef = useRef(null);
+
   const {
     containerRef,
     playLocal,
@@ -473,6 +481,34 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     onLocalPause: pauseOverlay,
     onLocalSeek: seekOverlay
   });
+
+  // Sync local ad form state when socket settings change (e.g., on load, channel switch)
+  useEffect(() => {
+    setAdEnabled((settings?.ad_announcements_enabled || 'true') === 'true');
+    setAdWarn(settings?.ad_warn_message || '');
+    setAdStart(settings?.ad_start_message || '');
+    setAdEnd(settings?.ad_end_message || '');
+  }, [settings?.ad_announcements_enabled, settings?.ad_warn_message, settings?.ad_start_message, settings?.ad_end_message]);
+
+  const saveAdSetting = useCallback(async (key, value) => {
+    if (!normalizedChannelId) return;
+    try {
+      setAdSaving(true);
+      await axios.put(`/api/channels/${normalizedChannelId}/settings/${key}`, { value }, { withCredentials: true });
+    } catch (_) {
+      // ignore errors here; UI remains optimistic
+    } finally {
+      setAdSaving(false);
+    }
+  }, [normalizedChannelId]);
+
+  const debouncedSave = useCallback((key, value, delay = 600) => {
+    if (adSaveTimeoutRef.current) clearTimeout(adSaveTimeoutRef.current);
+    adSaveTimeoutRef.current = setTimeout(() => {
+      saveAdSetting(key, value);
+      adSaveTimeoutRef.current = null;
+    }, delay);
+  }, [saveAdSetting]);
 
   const currentCupId = useMemo(() => (
     currentlyPlaying?.cupId
@@ -758,7 +794,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
 
   useEffect(() => {
     if (!channelName) return;
-    connectToChannel(channelName, { explicit: true });
+    // Load settings on producer page so forms initialize with persisted values
+    connectToChannel(channelName, { explicit: true, loadSettings: true });
     return () => {
       disconnectFromChannel();
     };
@@ -2460,41 +2497,46 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       <FormControlLabel
                         control={
                           <Switch
-                            checked={(settings?.ad_announcements_enabled || 'true') === 'true'}
-                            onChange={async (e) => {
-                              try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_announcements_enabled`, { value: e.target.checked }, { withCredentials: true }); } catch (_) {}
+                            checked={adEnabled}
+                            onChange={(e) => {
+                              const next = !!e.target.checked;
+                              setAdEnabled(next);
+                              saveAdSetting('ad_announcements_enabled', next);
                             }}
                           />
                         }
-                        label={(settings?.ad_announcements_enabled || 'true') === 'true' ? 'Announcements Enabled' : 'Announcements Disabled'}
+                        label={adEnabled ? 'Announcements Enabled' : 'Announcements Disabled'}
                       />
                       <TextField
                         size="small"
                         fullWidth
                         label="30s Warning Message"
-                        value={settings?.ad_warn_message || ''}
-                        onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_warn_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
-                        disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                        value={adWarn}
+                        onChange={(e) => { const v = e.target.value; setAdWarn(v); debouncedSave('ad_warn_message', v); }}
+                        disabled={!adEnabled}
                         helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                       />
                       <TextField
                         size="small"
                         fullWidth
                         label="Ad Start Message"
-                        value={settings?.ad_start_message || ''}
-                        onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_start_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
-                        disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                        value={adStart}
+                        onChange={(e) => { const v = e.target.value; setAdStart(v); debouncedSave('ad_start_message', v); }}
+                        disabled={!adEnabled}
                         helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                       />
                       <TextField
                         size="small"
                         fullWidth
                         label="Ad End Message"
-                        value={settings?.ad_end_message || ''}
-                        onChange={async (e) => { try { await axios.put(`/api/channels/${normalizedChannelId}/settings/ad_end_message`, { value: e.target.value }, { withCredentials: true }); } catch (_) {} }}
-                        disabled={(settings?.ad_announcements_enabled || 'true') !== 'true'}
+                        value={adEnd}
+                        onChange={(e) => { const v = e.target.value; setAdEnd(v); debouncedSave('ad_end_message', v); }}
+                        disabled={!adEnabled}
                         helperText="Placeholders: {duration_sec}, {duration_min}, {duration_mmss}, {duration_human}"
                       />
+                      {adSaving && (
+                        <Typography variant="caption" color="text.secondary">Saving…</Typography>
+                      )}
                       {adError && (
                         <Alert severity="warning">{adError}</Alert>
                       )}
