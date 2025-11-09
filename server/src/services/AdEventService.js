@@ -236,6 +236,28 @@ class AdEventService {
     return TokenStore.listBroadcasterCredentials();
   }
 
+  // Normalize timestamp-like values to milliseconds since epoch
+  _toMs(ts) {
+    try {
+      if (ts == null) return null;
+      if (typeof ts === 'number') {
+        // If seconds (10-digit) convert to ms
+        return ts > 0 && ts < 10_000_000_000 ? ts * 1000 : ts;
+      }
+      const s = String(ts).trim();
+      if (!s) return null;
+      if (/^\d+$/.test(s)) {
+        const n = Number(s);
+        return n > 0 && n < 10_000_000_000 ? n * 1000 : n;
+      }
+      const d = new Date(s);
+      const ms = d.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async _primeFromDatabase() {
     try {
       const prisma = this.channelManager.prisma;
@@ -378,11 +400,10 @@ class AdEventService {
           }
 
           const data = await this._getAdSchedule(broadcasterId, cred.access_token);
-          const nextAtIso = data?.data?.[0]?.next_ad_at || data?.data?.[0]?.next_ad_time;
+          const nextAtRaw = data?.data?.[0]?.next_ad_at || data?.data?.[0]?.next_ad_time;
           const durationSec = Number(data?.data?.[0]?.duration_seconds || 0);
-          if (!nextAtIso) return;
-
-          const nextAt = new Date(nextAtIso).getTime();
+          const nextAt = this._toMs(nextAtRaw);
+          if (!nextAt) return;
           const now = Date.now();
           const warnAt = nextAt - 30_000;
           if (warnAt <= now) return; // too late
@@ -519,7 +540,9 @@ class AdEventService {
       }
       const data = await this._getAdSchedule(broadcasterId, bearer);
       const entry = Array.isArray(data?.data) ? data.data[0] : null;
-      const nextAdAt = entry?.next_ad_at || entry?.next_ad_time || null;
+      const nextRaw = entry?.next_ad_at || entry?.next_ad_time || null;
+      const nextMs = this._toMs(nextRaw);
+      const nextAdAt = nextMs ? new Date(nextMs).toISOString() : null;
       const duration = typeof entry?.duration_seconds === 'number' ? entry.duration_seconds : null;
       try {
         logger.info('AdEventService: next ad info', {
