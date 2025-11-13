@@ -28,6 +28,8 @@ class AdEventService {
     this.appToken = null;
     this.appTokenExpiresAt = 0;
     this.liveCache = new Map(); // broadcasterId -> { live: boolean, ts: number }
+    // Dedup store for EventSub notifications (message_id -> ts)
+    this._seenMessageIds = new Map();
   }
 
   _loadCredentials() { return {}; }
@@ -128,7 +130,10 @@ class AdEventService {
               bindHandlers(); // re-bind to the new socket
             } else if (type === 'notification') {
               const subType = msg?.payload?.subscription?.type;
-              if (subType === 'channel.ad_break.begin') {
+              // Deduplicate by message_id to prevent duplicate announcements on reconnects
+              const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId || null;
+              const shouldProcess = this._shouldProcessMessageId(messageId);
+              if (subType === 'channel.ad_break.begin' && shouldProcess) {
                 await this._handleAdBreakBegin(msg?.payload?.event);
               }
             } else if (type === 'revocation') {
@@ -143,7 +148,12 @@ class AdEventService {
           logger.warn('AdEventService: EventSub WebSocket closed', { broadcasterId, code, reason: reason?.toString?.() });
           s.sessionId = null;
           if (this.enabled) {
-            setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), 2000);
+            // Exponential backoff for reconnects; Twitch may close with 4003 when no sub created (e.g., rate limited)
+            const isUnused = Number(code) === 4003;
+            const prev = Number(s.backoffMs || 2000);
+            const next = isUnused ? Math.min(prev * 2, 60_000) : 2000;
+            s.backoffMs = next;
+            setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), next);
           }
         });
 
@@ -187,7 +197,9 @@ class AdEventService {
             await this._reconnect(reconnectUrl);
           } else if (type === 'notification') {
             const subType = msg?.payload?.subscription?.type;
-            if (subType === 'channel.ad_break.begin') {
+            const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId || null;
+            const shouldProcess = this._shouldProcessMessageId(messageId);
+            if (subType === 'channel.ad_break.begin' && shouldProcess) {
               await this._handleAdBreakBegin(msg?.payload?.event);
             }
           } else if (type === 'revocation') {
@@ -211,6 +223,28 @@ class AdEventService {
       });
     } catch (err) {
       logger.error('AdEventService: failed to connect EventSub WebSocket', { error: err?.message });
+    }
+  }
+
+  _shouldProcessMessageId(messageId) {
+    try {
+      const id = messageId ? String(messageId) : null;
+      // If no id provided by Twitch, allow once (cannot dedupe)
+      if (!id) return true;
+      const now = Date.now();
+      // Drop if we've seen it recently
+      if (this._seenMessageIds.has(id)) return false;
+      // Record and opportunistically prune old entries (>10 minutes)
+      this._seenMessageIds.set(id, now);
+      if (this._seenMessageIds.size > 5000) {
+        const cutoff = now - 10 * 60 * 1000;
+        for (const [k, ts] of this._seenMessageIds.entries()) {
+          if (!ts || ts < cutoff) this._seenMessageIds.delete(k);
+        }
+      }
+      return true;
+    } catch (_) {
+      return true;
     }
   }
 
@@ -403,7 +437,11 @@ class AdEventService {
           const nextAtRaw = data?.data?.[0]?.next_ad_at || data?.data?.[0]?.next_ad_time;
           const durationSec = Number(data?.data?.[0]?.duration_seconds || 0);
           const nextAt = this._toMs(nextAtRaw);
-          if (!nextAt) return;
+          if (!nextAt) {
+            // Helpful log to understand why 30s pre-warn may be missing
+            try { logger.info('AdEventService: no next ad in schedule (skipping pre-warn)', { broadcasterId }); } catch (_) {}
+            return;
+          }
           const now = Date.now();
           const warnAt = nextAt - 30_000;
           if (warnAt <= now) return; // too late
@@ -654,6 +692,17 @@ class AdEventService {
 
   async _getAdSettings(channelId) {
     try {
+      // Prefer per-channel bot settings managed by QueueService (reflects UI changes immediately)
+      const qs = this.channelManager.getQueueService(channelId);
+      if (qs) {
+        const enabledRaw = await qs.getSetting('ad_announcements_enabled', 'true');
+        const enabled = String(enabledRaw) === 'true';
+        const warnMsg = (await qs.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!')) || 'Heads up: ads will run in 30 seconds. BRB!';
+        const startMsg = (await qs.getSetting('ad_start_message', 'Ad break starting now — see you after the ads!')) || 'Ad break starting now — see you after the ads!';
+        const endMsg = (await qs.getSetting('ad_end_message', 'Ads are over — welcome back!')) || 'Ads are over — welcome back!';
+        return { enabled, warnMsg, startMsg, endMsg };
+      }
+      // Fallback to ChannelManager info if QueueService is unavailable
       const info = await this.channelManager.getChannelInfo(channelId);
       const settings = info?.settings || {};
       const enabled = String(settings.ad_announcements_enabled ?? 'true') === 'true';
