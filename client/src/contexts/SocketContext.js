@@ -64,6 +64,8 @@ export const SocketProvider = ({ children }) => {
   const [cupStandings, setCupStandings] = useState({});
   const [cupVideoSummaries, setCupVideoSummaries] = useState({});
   const [cupMetadata, setCupMetadata] = useState({});
+  const [seriesStandings, setSeriesStandings] = useState({});
+  const [seriesMetadata, setSeriesMetadata] = useState({});
   const [topEight, setTopEight] = useState([]);
   const [vipQueue, setVipQueue] = useState([]);
   const [lastShuffle, setLastShuffle] = useState(null);
@@ -127,6 +129,8 @@ export const SocketProvider = ({ children }) => {
     setCupStandings({});
     setCupVideoSummaries({});
     setCupMetadata({});
+    setSeriesStandings({});
+    setSeriesMetadata({});
     setTopEight([]);
     setLastShuffle(null);
     setVotingState(null);
@@ -378,6 +382,30 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
+  const handleSeriesStandingsUpdated = useCallback((payload = {}) => {
+    const seriesId = payload.seriesId || payload.series?.id;
+    if (!seriesId) {
+      return;
+    }
+
+    if (Array.isArray(payload.standings)) {
+      setSeriesStandings((prev) => ({
+        ...prev,
+        [seriesId]: payload.standings
+      }));
+    }
+
+    if (payload.series) {
+      setSeriesMetadata((prev) => ({
+        ...prev,
+        [seriesId]: {
+          ...payload.series,
+          id: payload.series.id || seriesId
+        }
+      }));
+    }
+  }, []);
+
   const handleVotingUpdate = useCallback((payload = null) => {
     if (payload && typeof payload === 'object') {
       setVotingState(payload);
@@ -458,6 +486,7 @@ export const SocketProvider = ({ children }) => {
     socket.on('cup:standings_updated', handleCupStandingsUpdated);
     // Preview standings during social reveal so overlays match immediately
     socket.on('cup:standings_preview', handleCupStandingsUpdated);
+    socket.on('series:standings_updated', handleSeriesStandingsUpdated);
     socket.on('voting:update', handleVotingUpdate);
     socket.on('voting:ended', handleVotingEnded);
 
@@ -493,6 +522,7 @@ export const SocketProvider = ({ children }) => {
     handleShuffleEvent,
     handleTopEightUpdated,
     handleCupStandingsUpdated,
+    handleSeriesStandingsUpdated,
     handleVotingUpdate,
     handleVotingEnded
   ]);
@@ -622,6 +652,51 @@ export const SocketProvider = ({ children }) => {
       return data;
     } catch (error) {
       console.error('Failed to refresh cup standings:', error);
+      throw error;
+    }
+  }, [activeChannelId]);
+
+  const refreshSeriesStandings = useCallback(async (seriesParam, options = {}) => {
+    const channelId = options.channelId || activeChannelId;
+    if (!channelId || !seriesParam) {
+      return null;
+    }
+
+    const publicAccess = options.publicAccess === true;
+    const basePath = publicAccess
+      ? `/api/channels/public/${channelId}/series/${seriesParam}/standings`
+      : `/api/channels/${channelId}/series/${seriesParam}/standings`;
+
+    try {
+      const response = await fetch(basePath, {
+        credentials: publicAccess ? 'omit' : 'include'
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to load series standings');
+      }
+
+      const data = await response.json();
+      const resolvedId = data?.series?.id || seriesParam;
+
+      if (Array.isArray(data.standings) && resolvedId) {
+        setSeriesStandings((prev) => ({
+          ...prev,
+          [resolvedId]: data.standings
+        }));
+      }
+
+      if (data.series && resolvedId) {
+        setSeriesMetadata((prev) => ({
+          ...prev,
+          [resolvedId]: data.series
+        }));
+      }
+
+      return data;
+    } catch (error) {
+      console.warn('Failed to refresh series standings:', error);
       throw error;
     }
   }, [activeChannelId]);
@@ -827,8 +902,10 @@ export const SocketProvider = ({ children }) => {
     cupStandings,
     cupVideoSummaries,
     cupMetadata,
+    seriesStandings,
+    seriesMetadata,
     topEight,
-  vipQueue,
+    vipQueue,
     lastShuffle,
     votingState,
     overlayShowPlayer,
@@ -860,6 +937,7 @@ export const SocketProvider = ({ children }) => {
     addChannelListener,
     removeChannelListener,
     refreshCupStandings,
+    refreshSeriesStandings,
     refreshScoresForItem,
     triggerShuffle,
 
@@ -880,6 +958,8 @@ export const SocketProvider = ({ children }) => {
     cupStandings,
     cupVideoSummaries,
     cupMetadata,
+    seriesStandings,
+    seriesMetadata,
     topEight,
     lastShuffle,
     votingState,
@@ -909,6 +989,7 @@ export const SocketProvider = ({ children }) => {
     addChannelListener,
     removeChannelListener,
     refreshCupStandings,
+    refreshSeriesStandings,
     refreshScoresForItem,
     triggerShuffle,
     vipQueue,

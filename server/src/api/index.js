@@ -925,31 +925,100 @@ router.get('/channels/public/:channelName/cups/:cupId/standings', async (req, re
       return res.status(404).json({ error: 'Cup not found' });
     }
 
-    const { standings, videos, cup } = await channelManager.rebuildCupStandings(normalizedChannelId, cupId);
+    const { standings, videos, cup, seriesStandings } = await channelManager.rebuildCupStandings(normalizedChannelId, cupId);
       const enrichedStandings = standings.map((entry) => ({
         ...entry,
-        submitterAlias: entry.submitterAlias || null,
-        publicSubmitterName:
-          entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
+        publicSubmitterName: entry.publicSubmitterName || entry.submitterUsername || null
       }));
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || null,
-        publicSubmitterName:
-          video.publicSubmitterName ||
-          video.submitterAlias ||
-          video.submitter?.twitchUsername ||
-          null
+        publicSubmitterName: video.publicSubmitterName || video.submitterUsername || null
       }));
 
     res.json({
       standings: enrichedStandings,
       videos: enrichedVideos,
-      cup
+      cup,
+      series: seriesStandings || null
     });
   } catch (error) {
     logger.error('Error getting public cup standings:', error);
     res.status(error.status || 500).json({ error: error.message || 'Failed to get standings' });
+  }
+});
+
+router.get('/channels/public/:channelName/series/current', async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const normalizedChannelId = req.params.channelName.toLowerCase();
+
+    const channel = await channelManager.getChannelInfo(normalizedChannelId);
+    if (!channel || !channel.isActive) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    const findSeriesByStatuses = async (statuses) => channelManager.prisma.series.findFirst({
+      where: {
+        channelId: normalizedChannelId,
+        status: { in: statuses }
+      },
+      orderBy: [
+        { startsAt: 'desc' },
+        { createdAt: 'desc' }
+      ],
+      select: { id: true }
+    });
+
+    let seriesRecord = await findSeriesByStatuses(['ACTIVE']);
+    if (!seriesRecord) {
+      seriesRecord = await findSeriesByStatuses(['COMPLETED']);
+    }
+
+    if (!seriesRecord) {
+      return res.status(404).json({ error: 'No series found' });
+    }
+
+    const snapshot = await channelManager.getSeriesStandingsSnapshot(normalizedChannelId, seriesRecord.id);
+    res.json(snapshot);
+  } catch (error) {
+    logger.error('Error getting current series standings:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to get series standings' });
+  }
+});
+
+router.get('/channels/public/:channelName/series/:seriesParam/standings', async (req, res) => {
+  try {
+    const channelManager = getChannelManager(req);
+    const normalizedChannelId = req.params.channelName.toLowerCase();
+
+    const channel = await channelManager.getChannelInfo(normalizedChannelId);
+    if (!channel || !channel.isActive) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    const rawSeriesParam = req.params.seriesParam;
+    const normalizedSeriesSlug = rawSeriesParam.toLowerCase();
+
+    const seriesRecord = await channelManager.prisma.series.findFirst({
+      where: {
+        channelId: normalizedChannelId,
+        OR: [
+          { id: rawSeriesParam },
+          { slug: normalizedSeriesSlug }
+        ]
+      },
+      select: { id: true }
+    });
+
+    if (!seriesRecord) {
+      return res.status(404).json({ error: 'Series not found' });
+    }
+
+    const snapshot = await channelManager.getSeriesStandingsSnapshot(normalizedChannelId, seriesRecord.id);
+    res.json(snapshot);
+  } catch (error) {
+    logger.error('Error getting series standings:', error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to get series standings' });
   }
 });
 
@@ -1274,8 +1343,7 @@ router.get('/channels/:channelId/cups/:cupId/videos',
 
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || null,
-        publicSubmitterName: video.submitterAlias || video.submitter?.twitchUsername || null
+        publicSubmitterName: video.submitter?.twitchUsername || video.submitterUsername || null
       }));
 
       res.json({ videos: enrichedVideos });
@@ -1293,7 +1361,7 @@ router.patch('/channels/:channelId/cups/:cupId/videos/:videoId/unassign',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const _normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const { cupId, videoId } = req.params;
 
       // Unassign the video from the cup
@@ -1329,7 +1397,7 @@ router.post('/channels/:channelId/cups/:cupId/judge-link',
   async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
-      const _normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const cupId = req.params.cupId;
 
       // Verify cup exists and belongs to this channel
@@ -1435,7 +1503,8 @@ router.patch('/channels/:channelId/cups/:cupId',
 
       const cup = await channelManager.prisma.cup.update({
         where: {
-          id: req.params.cupId
+          id: req.params.cupId,
+          channelId: normalizedChannelId
         },
         data: updates
       });
@@ -1459,9 +1528,11 @@ router.post('/channels/:channelId/cups/:cupId/assign-item',
       const channelManager = getChannelManager(req);
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
 
+      const queueItemId = parseInt(req.body.queueItemId, 10);
       const queueItem = await channelManager.prisma.queueItem.update({
         where: {
-          id: parseInt(req.body.queueItemId, 10)
+          id: queueItemId,
+          channelId: normalizedChannelId
         },
         data: {
           cupId: req.params.cupId
@@ -3417,7 +3488,7 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
         }
       });
 
-      const { standings, videos, cup } = await channelManager.rebuildCupStandings(normalizedChannelId, cupId);
+      const { standings, videos, cup, seriesStandings } = await channelManager.rebuildCupStandings(normalizedChannelId, cupId);
       const updatedVideo = videos.find((video) => video.queueItemId === itemId) || null;
 
       const channelInstance = channelManager.getChannelInstance(normalizedChannelId);
@@ -3434,6 +3505,13 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
           videos,
           cup
         });
+        if (seriesStandings?.series?.id) {
+          channelInstance.namespace.emit('series:standings_updated', {
+            seriesId: seriesStandings.series.id,
+            series: seriesStandings.series,
+            standings: seriesStandings.standings || []
+          });
+        }
       }
 
       // Ensure overlays/clients remove the item from the active queue immediately
@@ -3455,16 +3533,14 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
 
       const enrichedItem = {
         ...updatedItem,
-        submitterAlias: updatedItem.submitterAlias || null,
-        publicSubmitterName: (updatedItem.submitterAlias || updatedItem.submitter?.twitchUsername) || null
+        publicSubmitterName: updatedItem.submitter?.twitchUsername || updatedItem.submitterUsername || null
       };
 
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || null,
         publicSubmitterName:
           video.publicSubmitterName ||
-          video.submitterAlias ||
+          video.submitterUsername ||
           video.submitter?.twitchUsername ||
           null
       }));
@@ -3477,9 +3553,7 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/finalize',
 
       const enrichedStandings = standings.map((entry) => ({
         ...entry,
-        submitterAlias: entry.submitterAlias || null,
-        publicSubmitterName:
-          entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
+        publicSubmitterName: entry.publicSubmitterName || entry.submitterUsername || null
       }));
 
       try {
@@ -3522,19 +3596,16 @@ router.get('/channels/:channelId/cups/:cupId/standings',
       const channelManager = getChannelManager(req);
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
 
-      const { standings, videos, cup } = await channelManager.rebuildCupStandings(normalizedChannelId, req.params.cupId);
+      const { standings, videos, cup, seriesStandings } = await channelManager.rebuildCupStandings(normalizedChannelId, req.params.cupId);
       const enrichedStandings = standings.map((entry) => ({
         ...entry,
-        submitterAlias: entry.submitterAlias || null,
-        publicSubmitterName:
-          entry.publicSubmitterName || entry.submitterAlias || entry.submitterUsername || null
+        publicSubmitterName: entry.publicSubmitterName || entry.submitterUsername || null
       }));
       const enrichedVideos = videos.map((video) => ({
         ...video,
-        submitterAlias: video.submitterAlias || null,
         publicSubmitterName:
           video.publicSubmitterName ||
-          video.submitterAlias ||
+          video.submitterUsername ||
           video.submitter?.twitchUsername ||
           null
       }));
@@ -3542,7 +3613,8 @@ router.get('/channels/:channelId/cups/:cupId/standings',
       res.json({
         standings: enrichedStandings,
         videos: enrichedVideos,
-        cup
+        cup,
+        series: seriesStandings || null
       });
     } catch (error) {
       logger.error('Error getting cup standings:', error);

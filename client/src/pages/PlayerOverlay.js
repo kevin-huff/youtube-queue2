@@ -121,8 +121,8 @@ const formatTimestamp = (seconds) => {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 };
 
-const getQueueAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || null;
+const getSubmitterUsername = (item) =>
+  item?.submitter?.twitchUsername || item?.submitterUsername || null;
 
 const PlayerOverlay = () => {
   const { channelName } = useParams();
@@ -430,7 +430,7 @@ const PlayerOverlay = () => {
           {showControls && !hideQueue && shouldShowPlayer && (
             <Metadata
               title={currentlyPlaying?.title}
-              submitter={getQueueAlias(currentlyPlaying)}
+              submitter={getSubmitterUsername(currentlyPlaying)}
               sx={{
                 position: 'absolute',
                 left: '50%',

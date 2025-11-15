@@ -357,7 +357,6 @@ const LeaderboardOverlay = () => {
               };
               const socialScore = entry?.averageScore ?? entry?.totalScore ?? null;
               const realName = entry?.submitterUsername || 'Unknown';
-              const alias = entry?.submitterAlias;
               return (
                 <Box
                   key={`${realName}-${rank}`}
@@ -426,18 +425,6 @@ const LeaderboardOverlay = () => {
                       >
                         {realName}
                       </Typography>
-                      {alias && alias !== realName && (
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            color: alpha('#d7f2ff', 0.75),
-                            mt: 0.5,
-                            letterSpacing: 2
-                          }}
-                        >
-                          aka {alias}
-                        </Typography>
-                      )}
                       <Box
                         sx={{
                           display: 'flex',
@@ -573,7 +560,6 @@ const LeaderboardOverlay = () => {
                   const rank = getRankKey(entry, index + 3);
                   const socialScore = entry?.averageScore ?? entry?.totalScore ?? null;
                   const realName = entry?.submitterUsername || 'Unknown';
-                  const alias = entry?.submitterAlias;
 
                   return (
                     <Box
@@ -599,17 +585,6 @@ const LeaderboardOverlay = () => {
                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
                           {realName}
                         </Typography>
-                        {alias && alias !== realName && (
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              color: alpha('#d7f2ff', 0.65),
-                              letterSpacing: 1.5
-                            }}
-                          >
-                            aka {alias}
-                          </Typography>
-                        )}
                       </Box>
                       <Typography
                         variant="body1"

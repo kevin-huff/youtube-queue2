@@ -15,6 +15,7 @@ import ChannelQueue from './pages/ChannelQueue';
 import PlayerOverlay from './pages/PlayerOverlay';
 import QueueOverlay from './pages/QueueOverlay';
 import LeaderboardOverlay from './pages/LeaderboardOverlay';
+import SeriesLeaderboardOverlay from './pages/SeriesLeaderboardOverlay';
 import JudgePage from './pages/JudgePage';
 import JudgeOverlay from './pages/JudgeOverlay';
 import CupAdmin from './pages/CupAdmin';
@@ -70,6 +71,7 @@ function App() {
               <Route path="/player/:channelName" element={<PlayerOverlay />} />
               <Route path="/overlay/:channelName/queue" element={<QueueOverlay />} />
               <Route path="/overlay/:channelName/leaderboard" element={<LeaderboardOverlay />} />
+              <Route path="/overlay/:channelName/series" element={<SeriesLeaderboardOverlay />} />
               
               {/* Judge Route - Public route that uses token-based auth */}
               <Route 

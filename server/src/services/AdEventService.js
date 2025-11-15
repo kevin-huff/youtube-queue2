@@ -260,7 +260,7 @@ class AdEventService {
     }, ms);
   }
 
-  async _reconnect(url) {
+  async _reconnect(_url) {
     // Legacy single-session reconnect not used in per-session mode
     try { logger.warn('AdEventService: legacy reconnect invoked; ignored'); } catch (_) {}
   }
@@ -445,6 +445,7 @@ class AdEventService {
           const now = Date.now();
           const warnAt = nextAt - 30_000;
           if (warnAt <= now) return; // too late
+          const nextAdAtIso = new Date(nextAt).toISOString();
 
           // Resolve channel name by broadcaster id
           let channelId = null;
@@ -504,7 +505,7 @@ class AdEventService {
                 channelId,
                 broadcasterId,
                 warnAtIso: new Date(warnAt).toISOString(),
-                nextAdAtIso: nextAtIso,
+                nextAdAtIso: nextAdAtIso,
                 inSec: Math.round(timeoutMs / 1000),
                 durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
               });

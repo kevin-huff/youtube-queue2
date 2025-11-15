@@ -3,6 +3,9 @@ const QueueService = require('./QueueService');
 const JudgeService = require('./JudgeService');
 const logger = require('../utils/logger');
 
+const SERIES_POINTS_TABLE = [15, 12, 10, 8, 6, 5, 4, 2];
+const SERIES_PARTICIPATION_POINTS = 1; // participation point for anyone outside the Top 8
+
 const DEFAULT_CHANNEL_SETTINGS = {
   queue_enabled: false,
   auto_play_next: false,
@@ -30,23 +33,62 @@ const normalizeChannelSettings = (rawSettings = {}) => {
   return normalized;
 };
 
+const formatSeriesRecord = (series) => {
+  if (!series) {
+    return null;
+  }
+  return {
+    id: series.id,
+    channelId: series.channelId,
+    title: series.title,
+    slug: series.slug,
+    description: series.description,
+    status: series.status,
+    startsAt: series.startsAt,
+    endsAt: series.endsAt,
+    metadata: series.metadata || {}
+  };
+};
+
+const getSeriesPointsForRank = (rank) => {
+  if (typeof rank !== 'number' || rank <= 0) {
+    return 0;
+  }
+  if (rank <= SERIES_POINTS_TABLE.length) {
+    return SERIES_POINTS_TABLE[rank - 1];
+  }
+  return SERIES_PARTICIPATION_POINTS;
+};
+
+const getBestFinish = (placements = []) => {
+  if (!Array.isArray(placements) || placements.length === 0) {
+    return null;
+  }
+  let best = Number.POSITIVE_INFINITY;
+  placements.forEach((result) => {
+    const value = typeof result.rank === 'number' && result.rank > 0
+      ? result.rank
+      : Number.POSITIVE_INFINITY;
+    best = Math.min(best, value);
+  });
+  return Number.isFinite(best) ? best : null;
+};
+
 const buildCupScoreData = (queueItems) => {
   const videos = queueItems.map((item) => {
     const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
     const judgeCount = judgeScores.length;
-    const submitterAlias = item.submitterAlias || null;
     const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
 
     if (!judgeCount) {
-    return {
-      queueItemId: item.id,
+      return {
+        queueItemId: item.id,
       videoId: item.videoId,
       videoUrl: item.videoUrl,
       title: item.title,
       thumbnailUrl: item.thumbnailUrl,
       submitterUsername,
-      submitterAlias,
-      publicSubmitterName: submitterAlias || submitterUsername,
+      publicSubmitterName: submitterUsername,
       status: item.status,
       judgeCount: 0,
       averageScore: null,
@@ -54,7 +96,7 @@ const buildCupScoreData = (queueItems) => {
       judgeScores: [],
       playedAt: item.playedAt,
       createdAt: item.createdAt
-    };
+      };
     }
 
     const totalScore = judgeScores.reduce((sum, score) => sum + Number(score.score), 0);
@@ -67,8 +109,7 @@ const buildCupScoreData = (queueItems) => {
       title: item.title,
       thumbnailUrl: item.thumbnailUrl,
       submitterUsername,
-      submitterAlias,
-      publicSubmitterName: submitterAlias || submitterUsername,
+      publicSubmitterName: submitterUsername,
       status: item.status,
       judgeCount,
       totalScore: Number(totalScore.toFixed(5)),
@@ -283,7 +324,8 @@ class ChannelManager {
           id: true,
           title: true,
           theme: true,
-          status: true
+          status: true,
+          seriesId: true
         }
       }),
       // Fetch terminal history across channel to determine previous runs per videoId
@@ -354,13 +396,9 @@ class ChannelManager {
         const key = v.submitterUsername;
         const existing = byUser.get(key) || {
           submitterUsername: key,
-          submitterAlias: v.submitterAlias || null,
           scores: [],
           totalJudgeCount: 0
         };
-        if (!existing.submitterAlias && v.submitterAlias) {
-          existing.submitterAlias = v.submitterAlias;
-        }
         existing.scores.push(v.averageScore);
         existing.totalJudgeCount += (v.judgeCount || 0);
         byUser.set(key, existing);
@@ -375,7 +413,6 @@ class ChannelManager {
         const totalScore = entry.scores.reduce((s, x) => s + x, 0);
         return {
           submitterUsername: entry.submitterUsername,
-          submitterAlias: entry.submitterAlias || null,
           totalScore: Number(totalScore.toFixed(5)),
           averageScore: Number(padded.toFixed(5)),
           judgeCount: entry.totalJudgeCount,
@@ -419,13 +456,15 @@ class ChannelManager {
           id: cupRecord.id,
           title: cupRecord.title || null,
           theme: cupRecord.theme || null,
-          status: cupRecord.status || null
+          status: cupRecord.status || null,
+          seriesId: cupRecord.seriesId || null
         }
       : {
           id: cupId,
           title: null,
           theme: null,
-          status: null
+          status: null,
+          seriesId: null
         };
 
     const enhancedStandings = standings.map((entry) => ({
@@ -442,10 +481,258 @@ class ChannelManager {
       cupTheme: cupMetadata.theme
     }));
 
+    let seriesUpdate = null;
+    if (cupMetadata.seriesId) {
+      try {
+        seriesUpdate = await this.rebuildSeriesStandings(normalizedChannelId, cupMetadata.seriesId);
+      } catch (error) {
+        logger.warn('Failed to rebuild series standings', {
+          channelId: normalizedChannelId,
+          cupId,
+          seriesId: cupMetadata.seriesId,
+          error
+        });
+      }
+    }
+
     return {
       cup: cupMetadata,
       standings: enhancedStandings,
-      videos: enhancedVideos
+      videos: enhancedVideos,
+      seriesStandings: seriesUpdate
+    };
+  }
+
+  async rebuildSeriesStandings(channelId, seriesId) {
+    const normalizedChannelId = channelId.toLowerCase();
+    const seriesRecord = await this.prisma.series.findFirst({
+      where: {
+        id: seriesId,
+        channelId: normalizedChannelId
+      },
+      select: {
+        id: true,
+        channelId: true,
+        title: true,
+        slug: true,
+        description: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        metadata: true
+      }
+    });
+
+    if (!seriesRecord) {
+      return { series: null, standings: [] };
+    }
+
+    const cupsInSeries = await this.prisma.cup.findMany({
+      where: {
+        channelId: normalizedChannelId,
+        seriesId
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        status: true
+      }
+    });
+
+    if (!cupsInSeries.length) {
+      await this.prisma.seriesStanding.deleteMany({
+        where: { seriesId, channelId: normalizedChannelId }
+      });
+      return { series: formatSeriesRecord(seriesRecord), standings: [] };
+    }
+
+    const cupIds = cupsInSeries.map((cup) => cup.id);
+    const cupLookup = new Map(cupsInSeries.map((cup) => [cup.id, cup]));
+
+    const cupStandings = await this.prisma.cupStanding.findMany({
+      where: {
+        channelId: normalizedChannelId,
+        cupId: { in: cupIds }
+      },
+      select: {
+        cupId: true,
+        submitterUsername: true,
+        rank: true,
+        metadata: true
+      }
+    });
+
+    if (!cupStandings.length) {
+      await this.prisma.seriesStanding.deleteMany({
+        where: { seriesId, channelId: normalizedChannelId }
+      });
+      return { series: formatSeriesRecord(seriesRecord), standings: [] };
+    }
+
+    const byCup = new Map();
+    cupStandings.forEach((entry) => {
+      if (!byCup.has(entry.cupId)) {
+        byCup.set(entry.cupId, []);
+      }
+      byCup.get(entry.cupId).push(entry);
+    });
+
+    const totalsByUser = new Map();
+
+    for (const [cupId, entries] of byCup.entries()) {
+      const sorted = entries.slice().sort((a, b) => {
+        const rankA = typeof a.rank === 'number' && a.rank > 0 ? a.rank : Number.MAX_SAFE_INTEGER;
+        const rankB = typeof b.rank === 'number' && b.rank > 0 ? b.rank : Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) {
+          return rankA - rankB;
+        }
+        return (a.submitterUsername || '').localeCompare(b.submitterUsername || '');
+      });
+
+      sorted.forEach((entry, index) => {
+        const resolvedRank = typeof entry.rank === 'number' && entry.rank > 0 ? entry.rank : index + 1;
+        const username = entry.submitterUsername;
+        if (!username) {
+          return;
+        }
+        const pointsAwarded = getSeriesPointsForRank(resolvedRank);
+        const aggregate = totalsByUser.get(username) || {
+          submitterUsername: username,
+          totalPoints: 0,
+          cupsPlayed: 0,
+          placements: []
+        };
+
+        aggregate.totalPoints += pointsAwarded;
+        aggregate.cupsPlayed += 1;
+        aggregate.placements.push({
+          cupId,
+          cupTitle: cupLookup.get(cupId)?.title || null,
+          rank: resolvedRank,
+          pointsAwarded
+        });
+        totalsByUser.set(username, aggregate);
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const standings = Array.from(totalsByUser.values())
+      .map((entry) => {
+        const bestFinish = getBestFinish(entry.placements);
+        return {
+          submitterUsername: entry.submitterUsername,
+          totalPoints: Number(entry.totalPoints.toFixed(5)),
+          cupsPlayed: entry.cupsPlayed,
+          bestFinish,
+          placements: entry.placements
+        };
+      })
+      .sort((a, b) => {
+        if ((b.totalPoints || 0) !== (a.totalPoints || 0)) {
+          return (b.totalPoints || 0) - (a.totalPoints || 0);
+        }
+        if ((b.cupsPlayed || 0) !== (a.cupsPlayed || 0)) {
+          return (b.cupsPlayed || 0) - (a.cupsPlayed || 0);
+        }
+        const bestA = typeof a.bestFinish === 'number' && a.bestFinish > 0 ? a.bestFinish : Number.POSITIVE_INFINITY;
+        const bestB = typeof b.bestFinish === 'number' && b.bestFinish > 0 ? b.bestFinish : Number.POSITIVE_INFINITY;
+        if (bestA !== bestB) {
+          return bestA - bestB;
+        }
+        return (a.submitterUsername || '').localeCompare(b.submitterUsername || '');
+      })
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1
+      }));
+
+    await this.prisma.$transaction([
+      this.prisma.seriesStanding.deleteMany({
+        where: {
+          seriesId,
+          channelId: normalizedChannelId
+        }
+      }),
+      ...standings.map((standing) => this.prisma.seriesStanding.create({
+        data: {
+          seriesId,
+          channelId: normalizedChannelId,
+          submitterUsername: standing.submitterUsername,
+          totalPoints: new Prisma.Decimal(standing.totalPoints.toFixed(5)),
+          cupsPlayed: standing.cupsPlayed,
+          metadata: {
+            cupResults: standing.placements,
+            bestFinish: Number.isFinite(standing.bestFinish) ? standing.bestFinish : null,
+            lastUpdated: nowIso
+          }
+        }
+      }))
+    ]);
+
+    return {
+      series: formatSeriesRecord(seriesRecord),
+      standings
+    };
+  }
+
+  async getSeriesStandingsSnapshot(channelId, seriesId) {
+    const normalizedChannelId = channelId.toLowerCase();
+
+    const seriesRecord = await this.prisma.series.findFirst({
+      where: {
+        id: seriesId,
+        channelId: normalizedChannelId
+      },
+      select: {
+        id: true,
+        channelId: true,
+        title: true,
+        slug: true,
+        description: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        metadata: true
+      }
+    });
+
+    if (!seriesRecord) {
+      return { series: null, standings: [] };
+    }
+
+    const existingStandings = await this.prisma.seriesStanding.findMany({
+      where: {
+        channelId: normalizedChannelId,
+        seriesId
+      },
+      orderBy: [
+        { totalPoints: 'desc' },
+        { cupsPlayed: 'desc' },
+        { updatedAt: 'asc' }
+      ]
+    });
+
+    if (!existingStandings.length) {
+      return this.rebuildSeriesStandings(normalizedChannelId, seriesId);
+    }
+
+    const standings = existingStandings.map((entry, index) => {
+      const metadata = entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
+      const totalPointsNumber = entry.totalPoints ? Number(entry.totalPoints) : 0;
+      return {
+        submitterUsername: entry.submitterUsername,
+        totalPoints: Number(totalPointsNumber.toFixed(5)),
+        cupsPlayed: entry.cupsPlayed,
+        rank: index + 1,
+        bestFinish: metadata.bestFinish ?? null,
+        placements: Array.isArray(metadata.cupResults) ? metadata.cupResults : []
+      };
+    });
+
+    return {
+      series: formatSeriesRecord(seriesRecord),
+      standings
     };
   }
 

@@ -103,20 +103,10 @@ const formatTimestamp = (value) => {
   }
 };
 
-const getSubmitterAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
-
 const getSubmitterUsername = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || null;
+  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
 
-const formatSubmitterLabel = (item) => {
-  const alias = getSubmitterAlias(item);
-  const username = getSubmitterUsername(item);
-  if (username && username !== alias) {
-    return `${alias} (real: ${username})`;
-  }
-  return alias;
-};
+const formatSubmitterLabel = (item) => getSubmitterUsername(item);
 
 const StatCard = ({ icon, title, value, color = 'primary' }) => {
   const theme = useTheme();

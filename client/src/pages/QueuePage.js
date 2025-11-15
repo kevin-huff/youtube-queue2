@@ -36,10 +36,8 @@ import {
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
 
-const getAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || null;
-
-const getQueueDisplayName = (item) => getAlias(item) || 'Anonymous';
+const getQueueDisplayName = (item) =>
+  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
 
 const formatDuration = (seconds) => {
   if (!seconds) return 'Unknown';

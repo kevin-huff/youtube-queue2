@@ -804,13 +804,11 @@ class QueueService {
       const videos = queueItems.map((item) => {
         const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
         const judgeCount = judgeScores.length;
-        const submitterAlias = item.submitterAlias || null;
         const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
         if (!judgeCount) {
           return {
             queueItemId: item.id,
             submitterUsername,
-            submitterAlias,
             judgeCount: 0,
             averageScore: null,
             totalScore: null
@@ -821,7 +819,6 @@ class QueueService {
         return {
           queueItemId: item.id,
           submitterUsername,
-          submitterAlias,
           judgeCount,
           totalScore: Number(totalScore.toFixed(5)),
           averageScore: Number(averageScore.toFixed(5))
@@ -854,8 +851,7 @@ class QueueService {
         .filter((v) => typeof v.averageScore === 'number')
         .forEach((v) => {
           const key = v.submitterUsername;
-          const existing = byUser.get(key) || { submitterUsername: key, submitterAlias: v.submitterAlias || null, scores: [], totalJudgeCount: 0 };
-          if (!existing.submitterAlias && v.submitterAlias) existing.submitterAlias = v.submitterAlias;
+          const existing = byUser.get(key) || { submitterUsername: key, scores: [], totalJudgeCount: 0 };
           existing.scores.push(v.averageScore);
           existing.totalJudgeCount += (v.judgeCount || 0);
           byUser.set(key, existing);
@@ -868,7 +864,7 @@ class QueueService {
         const avgNow = this.votingState?.computedAverage;
         if (identity && typeof avgNow === 'number') {
           const currentScore = (typeof avgToBeat === 'number' && !(avgNow > avgToBeat)) ? 0 : Number(avgNow.toFixed(5));
-          const entry = byUser.get(identity) || { submitterUsername: identity, submitterAlias: this.votingState.queueItem?.submitterAlias || null, scores: [], totalJudgeCount: 0 };
+          const entry = byUser.get(identity) || { submitterUsername: identity, scores: [], totalJudgeCount: 0 };
           entry.scores.push(currentScore);
           byUser.set(identity, entry);
         }
@@ -887,7 +883,6 @@ class QueueService {
           const totalScore = entry.scores.reduce((s, x) => s + x, 0);
           return {
             submitterUsername: entry.submitterUsername,
-            submitterAlias: entry.submitterAlias || null,
             totalScore: Number(totalScore.toFixed(5)),
             averageScore: Number(padded.toFixed(5)),
             judgeCount: entry.totalJudgeCount,

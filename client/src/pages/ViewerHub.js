@@ -41,12 +41,15 @@ function ViewerHub() {
   const [standings, setStandings] = useState([]);
   const [cupVideos, setCupVideos] = useState([]);
   const [vipQueue, setVipQueue] = useState([]);
+  const [currentSeries, setCurrentSeries] = useState(null);
+  const [seriesStandings, setSeriesStandings] = useState([]);
 
   // Section anchors for quick navigation
   const vipRef = useRef(null);
   const cupRef = useRef(null);
   const queueRef = useRef(null);
   const cupsRef = useRef(null);
+  const seriesRef = useRef(null);
 
   const scrollTo = (ref) => {
     if (ref && ref.current) {
@@ -54,14 +57,9 @@ function ViewerHub() {
     }
   };
 
-  // Prefer alias but always show real username when available
-  const formatName = useCallback((alias, username) => {
-    const a = (alias || '').toString().trim();
+  const formatName = useCallback((username) => {
     const u = (username || '').toString().trim();
-    if (a && u && a.toLowerCase() !== u.toLowerCase()) {
-      return `${a} (real: ${u})`;
-    }
-    return a || u || 'Anonymous';
+    return u || 'Anonymous';
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -126,6 +124,23 @@ function ViewerHub() {
           console.log('VIP list not available');
         }
 
+        // Fetch current series standings (if a series exists)
+        try {
+          const seriesRes = await fetch(`${API_URL}/channels/public/${channelName}/series/current`);
+          if (seriesRes.ok) {
+            const seriesData = await seriesRes.json();
+            setCurrentSeries(seriesData.series || null);
+            setSeriesStandings(Array.isArray(seriesData.standings) ? seriesData.standings : []);
+          } else if (seriesRes.status === 404) {
+            setCurrentSeries(null);
+            setSeriesStandings([]);
+          }
+        } catch (err) {
+          console.log('Series standings not available');
+          setCurrentSeries(null);
+          setSeriesStandings([]);
+        }
+
         setLoading(false);
       } catch (err) {
         setError(err.message);
@@ -150,6 +165,41 @@ function ViewerHub() {
       default:
         return 'default';
     }
+  };
+
+  const getSeriesStatusColor = (status) => {
+    switch (status) {
+      case 'ACTIVE':
+        return 'primary';
+      case 'COMPLETED':
+        return 'success';
+      case 'PLANNED':
+        return 'warning';
+      default:
+        return 'default';
+    }
+  };
+
+  const formatPoints = (value) => {
+    const numeric = Number(value ?? 0);
+    if (Number.isNaN(numeric)) {
+      return '0';
+    }
+    if (Number.isInteger(numeric)) {
+      return numeric.toString();
+    }
+    return numeric.toFixed(1);
+  };
+
+  const formatOrdinal = (value) => {
+    const numeric = parseInt(value, 10);
+    if (Number.isNaN(numeric) || numeric <= 0) {
+      return '#?';
+    }
+    const suffixes = ['th', 'st', 'nd', 'rd'];
+    const v = numeric % 100;
+    const suffix = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
+    return `${numeric}${suffix}`;
   };
 
   const formatDate = (dateString) => {
@@ -274,6 +324,14 @@ function ViewerHub() {
                 />
                 <Chip
                   size="small"
+                  label="Series Standings"
+                  onClick={() => scrollTo(seriesRef)}
+                  disabled={!currentSeries || seriesStandings.length === 0}
+                  color={currentSeries && seriesStandings.length > 0 ? 'info' : 'default'}
+                  variant={currentSeries && seriesStandings.length > 0 ? 'filled' : 'outlined'}
+                />
+                <Chip
+                  size="small"
                   label={`Queue${queue && queue.length ? ` (${queue.length})` : ''}`}
                   onClick={() => scrollTo(queueRef)}
                   disabled={!queue || queue.length === 0}
@@ -299,6 +357,16 @@ function ViewerHub() {
                   rel="noopener noreferrer"
                 >
                   Leaderboard
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  endIcon={<OpenInNewIcon />}
+                  href={`/overlay/${channelName}/series`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Series Leaderboard
                 </Button>
                 <Button
                   size="small"
@@ -531,7 +599,7 @@ function ViewerHub() {
                                 {item.title || 'Untitled Video'}
                               </Typography>
                               <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.75)' }}>
-                                by {formatName(item.submitterAlias, item.submitterUsername)}
+                                by {formatName(item.submitterUsername)}
                               </Typography>
                             </CardContent>
                           </Card>
@@ -542,6 +610,173 @@ function ViewerHub() {
               </Card>
             </Grid>
           )}
+          {/* Series Standings */}
+          {currentSeries && (
+            <Grid item xs={12} ref={seriesRef}>
+              <Card
+                elevation={0}
+                sx={{
+                  background: 'linear-gradient(135deg, rgba(0, 184, 255, 0.12) 0%, rgba(58, 123, 213, 0.12) 100%)',
+                  border: '1px solid rgba(0, 184, 255, 0.2)',
+                  borderRadius: 4,
+                  backdropFilter: 'blur(12px)'
+                }}
+              >
+                <CardContent sx={{ p: 4 }}>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                    <Box>
+                      <Typography
+                        variant="h4"
+                        sx={{
+                          fontWeight: 700,
+                          color: 'white'
+                        }}
+                      >
+                        Series Standings
+                      </Typography>
+                      <Typography
+                        variant="h5"
+                        sx={{
+                          color: 'rgba(255,255,255,0.85)',
+                          fontWeight: 500
+                        }}
+                      >
+                        {currentSeries.title}
+                      </Typography>
+                      {currentSeries.description && (
+                        <Typography
+                          variant="body1"
+                          sx={{ color: 'rgba(255,255,255,0.7)', mt: 1 }}
+                        >
+                          {currentSeries.description}
+                        </Typography>
+                      )}
+                    </Box>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+                      <Chip
+                        label={currentSeries.status}
+                        color={getSeriesStatusColor(currentSeries.status)}
+                        size="small"
+                      />
+                      <Chip
+                        label={`${seriesStandings.length || 0} competitor${seriesStandings.length === 1 ? '' : 's'}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ color: 'rgba(255,255,255,0.9)', borderColor: 'rgba(255,255,255,0.4)' }}
+                      />
+                      <Button
+                        size="small"
+                        variant="contained"
+                        endIcon={<OpenInNewIcon />}
+                        href={`/overlay/${channelName}/series`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{
+                          background: 'linear-gradient(135deg, #00b8ff 0%, #3a7bd5 100%)'
+                        }}
+                      >
+                        Open Series Overlay
+                      </Button>
+                    </Stack>
+                  </Box>
+
+                  {seriesStandings.length === 0 && (
+                    <Box sx={{ mt: 3 }}>
+                      <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                        Standings will appear once the first cup in this series completes.
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {seriesStandings.length > 0 && (
+                    <Box sx={{ mt: 3, maxHeight: 460, overflow: 'auto', pr: { sm: 1, md: 2 } }}>
+                      <Stack spacing={1.5}>
+                        {seriesStandings.map((entry) => {
+                          const latestResult = Array.isArray(entry.placements) && entry.placements.length
+                            ? entry.placements[entry.placements.length - 1]
+                            : null;
+                          return (
+                            <Box
+                              key={`${entry.submitterUsername}-${entry.rank}`}
+                              sx={{
+                                display: 'flex',
+                                alignItems: { xs: 'flex-start', sm: 'center' },
+                                flexDirection: { xs: 'column', sm: 'row' },
+                                justifyContent: 'space-between',
+                                gap: 1.5,
+                                p: 2,
+                                borderRadius: 3,
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                background: entry.rank <= 3
+                                  ? 'linear-gradient(90deg, rgba(0,184,255,0.18) 0%, rgba(58,123,213,0.08) 100%)'
+                                  : 'rgba(255,255,255,0.03)'
+                              }}
+                            >
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                <Box
+                                  sx={{
+                                    width: 52,
+                                    height: 52,
+                                    borderRadius: '50%',
+                                    background: entry.rank === 1
+                                      ? 'linear-gradient(135deg, #ffd700 0%, #ffb347 100%)'
+                                      : entry.rank === 2
+                                      ? 'linear-gradient(135deg, #cfd9df 0%, #e2ebf0 100%)'
+                                      : entry.rank === 3
+                                      ? 'linear-gradient(135deg, #f7971e 0%, #ffd200 100%)'
+                                      : 'rgba(255,255,255,0.05)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontWeight: 700,
+                                    color: entry.rank <= 3 ? '#1c1c2b' : 'rgba(255,255,255,0.9)',
+                                    border: entry.rank > 3 ? '1px solid rgba(255,255,255,0.1)' : 'none'
+                                  }}
+                                >
+                                  #{entry.rank}
+                                </Box>
+                                <Box>
+                                  <Typography
+                                    variant="h6"
+                                    sx={{
+                                      color: 'white',
+                                      fontWeight: 600
+                                    }}
+                                  >
+                                    {formatName(entry.submitterUsername)}
+                                  </Typography>
+                                  <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                                    {entry.cupsPlayed || 0} cup{entry.cupsPlayed === 1 ? '' : 's'} • Best finish {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                              <Box sx={{ textAlign: { xs: 'left', sm: 'right' } }}>
+                                <Typography
+                                  variant="h5"
+                                  sx={{
+                                    color: 'white',
+                                    fontWeight: 700
+                                  }}
+                                >
+                                  {formatPoints(entry.totalPoints)} pts
+                                </Typography>
+                                {latestResult && (
+                                  <Typography sx={{ color: 'rgba(255,255,255,0.65)', mt: 0.5 }}>
+                                    Last cup: {formatOrdinal(latestResult.rank)} • +{formatPoints(latestResult.pointsAwarded || 0)} pts
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Box>
+                          );
+                        })}
+                      </Stack>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
+
           {/* Current Cup Section */}
           {currentCup && (
             <Grid item xs={12} ref={cupRef}>
@@ -727,7 +962,7 @@ function ViewerHub() {
                                         '&:hover': { textDecoration: 'underline' }
                                       }}
                                     >
-                                      {formatName(entry.submitterAlias, entry.submitterUsername)}
+                                      {formatName(entry.submitterUsername)}
                                     </Typography>
                                     <Chip
                                       label={`${entry.averageScore?.toFixed(2) || 'N/A'}`}
@@ -925,7 +1160,7 @@ function ViewerHub() {
                                   mb: 2
                                 }}
                               >
-                                by {formatName(video.submitterAlias, video.submitterUsername)}
+                                by {formatName(video.submitterUsername)}
                               </Typography>
 
                               {/* Judge Scores */}
@@ -1224,7 +1459,7 @@ function ViewerHub() {
                                 fontWeight: 500
                               }}
                             >
-                                by {formatName(item.submitterAlias, item.submitterUsername)}
+                                by {formatName(item.submitterUsername)}
                               </Typography>
                           {item.status && item.status !== 'PENDING' && (
                             <Box sx={{ mt: 1 }}>

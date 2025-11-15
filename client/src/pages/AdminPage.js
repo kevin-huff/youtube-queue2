@@ -51,25 +51,10 @@ const formatTimestamp = (value) => {
   }
 };
 
-const getSubmitterAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
-
 const getSubmitterUsername = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || null;
+  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
 
-const formatSubmitterLabel = (item, { includeReal = false } = {}) => {
-  const alias = getSubmitterAlias(item);
-  if (!includeReal) {
-    return alias;
-  }
-
-  const real = getSubmitterUsername(item);
-  if (real && real !== alias) {
-    return `${alias} (real: ${real})`;
-  }
-
-  return alias;
-};
+const formatSubmitterLabel = (item) => getSubmitterUsername(item);
 
 const AdminPage = () => {
   const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
@@ -423,7 +408,7 @@ const AdminPage = () => {
                     <ListItem key={submission.id} divider alignItems="flex-start" sx={{ py: 1.5 }}>
                       <ListItemText
                         primary={submission.title || 'Untitled Video'}
-                        secondary={`Submitted by ${formatSubmitterLabel(submission, { includeReal: true })} • ${formatTimestamp(submission.createdAt)}`}
+                        secondary={`Submitted by ${formatSubmitterLabel(submission)} • ${formatTimestamp(submission.createdAt)}`}
                       />
                       <Stack direction="row" spacing={1} alignItems="center">
                         {buildSubmissionUrl(submission) && (
@@ -549,7 +534,7 @@ const AdminPage = () => {
                       <ListItem key={`vip-${id}`} divider>
                         <ListItemText
                           primary={item ? (item.title || 'Untitled Video') : `Queue Item #${id}`}
-                          secondary={item ? `#${index + 1} • by ${formatSubmitterLabel(item, { includeReal: true })}` : `#${index + 1}`}
+                          secondary={item ? `#${index + 1} • by ${formatSubmitterLabel(item)}` : `#${index + 1}`}
                         />
                         <ListItemSecondaryAction>
                           <Stack direction="row" spacing={1} alignItems="center">
@@ -697,7 +682,7 @@ const AdminPage = () => {
                                   size="small"
                                   variant="outlined"
                                 />
-                                <span>by {formatSubmitterLabel(video, { includeReal: true })}</span>
+                                <span>by {formatSubmitterLabel(video)}</span>
                                 {video.duration && (
                                   <span>
                                     • {Math.floor(video.duration / 60)}:
