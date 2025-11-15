@@ -1252,6 +1252,15 @@ router.get('/channels/:channelId/cups',
         where: { channelId: normalizedChannelId },
         orderBy: { createdAt: 'desc' },
         include: {
+          series: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              slug: true,
+              startsAt: true
+            }
+          },
           _count: {
             select: {
               queueItems: true,
@@ -1265,6 +1274,148 @@ router.get('/channels/:channelId/cups',
     } catch (error) {
       logger.error('Error getting cups:', error);
       res.status(error.status || 500).json({ error: error.message || 'Failed to get cups' });
+    }
+  }
+);
+
+// Series management
+router.get('/channels/:channelId/series',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
+
+      const series = await channelManager.prisma.series.findMany({
+        where: { channelId: normalizedChannelId },
+        orderBy: [
+          { status: 'desc' },
+          { startsAt: 'desc' },
+          { createdAt: 'desc' }
+        ],
+        include: {
+          _count: {
+            select: {
+              cups: true
+            }
+          }
+        }
+      });
+
+      res.json({ series });
+    } catch (error) {
+      logger.error('Error getting series list:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to get series list' });
+    }
+  }
+);
+
+router.post('/channels/:channelId/series',
+  requireAuth,
+  requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
+  [
+    body('title').notEmpty().withMessage('Series title is required'),
+    body('slug').notEmpty().withMessage('Series slug is required')
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
+
+      const allowedStatuses = ['PLANNED', 'ACTIVE', 'COMPLETED', 'ARCHIVED'];
+      const requestedStatus = typeof req.body.status === 'string'
+        ? req.body.status.toUpperCase()
+        : null;
+      const payload = {
+        channelId: normalizedChannelId,
+        title: req.body.title,
+        slug: req.body.slug,
+        description: req.body.description || null,
+        status: allowedStatuses.includes(requestedStatus) ? requestedStatus : 'PLANNED',
+        startsAt: req.body.startsAt ? new Date(req.body.startsAt) : null,
+        endsAt: req.body.endsAt ? new Date(req.body.endsAt) : null,
+        metadata: req.body.metadata || {}
+      };
+
+      const series = await channelManager.prisma.series.create({ data: payload });
+
+      if (series.status === 'ACTIVE') {
+        await channelManager.prisma.series.updateMany({
+          where: {
+            channelId: normalizedChannelId,
+            NOT: { id: series.id },
+            status: 'ACTIVE'
+          },
+          data: { status: 'COMPLETED' }
+        });
+      }
+
+      res.status(201).json({ series });
+    } catch (error) {
+      logger.error('Error creating series:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to create series' });
+    }
+  }
+);
+
+router.patch('/channels/:channelId/series/:seriesId',
+  requireAuth,
+  requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const normalizedChannelId = req.params.channelId.toLowerCase();
+      const { seriesId } = req.params;
+
+      const allowed = ['title', 'slug', 'description', 'startsAt', 'endsAt', 'status', 'metadata'];
+      const data = {};
+      allowed.forEach((field) => {
+        if (req.body[field] !== undefined) {
+          if (['startsAt', 'endsAt'].includes(field)) {
+            data[field] = req.body[field] ? new Date(req.body[field]) : null;
+          } else if (field === 'status' && typeof req.body[field] === 'string') {
+            const normalized = req.body[field].toUpperCase();
+            const allowedStatuses = ['PLANNED', 'ACTIVE', 'COMPLETED', 'ARCHIVED'];
+            if (allowedStatuses.includes(normalized)) {
+              data.status = normalized;
+            }
+          } else {
+            data[field] = req.body[field];
+          }
+        }
+      });
+
+      if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: 'No valid updates provided' });
+      }
+
+      const updated = await channelManager.prisma.series.update({
+        where: {
+          id: seriesId,
+          channelId: normalizedChannelId
+        },
+        data
+      });
+
+      if (data.status === 'ACTIVE') {
+        await channelManager.prisma.series.updateMany({
+          where: {
+            channelId: normalizedChannelId,
+            NOT: { id: seriesId },
+            status: 'ACTIVE'
+          },
+          data: { status: 'COMPLETED' }
+        });
+      }
+
+      res.json({ series: updated });
+    } catch (error) {
+      logger.error('Error updating series:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to update series' });
     }
   }
 );
@@ -1492,12 +1643,18 @@ router.patch('/channels/:channelId/cups/:cupId',
       const channelManager = getChannelManager(req);
       const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
 
-      const allowedUpdates = ['title', 'theme', 'status', 'startsAt', 'endsAt', 'metadata'];
+      const allowedUpdates = ['title', 'theme', 'status', 'startsAt', 'endsAt', 'metadata', 'seriesId'];
       const updates = {};
       
       for (const field of allowedUpdates) {
         if (req.body[field] !== undefined) {
-          updates[field] = req.body[field];
+          if (['startsAt', 'endsAt'].includes(field)) {
+            updates[field] = req.body[field] ? new Date(req.body[field]) : null;
+          } else if (field === 'seriesId') {
+            updates.seriesId = req.body.seriesId || null;
+          } else {
+            updates[field] = req.body[field];
+          }
         }
       }
 

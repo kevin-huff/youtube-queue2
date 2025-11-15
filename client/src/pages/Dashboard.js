@@ -2008,6 +2008,7 @@ const Dashboard = () => {
                 { icon: <LiveTv color="primary" />, label: 'Player Overlay', desc: 'Synced video player source', url: `${base}/player/${channel.id}` },
                 { icon: <LiveTv color="primary" />, label: 'Queue Overlay', desc: 'Top 8 + queue browser source', url: `${base}/overlay/${channel.id}/queue` },
                 { icon: <LiveTv color="primary" />, label: 'Leaderboard Overlay', desc: 'Cup standings overlay', url: `${base}/overlay/${channel.id}/leaderboard` },
+                { icon: <LiveTv color="primary" />, label: 'Series Overlay', desc: 'Series standings overlay', url: `${base}/overlay/${channel.id}/series` },
                 { icon: <Delete color="error" />, label: 'Clear Queue', desc: 'Remove all videos from queue', onOpen: clearingQueue ? undefined : handleClearQueue, danger: true }
               ];
               return (

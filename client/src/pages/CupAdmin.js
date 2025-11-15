@@ -73,6 +73,22 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const [cupSlug, setCupSlug] = useState('');
   const [cupTheme, setCupTheme] = useState('');
   const [cupStatus, setCupStatus] = useState('LIVE');
+  const [cupSeriesId, setCupSeriesId] = useState('');
+
+  // Series management
+  const [seriesList, setSeriesList] = useState([]);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState(null);
+  const [seriesDialogOpen, setSeriesDialogOpen] = useState(false);
+  const [seriesTitle, setSeriesTitle] = useState('');
+  const [seriesSlug, setSeriesSlug] = useState('');
+  const [seriesDescription, setSeriesDescription] = useState('');
+  const [seriesStatus, setSeriesStatus] = useState('PLANNED');
+  const [seriesStartsAt, setSeriesStartsAt] = useState('');
+  const [editingSeries, setEditingSeries] = useState(null);
+  const [savingSeries, setSavingSeries] = useState(false);
+  const [seriesActionId, setSeriesActionId] = useState(null);
+  const [cupSeriesUpdatingId, setCupSeriesUpdatingId] = useState(null);
 
   // View videos dialog
   const [videosDialogOpen, setVideosDialogOpen] = useState(false);
@@ -134,11 +150,39 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [channelName]);
 
+  const fetchSeries = useCallback(async () => {
+    if (!channelName) {
+      setSeriesList([]);
+      return;
+    }
+
+    try {
+      setSeriesLoading(true);
+      setSeriesError(null);
+      const response = await fetch(`/api/channels/${channelName}/series`, {
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch series');
+      }
+
+      const data = await response.json();
+      setSeriesList(Array.isArray(data.series) ? data.series : []);
+    } catch (err) {
+      setSeriesError(err.message);
+      setSeriesList([]);
+    } finally {
+      setSeriesLoading(false);
+    }
+  }, [channelName]);
+
   useEffect(() => {
     if (channelName) {
       fetchCups();
+      fetchSeries();
     }
-  }, [channelName, fetchCups]);
+  }, [channelName, fetchCups, fetchSeries]);
 
   useEffect(() => {
     if (!channelName || embedded) {
@@ -406,6 +450,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
           slug: cupSlug.trim(),
           theme: cupTheme.trim() || null,
           status: cupStatus,
+          seriesId: cupSeriesId || null,
         }),
       });
 
@@ -421,6 +466,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
       setCupSlug('');
       setCupTheme('');
       setCupStatus('LIVE');
+      setCupSeriesId('');
       fetchCups();
     } catch (err) {
       setError(err.message);
@@ -435,6 +481,138 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     setCupSlug('');
     setCupTheme('');
     setCupStatus('LIVE');
+    setCupSeriesId('');
+  };
+
+  const openCreateSeriesDialog = () => {
+    setSeriesError(null);
+    setEditingSeries(null);
+    setSeriesTitle('');
+    setSeriesSlug('');
+    setSeriesDescription('');
+    setSeriesStatus('PLANNED');
+    setSeriesStartsAt('');
+    setSeriesDialogOpen(true);
+  };
+
+  const openEditSeriesDialog = (series) => {
+    setSeriesError(null);
+    setEditingSeries(series);
+    setSeriesTitle(series.title || '');
+    setSeriesSlug(series.slug || '');
+    setSeriesDescription(series.description || '');
+    setSeriesStatus(series.status || 'PLANNED');
+    setSeriesStartsAt(series.startsAt ? toDateInputValue(series.startsAt) : '');
+    setSeriesDialogOpen(true);
+  };
+
+  const handleCloseSeriesDialog = () => {
+    setSeriesDialogOpen(false);
+    setEditingSeries(null);
+    setSeriesTitle('');
+    setSeriesSlug('');
+    setSeriesDescription('');
+    setSeriesStatus('PLANNED');
+    setSeriesStartsAt('');
+    setSavingSeries(false);
+  };
+
+  const handleSaveSeries = async () => {
+    if (!seriesTitle.trim() || !seriesSlug.trim()) {
+      setSeriesError('Series title and slug are required');
+      return;
+    }
+
+    try {
+      setSavingSeries(true);
+      const payload = {
+        title: seriesTitle.trim(),
+        slug: seriesSlug.trim(),
+        description: seriesDescription.trim() || null,
+        status: seriesStatus,
+        startsAt: seriesStartsAt ? new Date(seriesStartsAt).toISOString() : null
+      };
+      const url = editingSeries
+        ? `/api/channels/${channelName}/series/${editingSeries.id}`
+        : `/api/channels/${channelName}/series`;
+      const method = editingSeries ? 'PATCH' : 'POST';
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to save series');
+      }
+
+      setSnackbarMessage(editingSeries ? 'Series updated' : 'Series created');
+      setSnackbarOpen(true);
+      handleCloseSeriesDialog();
+      fetchSeries();
+    } catch (err) {
+      setSeriesError(err.message);
+    } finally {
+      setSavingSeries(false);
+    }
+  };
+
+  const handleSetSeriesStatus = async (seriesId, status) => {
+    try {
+      setSeriesActionId(seriesId);
+      const response = await fetch(`/api/channels/${channelName}/series/${seriesId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ status })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to update series');
+      }
+
+      setSnackbarMessage(status === 'ACTIVE' ? 'Series set as active' : 'Series updated');
+      setSnackbarOpen(true);
+      fetchSeries();
+    } catch (err) {
+      setSeriesError(err.message);
+    } finally {
+      setSeriesActionId(null);
+    }
+  };
+
+  const handleAssignSeriesToCup = async (cupId, seriesIdValue) => {
+    try {
+      setCupSeriesUpdatingId(cupId);
+      const response = await fetch(`/api/channels/${channelName}/cups/${cupId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ seriesId: seriesIdValue || null })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to update cup series');
+      }
+
+      setSnackbarMessage('Cup series updated');
+      setSnackbarOpen(true);
+      fetchCups();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCupSeriesUpdatingId(null);
+    }
   };
 
   const formatScore = (value, digits = 3) => {
@@ -442,6 +620,28 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
       return '--';
     }
     return Number(value).toFixed(digits);
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) {
+      return 'Not set';
+    }
+    try {
+      return new Date(value).toLocaleString();
+    } catch (err) {
+      return value;
+    }
+  };
+
+  const toDateInputValue = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    const localIso = new Date(date.getTime() - tzOffset).toISOString();
+    return localIso.slice(0, 16);
   };
 
   const getStatusColor = (status) => {
@@ -456,6 +656,21 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
       case 'REJECTED':
       case 'REMOVED':
         return 'error';
+      default:
+        return 'default';
+    }
+  };
+
+  const getSeriesStatusColor = (status) => {
+    switch (status) {
+      case 'ACTIVE':
+        return 'success';
+      case 'PLANNED':
+        return 'warning';
+      case 'COMPLETED':
+        return 'default';
+      case 'ARCHIVED':
+        return 'default';
       default:
         return 'default';
     }
@@ -943,6 +1158,94 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
         </Box>
       )}
 
+      <Box sx={{ mb: 4 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+          <Typography variant="h6">Series</Typography>
+          <Button
+            startIcon={<AddIcon />}
+            variant="contained"
+            onClick={openCreateSeriesDialog}
+            disabled={loading}
+          >
+            New Series
+          </Button>
+        </Stack>
+        {seriesError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSeriesError(null)}>
+            {seriesError}
+          </Alert>
+        )}
+        {seriesLoading ? (
+          <LinearProgress />
+        ) : seriesList.length === 0 ? (
+          <Alert severity="info">No series configured yet.</Alert>
+        ) : (
+          <Stack spacing={2}>
+            {seriesList.map((series) => (
+              <Card key={series.id} variant="outlined">
+                <CardContent>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+                    <Box flex={1}>
+                      <Typography variant="h6">{series.title}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Slug: {series.slug}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Starts: {formatDateTime(series.startsAt)}
+                      </Typography>
+                      {series.description && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                          {series.description}
+                        </Typography>
+                      )}
+                      <Stack direction="row" spacing={1} mt={1} flexWrap="wrap">
+                        <Chip
+                          label={series.status}
+                          size="small"
+                          color={getSeriesStatusColor(series.status)}
+                        />
+                        <Chip
+                          label={`${series._count?.cups || 0} cups`}
+                          size="small"
+                          variant="outlined"
+                        />
+                      </Stack>
+                    </Box>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="flex-end">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => openEditSeriesDialog(series)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="small"
+                        color="success"
+                        variant={series.status === 'ACTIVE' ? 'contained' : 'outlined'}
+                        onClick={() => handleSetSeriesStatus(series.id, 'ACTIVE')}
+                        disabled={series.status === 'ACTIVE' || seriesActionId === series.id}
+                      >
+                        {series.status === 'ACTIVE' ? 'Active' : 'Set Active'}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="info"
+                        variant={series.status === 'COMPLETED' ? 'contained' : 'outlined'}
+                        onClick={() => handleSetSeriesStatus(series.id, 'COMPLETED')}
+                        disabled={seriesActionId === series.id}
+                      >
+                        Mark Completed
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </CardContent>
+              </Card>
+            ))}
+          </Stack>
+        )}
+      </Box>
+
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
           {error}
@@ -967,6 +1270,11 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
                       {cup.theme || 'No theme'}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {cup.series
+                        ? `Series: ${cup.series.title} (${cup.series.status})`
+                        : 'No series assigned'}
                     </Typography>
                     <Stack direction="row" spacing={1} mt={1}>
                       <Chip
@@ -1065,6 +1373,29 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                       </Typography>
                     </Tooltip>
                   )}
+                </Stack>
+
+                <Stack spacing={1}>
+                  <Typography variant="body2" color="text.secondary">
+                    Series Assignment
+                  </Typography>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    value={cup.seriesId || ''}
+                    onChange={(e) => handleAssignSeriesToCup(cup.id, e.target.value)}
+                    SelectProps={{ native: true }}
+                    helperText={seriesList.length === 0 ? 'No series available' : 'Choose a series for this cup'}
+                    disabled={cupSeriesUpdatingId === cup.id}
+                  >
+                    <option value="">No Series</option>
+                    {seriesList.map((series) => (
+                      <option key={series.id} value={series.id}>
+                        {series.title} {series.status === 'ACTIVE' ? '(Active)' : ''}
+                      </option>
+                    ))}
+                  </TextField>
                 </Stack>
               </Stack>
             </CardContent>
@@ -1326,6 +1657,22 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
               <option value="LIVE">Live (Active Show)</option>
               <option value="COMPLETED">Completed (Archived)</option>
             </TextField>
+            <TextField
+              label="Series"
+              value={cupSeriesId}
+              onChange={(e) => setCupSeriesId(e.target.value)}
+              fullWidth
+              select
+              SelectProps={{ native: true }}
+              helperText={seriesList.length ? 'Select the series this cup belongs to' : 'Create a series to organize cups'}
+            >
+              <option value="">No Series</option>
+              {seriesList.map((series) => (
+                <option key={series.id} value={series.id}>
+                  {series.title} {series.status === 'ACTIVE' ? '(Active)' : ''}
+                </option>
+              ))}
+            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1336,6 +1683,73 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
             disabled={loading || !cupTitle.trim() || !cupSlug.trim()}
           >
             Create Cup
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Create/Edit Series Dialog */}
+      <Dialog
+        open={seriesDialogOpen}
+        onClose={handleCloseSeriesDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>{editingSeries ? 'Edit Series' : 'Create Series'}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} mt={2}>
+            <TextField
+              label="Series Name"
+              value={seriesTitle}
+              onChange={(e) => setSeriesTitle(e.target.value)}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Slug"
+              value={seriesSlug}
+              onChange={(e) => setSeriesSlug(e.target.value)}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Start Date"
+              type="datetime-local"
+              value={seriesStartsAt}
+              onChange={(e) => setSeriesStartsAt(e.target.value)}
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="Description"
+              value={seriesDescription}
+              onChange={(e) => setSeriesDescription(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+            />
+            <TextField
+              label="Status"
+              value={seriesStatus}
+              onChange={(e) => setSeriesStatus(e.target.value)}
+              fullWidth
+              select
+              SelectProps={{ native: true }}
+            >
+              <option value="PLANNED">Planned</option>
+              <option value="ACTIVE">Active</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="ARCHIVED">Archived</option>
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseSeriesDialog}>Cancel</Button>
+          <Button
+            onClick={handleSaveSeries}
+            variant="contained"
+            disabled={savingSeries || !seriesTitle.trim() || !seriesSlug.trim()}
+          >
+            {savingSeries ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>
