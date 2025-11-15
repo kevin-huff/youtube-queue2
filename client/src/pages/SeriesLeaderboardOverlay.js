@@ -20,6 +20,18 @@ const auroraDrift = keyframes`
   100% { transform: translate3d(-8%, 3%, 0) scale(1); opacity: 0.4; }
 `;
 
+const floatCard = keyframes`
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+  100% { transform: translateY(0px); }
+`;
+
+const pulseLine = keyframes`
+  0% { opacity: 0.2; transform: scaleX(0); }
+  50% { opacity: 0.6; transform: scaleX(1); }
+  100% { opacity: 0.2; transform: scaleX(0); }
+`;
+
 const formatName = (username) => {
   const u = (username || '').toString().trim();
   return u || 'Anonymous';
@@ -207,90 +219,213 @@ const SeriesLeaderboardOverlay = () => {
       );
     }
 
+    const topThree = standings.slice(0, 3);
+    const remaining = standings.slice(3);
+    const renderCard = (entry, highlight = false) => {
+      const latestResult = Array.isArray(entry.placements) && entry.placements.length
+        ? entry.placements[entry.placements.length - 1]
+        : null;
+      return (
+        <Paper
+          key={`${entry.submitterUsername}-${entry.rank}`}
+          elevation={0}
+          sx={{
+            flex: 1,
+            p: 2.5,
+            borderRadius: 3,
+            background: highlight
+              ? 'linear-gradient(135deg, rgba(0,184,255,0.25) 0%, rgba(58,123,213,0.15) 100%)'
+              : 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            minWidth: 0
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box>
+              <Typography variant="overline" sx={{ letterSpacing: 2, opacity: 0.8 }}>
+                #{entry.rank}
+              </Typography>
+              <Typography
+                variant={highlight ? 'h5' : 'subtitle1'}
+                sx={{ fontWeight: 700, color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              >
+                {formatName(entry.submitterUsername)}
+              </Typography>
+              <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                {entry.cupsPlayed || 0} cup{entry.cupsPlayed === 1 ? '' : 's'}
+                {' • '}
+                best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
+              </Typography>
+            </Box>
+            <Chip
+              label={`${formatPoints(entry.totalPoints)} pts`}
+              color="info"
+              sx={{ fontWeight: 700, fontSize: highlight ? '1rem' : '0.85rem' }}
+            />
+          </Box>
+          {latestResult && (
+            <Typography sx={{ color: 'rgba(255,255,255,0.65)', mt: 1 }}>
+              Last cup: {formatOrdinal(latestResult.rank)} • +{formatPoints(latestResult.pointsAwarded || 0)} pts
+            </Typography>
+          )}
+        </Paper>
+      );
+    };
+
+    const laneData = remaining.length ? remaining : topThree;
     return (
-      <Grid container spacing={2} sx={{ mt: 4 }}>
-        {standings.map((entry) => {
-          const latestResult = Array.isArray(entry.placements) && entry.placements.length
-            ? entry.placements[entry.placements.length - 1]
-            : null;
-          return (
-            <Grid item xs={12} md={6} key={`${entry.submitterUsername}-${entry.rank}`}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 2 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: 1.25
+          }}
+        >
+          {topThree.map((entry, idx) => {
+            const tilt = idx === 0 ? 0 : idx === 1 ? -4 : 4;
+            return (
               <Paper
+                key={`hero-${entry.submitterUsername}-${entry.rank}`}
                 elevation={0}
                 sx={{
-                  p: 3,
-                  borderRadius: 4,
-                  background: entry.rank <= 3
-                    ? 'linear-gradient(135deg, rgba(0, 184, 255, 0.2) 0%, rgba(58, 123, 213, 0.08) 100%)'
-                    : 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  backdropFilter: 'blur(8px)'
+                  p: 1.75,
+                  borderRadius: 3,
+                  background: idx === 0
+                    ? 'linear-gradient(140deg, rgba(255,226,173,0.35), rgba(255,255,255,0.08))'
+                    : 'linear-gradient(140deg, rgba(0,184,255,0.2), rgba(58,123,213,0.08))',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  transform: `perspective(900px) rotateY(${tilt}deg)`,
+                  animation: `${floatCard} 6s ease-in-out infinite`,
+                  minWidth: 0
                 }}
               >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Box
-                      sx={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: '50%',
-                        background: entry.rank <= 3
-                          ? 'rgba(255,255,255,0.9)'
-                          : 'rgba(255,255,255,0.05)',
-                        color: entry.rank <= 3 ? '#0a0e27' : 'rgba(255,255,255,0.85)',
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        border: entry.rank > 3 ? '1px solid rgba(255,255,255,0.2)' : 'none'
-                      }}
-                    >
-                      #{entry.rank}
-                    </Box>
-                    <Box>
-                      <Typography variant="h6" sx={{ color: 'white', fontWeight: 700 }}>
-                        {formatName(entry.submitterUsername)}
-                      </Typography>
-                      <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                        {entry.cupsPlayed || 0} cup{entry.cupsPlayed === 1 ? '' : 's'} • Best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
-                      </Typography>
-                    </Box>
-                  </Box>
+                <Typography variant="overline" sx={{ letterSpacing: 1.5, opacity: 0.65 }}>
+                  Elite #{entry.rank}
+                </Typography>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontWeight: 700,
+                    color: 'white',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  {formatName(entry.submitterUsername)}
+                </Typography>
+                <Typography sx={{ color: 'rgba(255,255,255,0.75)' }}>
+                  {entry.cupsPlayed || 0} cup{entry.cupsPlayed === 1 ? '' : 's'} • best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1.5, alignItems: 'center' }}>
                   <Chip
                     label={`${formatPoints(entry.totalPoints)} pts`}
                     color="info"
-                    sx={{ fontWeight: 700 }}
+                    sx={{ fontWeight: 700, fontSize: '0.75rem' }}
                   />
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
-                  <Chip
-                    label={`${entry.cupsPlayed || 0} cups`}
-                    variant="outlined"
-                    size="small"
-                    sx={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.3)' }}
-                  />
-                  {latestResult && (
-                    <Typography sx={{ color: 'rgba(255,255,255,0.65)' }}>
-                      Last cup: {formatOrdinal(latestResult.rank)} • +{formatPoints(latestResult.pointsAwarded || 0)} pts
-                    </Typography>
-                  )}
+                  <Typography
+                    variant="body2"
+                    sx={{ color: 'rgba(255,255,255,0.7)', textAlign: 'right' }}
+                  >
+                    Last cup:{' '}
+                    {entry.placements?.length
+                      ? formatOrdinal(entry.placements[entry.placements.length - 1].rank)
+                      : '—'}
+                  </Typography>
                 </Box>
               </Paper>
-            </Grid>
-          );
-        })}
-      </Grid>
+            );
+          })}
+        </Box>
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            borderRadius: 4,
+            position: 'relative',
+            overflow: 'hidden',
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'linear-gradient(180deg, rgba(4,8,20,0.6), rgba(4,8,14,0.9))'
+          }}
+        >
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 2,
+              background: 'linear-gradient(90deg, transparent, rgba(0,184,255,0.6), transparent)',
+              animation: `${pulseLine} 4s ease-in-out infinite`
+            }}
+          />
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              background: 'radial-gradient(circle at 20% 20%, rgba(0,184,255,0.08), transparent 55%)'
+            }}
+          />
+          <Box
+            sx={{
+              position: 'relative',
+              zIndex: 1,
+              height: '100%',
+              overflowY: 'auto',
+              columnCount: 2,
+              columnGap: 12,
+              p: 1.25
+            }}
+          >
+            {laneData.map((entry) => (
+              <Paper
+                key={`lane-${entry.submitterUsername}-${entry.rank}`}
+                sx={{
+                  p: 1.25,
+                  borderRadius: 2,
+                  background: 'rgba(2,10,25,0.7)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.25,
+                  mb: 1.2,
+                  breakInside: 'avoid'
+                }}
+              >
+                <Typography variant="caption" sx={{ letterSpacing: 1.5, color: 'rgba(255,255,255,0.6)' }}>
+                  #{entry.rank}
+                </Typography>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {formatName(entry.submitterUsername)}
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                  {formatPoints(entry.totalPoints)} pts • {entry.cupsPlayed || 0} cups
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                  Best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
+                </Typography>
+              </Paper>
+            ))}
+          </Box>
+        </Box>
+      </Box>
     );
   };
 
   return (
     <Box
       sx={{
-        minHeight: '100vh',
-        width: '100%',
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         background: 'radial-gradient(circle at top, #132043 0%, #050914 60%)',
         color: 'white',
-        p: { xs: 2, sm: 4 },
         position: 'relative',
         overflow: 'hidden'
       }}
@@ -304,20 +439,40 @@ const SeriesLeaderboardOverlay = () => {
           animation: `${auroraDrift} 18s ease-in-out infinite`
         }}
       />
-      <Box sx={{ position: 'relative', zIndex: 1, maxWidth: '1200px', mx: 'auto' }}>
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Typography variant="h3" sx={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.2em' }}>
+      <Box
+        sx={{
+          position: 'relative',
+          zIndex: 1,
+          width: 'min(640px, 100vw)',
+          height: 'min(1080px, 100vh)',
+          borderRadius: 4,
+          border: '1px solid rgba(255,255,255,0.15)',
+          backdropFilter: 'blur(12px)',
+          background: 'linear-gradient(180deg, rgba(3,8,20,0.9) 0%, rgba(5,9,20,0.98) 60%)',
+          boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
+          p: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}
+      >
+        <Box sx={{ textAlign: 'center', mb: 2 }}>
+          <Typography
+            variant="h4"
+            sx={{ fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.3em', fontSize: '1.2rem' }}
+          >
             Series Leaderboard
           </Typography>
           {resolvedSeries && (
             <>
-              <Typography variant="h4" sx={{ mt: 1, fontWeight: 700 }}>
+              <Typography variant="h5" sx={{ mt: 1, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '1.4rem' }}>
                 {resolvedSeries.title}
               </Typography>
-              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap' }}>
+              <Box sx={{ mt: 1.5, display: 'flex', justifyContent: 'center', gap: 1.5, flexWrap: 'wrap' }}>
                 {renderStatus()}
                 <Chip
                   label={`${standings.length} player${standings.length === 1 ? '' : 's'}`}
+                  size="small"
                   variant="outlined"
                   sx={{ color: 'rgba(255,255,255,0.85)', borderColor: 'rgba(255,255,255,0.4)', fontWeight: 600 }}
                 />
@@ -325,7 +480,7 @@ const SeriesLeaderboardOverlay = () => {
             </>
           )}
         </Box>
-        {renderBody()}
+        <Box sx={{ flex: 1, minHeight: 0 }}>{renderBody()}</Box>
       </Box>
     </Box>
   );
