@@ -14,10 +14,9 @@ import { useSocket } from '../contexts/SocketContext';
 const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const API_URL = `${SERVER_BASE}/api`;
 
-const auroraDrift = keyframes`
-  0% { transform: translate3d(-10%, -5%, 0) scale(1); opacity: 0.4; }
-  50% { transform: translate3d(6%, 9%, 0) scale(1.1); opacity: 0.8; }
-  100% { transform: translate3d(-8%, 3%, 0) scale(1); opacity: 0.4; }
+const scrollLoop = keyframes`
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
 `;
 
 const floatCard = keyframes`
@@ -372,44 +371,55 @@ const SeriesLeaderboardOverlay = () => {
               position: 'relative',
               zIndex: 1,
               height: '100%',
-              overflowY: 'auto',
-              columnCount: 2,
-              columnGap: 12,
+              width: '100%',
+              overflow: 'hidden',
               p: 1.25
             }}
           >
-            {laneData.map((entry) => (
-              <Paper
-                key={`lane-${entry.submitterUsername}-${entry.rank}`}
-                sx={{
-                  p: 1.25,
-                  borderRadius: 2,
-                  background: 'rgba(2,10,25,0.7)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 0.25,
-                  mb: 1.2,
-                  breakInside: 'avoid'
-                }}
-              >
-                <Typography variant="caption" sx={{ letterSpacing: 1.5, color: 'rgba(255,255,255,0.6)' }}>
-                  #{entry.rank}
-                </Typography>
-                <Typography
-                  variant="subtitle2"
-                  sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '1fr',
+                rowGap: 0.75,
+                animation: `${scrollLoop} ${Math.max(laneData.length * 2, 10)}s linear infinite`,
+                transform: 'translateZ(0)'
+              }}
+            >
+              {[...laneData, ...laneData].map((entry, idx) => (
+                <Paper
+                  key={`lane-${entry.submitterUsername}-${entry.rank}-${idx}`}
+                  sx={{
+                    p: 1,
+                    borderRadius: 2,
+                    background: 'rgba(2,10,25,0.7)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    display: 'grid',
+                    gridTemplateColumns: '48px 1fr auto auto',
+                    alignItems: 'center',
+                    gap: 0.5
+                  }}
                 >
-                  {formatName(entry.submitterUsername)}
-                </Typography>
-                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                  {formatPoints(entry.totalPoints)} pts • {entry.cupsPlayed || 0} cups
-                </Typography>
-                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-                  Best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
-                </Typography>
-              </Paper>
-            ))}
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>#{entry.rank}</Typography>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}
+                    >
+                      {formatName(entry.submitterUsername)}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                      Best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
+                    </Typography>
+                  </Box>
+                  <Typography variant="body2" sx={{ textAlign: 'right', fontWeight: 700 }}>
+                    {formatPoints(entry.totalPoints)} pts
+                  </Typography>
+                  <Typography variant="body2" sx={{ textAlign: 'right', color: 'rgba(255,255,255,0.6)' }}>
+                    {entry.cupsPlayed || 0} cups
+                  </Typography>
+                </Paper>
+              ))}
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -421,36 +431,25 @@ const SeriesLeaderboardOverlay = () => {
       sx={{
         width: '100vw',
         height: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'radial-gradient(circle at top, #132043 0%, #050914 60%)',
         color: 'white',
         position: 'relative',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        background: 'transparent',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'flex-start',
+        p: 2
       }}
     >
       <Box
         sx={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(120deg, rgba(0,184,255,0.25), rgba(58,123,213,0.15))',
-          opacity: 0.35,
-          animation: `${auroraDrift} 18s ease-in-out infinite`
-        }}
-      />
-      <Box
-        sx={{
-          position: 'relative',
-          zIndex: 1,
           width: 'min(640px, 100vw)',
           height: 'min(1080px, 100vh)',
-          borderRadius: 4,
+          borderRadius: 3,
           border: '1px solid rgba(255,255,255,0.15)',
-          backdropFilter: 'blur(12px)',
-          background: 'linear-gradient(180deg, rgba(3,8,20,0.9) 0%, rgba(5,9,20,0.98) 60%)',
-          boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
-          p: 3,
+          background: 'linear-gradient(180deg, rgba(3,8,20,0.92) 0%, rgba(4,6,15,0.98) 70%)',
+          boxShadow: '0 14px 36px rgba(0,0,0,0.45)',
+          p: 2.25,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden'
