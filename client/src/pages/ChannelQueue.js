@@ -665,6 +665,43 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     currentCupId ? `host_judge_token_${currentCupId}` : null
   ), [currentCupId]);
 
+  const hostTokenCacheKey = useMemo(() => (
+    hostTokenKey && normalizedChannelId ? `host_judge_token_cache:${normalizedChannelId}:${hostTokenKey}` : null
+  ), [hostTokenKey, normalizedChannelId]);
+
+  const readCachedHostToken = useCallback(() => {
+    if (!hostTokenCacheKey || typeof window === 'undefined') {
+      return null;
+    }
+    try {
+      return window.localStorage.getItem(hostTokenCacheKey);
+    } catch (_) {
+      return null;
+    }
+  }, [hostTokenCacheKey]);
+
+  const writeCachedHostToken = useCallback((token) => {
+    if (!hostTokenCacheKey || typeof window === 'undefined' || !token) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(hostTokenCacheKey, token);
+    } catch (_) {
+      // ignore cache failures
+    }
+  }, [hostTokenCacheKey]);
+
+  const clearCachedHostToken = useCallback(() => {
+    if (!hostTokenCacheKey || typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.removeItem(hostTokenCacheKey);
+    } catch (_) {
+      // ignore cache failures
+    }
+  }, [hostTokenCacheKey]);
+
   const handleStartVoting = useCallback(async () => {
     if (!currentlyPlaying?.id) {
       setVotingError('You need a video playing to start voting.');
@@ -1403,9 +1440,16 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     try {
       setHostJudgeError(null);
 
+      const cached = readCachedHostToken();
+      if (cached) {
+        setHostJudgeToken(cached);
+        return;
+      }
+
       // 1) Prefer a shared token saved in channel settings so every producer uses the same judge
       if (hostTokenKey && settings && typeof settings[hostTokenKey] === 'string' && settings[hostTokenKey]) {
         setHostJudgeToken(settings[hostTokenKey]);
+        writeCachedHostToken(settings[hostTokenKey]);
         return;
       }
 
@@ -1421,6 +1465,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
 
       const token = payload.token;
       setHostJudgeToken(token);
+      writeCachedHostToken(token);
       setHostJudgeLocked(false);
 
       // Persist as channel setting so all producers pick up the same judge token
@@ -1434,8 +1479,9 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     } catch (err) {
       setHostJudgeError(err.message || 'Failed to prepare judge controls');
       setHostJudgeToken(null);
+      clearCachedHostToken();
     }
-  }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings]);
+  }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings, readCachedHostToken, writeCachedHostToken, clearCachedHostToken]);
 
   const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER']);
 
@@ -1452,14 +1498,18 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     setHostJudgeScore(2.5);
     setHostJudgeSessionReady(false);
     hostJudgeSessionTokenRef.current = null;
-  }, [canHostJudge, currentCupId, currentlyPlaying?.id]);
+    if (!currentCupId) {
+      clearCachedHostToken();
+    }
+  }, [canHostJudge, currentCupId, currentlyPlaying?.id, clearCachedHostToken]);
 
   useEffect(() => {
     if (!canHostJudge) {
       hostJudgeSessionTokenRef.current = null;
       setHostJudgeSessionReady(false);
+      clearCachedHostToken();
     }
-  }, [canHostJudge]);
+  }, [canHostJudge, clearCachedHostToken]);
 
   useEffect(() => {
     if (!canHostJudge) {
