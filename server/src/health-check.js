@@ -2,10 +2,12 @@
 const http = require('http');
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
+const host = process.env.HEALTHCHECK_HOST || '127.0.0.1';
+const path = process.env.HEALTHCHECK_PATH || '/health';
 const options = {
-  hostname: '127.0.0.1',
+  hostname: host,
   port,
-  path: '/api/health',
+  path,
   method: 'GET',
   timeout: 5000
 };
