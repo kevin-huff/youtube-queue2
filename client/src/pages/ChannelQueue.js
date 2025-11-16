@@ -2463,10 +2463,9 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                 </Card>
               )}
 
-          {/* Top Eight section temporarily commented for lint isolation */}
-          {false && (
-            <Card>
-              <CardContent>
+          {/* Top Eight */}
+          <Card>
+            <CardContent>
                 <Box display="flex" alignItems="center" gap={1.5} mb={2}>
                   <EmojiEvents color="secondary" />
                   <Typography variant="h6" fontWeight={600}>
@@ -2547,7 +2546,6 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                 )}
               </CardContent>
             </Card>
-          )}
 
           {/* Cup Standings */}
           {currentStandings && currentStandings.length > 0 && (
