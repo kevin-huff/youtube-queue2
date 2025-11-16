@@ -14,6 +14,7 @@ import {
   LinearProgress,
   CircularProgress,
   Stack,
+  InputAdornment,
   TextField,
   Switch,
   FormControlLabel,
@@ -56,6 +57,8 @@ import {
   WarningAmber,
   Undo as UndoIcon
 } from '@mui/icons-material';
+import Search from '@mui/icons-material/Search';
+import Close from '@mui/icons-material/Close';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { useSocket } from '../contexts/SocketContext';
@@ -462,6 +465,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   // VIP management state
   const [vipActionId, setVipActionId] = useState(null);
   const [vipError, setVipError] = useState(null);
+  const [submitterFilter, setSubmitterFilter] = useState('');
 
   // Ad announcements form state (decoupled from socket settings to avoid keystroke drops)
   const [adEnabled, setAdEnabled] = useState(true);
@@ -608,6 +612,53 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       return apos - bpos;
     });
   }, [queue, currentlyPlaying, vipIndexMap]);
+
+  const normalizedSubmitterFilter = (submitterFilter || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, '');
+
+  const filteredQueue = useMemo(() => {
+    if (!normalizedSubmitterFilter) {
+      return sortedQueue;
+    }
+
+    const matchesFilter = (value) => {
+      if (value === undefined || value === null) {
+        return false;
+      }
+      return value.toString().toLowerCase().includes(normalizedSubmitterFilter);
+    };
+
+    return sortedQueue.filter((item) => {
+      const aliases = [
+        getQueueAlias(item),
+        item.submitterAlias,
+        item.submitterUsername,
+        item.publicSubmitterName,
+        item.submitter?.twitchUsername,
+        item.submitter?.alias,
+        item.submitter?.displayName,
+        item.submitter?.display_name,
+        item.submitter?.username
+      ];
+      return aliases.some(matchesFilter);
+    });
+  }, [sortedQueue, normalizedSubmitterFilter]);
+
+  const hasActiveFilter = Boolean(normalizedSubmitterFilter);
+  const queueChipLabel = hasActiveFilter
+    ? `${filteredQueue.length} of ${queue.length} videos`
+    : `${queue.length} videos`;
+
+  const queueOrderMap = useMemo(() => {
+    const map = new Map();
+    sortedQueue.forEach((item, idx) => {
+      map.set(item, idx);
+    });
+    return map;
+  }, [sortedQueue]);
 
   const unrevealedJudges = useMemo(() => (
     votingJudges.filter((judge) => !['revealed', 'skipped'].includes(judge.revealStatus))
@@ -952,7 +1003,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   // Channel owners/managers and show producers/hosts can operate playback
   const canOperatePlayback = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER', 'HOST']);
   const canManageRoles = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER']);
-  const canManageVip = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER']);
+  const canManageVip = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER', 'MODERATOR']);
 
   const loadRoles = useCallback(async () => {
     if (!canManageRoles || !normalizedChannelId) {
@@ -1598,6 +1649,31 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, saveHostJudgeScore, ensureHostJudgeToken]);
 
+  const unlockHostJudgeScore = useCallback(async () => {
+    if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
+    try {
+      setHostJudgeBusy(true);
+      setHostJudgeError(null);
+      const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/items/${currentlyPlaying.id}/unlock`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${hostJudgeToken}` }
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          await ensureHostJudgeToken();
+        }
+        throw new Error(payload.error || 'Failed to unlock');
+      }
+      setHostJudgeLocked(false);
+    } catch (err) {
+      setHostJudgeError(err.message || 'Failed to unlock');
+    } finally {
+      setHostJudgeBusy(false);
+    }
+  }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, ensureHostJudgeToken]);
+
   useEffect(() => {
     if (!canHostJudge || !hostJudgeToken || !normalizedChannelId || !currentCupId) {
       setHostJudgeSessionReady(false);
@@ -1922,6 +1998,17 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     >
                       Lock In
                     </Button>
+                    {hostJudgeLocked && (
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        onClick={unlockHostJudgeScore}
+                        disabled={hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady}
+                        startIcon={<UndoIcon />}
+                      >
+                        Unlock
+                      </Button>
+                    )}
                     <Button
                       variant={ownerHasGong ? 'outlined' : 'contained'}
                       color={ownerHasGong ? 'warning' : 'error'}
@@ -1936,16 +2023,58 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
             )}
 
             <Paper sx={{ mt: 3, p: 3 }}>
-              <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+              <Box
+                display="flex"
+                flexDirection={{ xs: 'column', sm: 'row' }}
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                justifyContent="space-between"
+                gap={2}
+                mb={2}
+              >
                 <Typography variant="h6" fontWeight={600}>
                   Queue
                 </Typography>
-                <Chip
-                  icon={<SkipNext />}
-                  label={`${queue.length} videos`}
-                  color="primary"
-                  variant="outlined"
-                />
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={1}
+                  alignItems={{ xs: 'stretch', sm: 'center' }}
+                  width={{ xs: '100%', sm: 'auto' }}
+                >
+                  <TextField
+                    size="small"
+                    type="search"
+                    value={submitterFilter}
+                    onChange={(event) => setSubmitterFilter(event.target.value)}
+                    placeholder="Filter by submitter"
+                    aria-label="Filter queue by submitter"
+                    sx={{ minWidth: { xs: '100%', sm: 220 } }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search fontSize="small" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: hasActiveFilter ? (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            aria-label="Clear submitter filter"
+                            onClick={() => setSubmitterFilter('')}
+                            edge="end"
+                          >
+                            <Close fontSize="small" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : null
+                    }}
+                  />
+                  <Chip
+                    icon={<SkipNext />}
+                    label={queueChipLabel}
+                    color="primary"
+                    variant="outlined"
+                  />
+                </Stack>
               </Box>
 
               {vipError && (
@@ -1970,21 +2099,35 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     Videos submitted through Twitch chat will appear here in real time.
                   </Typography>
                 </Paper>
+              ) : !filteredQueue.length ? (
+                <Paper sx={{ p: 4, textAlign: 'center' }} variant="outlined">
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    No videos match that submitter filter
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Try clearing or adjusting the filter to see more of the queue.
+                  </Typography>
+                </Paper>
               ) : (
                 <List>
-                  {sortedQueue.map((video, index) => (
-                    <QueueItem
-                      key={video.id || index}
-                      video={video}
-                      index={index}
-                      isPlaying={currentlyPlaying?.id === video.id}
-                      isTopEight={video.status === 'TOP_EIGHT'}
-                      isVip={vipIndexMap.has(Number(video.id))}
-                      canManageVip={canManageVip}
-                      onToggleVip={handleVipAction}
-                      vipActionInFlight={vipActionId === video.id}
-                    />
-                  ))}
+                  {filteredQueue.map((video, index) => {
+                    const queueIndex = queueOrderMap.get(video);
+                    const displayIndex = queueIndex ?? index;
+                    const listKey = video.id ?? `queue-item-${displayIndex}`;
+                    return (
+                      <QueueItem
+                        key={listKey}
+                        video={video}
+                        index={displayIndex}
+                        isPlaying={currentlyPlaying?.id === video.id}
+                        isTopEight={video.status === 'TOP_EIGHT'}
+                        isVip={vipIndexMap.has(Number(video.id))}
+                        canManageVip={canManageVip}
+                        onToggleVip={handleVipAction}
+                        vipActionInFlight={vipActionId === video.id}
+                      />
+                    );
+                  })}
                 </List>
               )}
             </Paper>
