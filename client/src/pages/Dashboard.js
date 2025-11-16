@@ -33,7 +33,8 @@ import {
   DialogActions,
   IconButton,
   Tooltip,
-  Collapse
+  Collapse,
+  InputAdornment
 } from '@mui/material';
 import {
   LiveTv,
@@ -47,6 +48,8 @@ import {
   Delete,
   ThumbUp,
   WarningAmber,
+  Search as SearchIcon,
+  Close as CloseIcon,
   OpenInNew as OpenInNewIcon,
   ExpandLess as ExpandLessIcon,
   ExpandMore as ExpandMoreIcon
@@ -350,7 +353,14 @@ const Dashboard = () => {
   const { user, loading: authLoading, hasChannelRole, findChannelAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { clearQueue, connectToChannel, disconnectFromChannel, addChannelListener, removeChannelListener } = useSocket();
+  const {
+    clearQueue,
+    connectToChannel,
+    disconnectFromChannel,
+    addChannelListener,
+    removeChannelListener,
+    vipQueue
+  } = useSocket();
   const [channel, setChannel] = useState(null);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -366,6 +376,7 @@ const Dashboard = () => {
   const [moderationActionId, setModerationActionId] = useState(null);
   const [showAutoOnly, setShowAutoOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [moderationSubmitterFilter, setModerationSubmitterFilter] = useState('');
   const [scoredInCupCount, setScoredInCupCount] = useState(0);
   const [unmoderatedAutoApprovedCount, setUnmoderatedAutoApprovedCount] = useState(0);
   const [activeCup, setActiveCup] = useState(null);
@@ -1295,6 +1306,14 @@ const Dashboard = () => {
   const moderationCountDisplay = moderationLoading ? '…' : warningCount;
   const warningActionInFlight = Boolean(warningTarget && moderationActionId === warningTarget.id);
   const warningNoteLength = warningNote.length;
+  const normalizedModerationFilter = useMemo(
+    () => (moderationSubmitterFilter || '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/^@+/, ''),
+    [moderationSubmitterFilter]
+  );
   const filteredModerationItems = useMemo(
     () => {
       const base = moderationItems.filter((item) => {
@@ -1302,12 +1321,48 @@ const Dashboard = () => {
         const s = String(item.status || '').toUpperCase();
         return s === statusFilter;
       });
-      return showAutoOnly
+      const autoFiltered = showAutoOnly
         ? base.filter((item) => item.moderationStatus !== 'WARNING' && !item.moderatedBy)
         : base;
+      if (!normalizedModerationFilter) {
+        return autoFiltered;
+      }
+      const matchesFilter = (value) => {
+        if (value === undefined || value === null) {
+          return false;
+        }
+        return value.toString().toLowerCase().includes(normalizedModerationFilter);
+      };
+      return autoFiltered.filter((item) => {
+        const aliases = [
+          formatSubmitterLabel(item),
+          item.submitterAlias,
+          item.submitterUsername,
+          item.publicSubmitterName,
+          item.submitter?.twitchUsername,
+          item.submitter?.alias,
+          item.submitter?.displayName,
+          item.submitter?.display_name,
+          item.submitter?.username
+        ];
+        return aliases.some(matchesFilter);
+      });
     },
-    [moderationItems, showAutoOnly, statusFilter]
+    [moderationItems, showAutoOnly, statusFilter, normalizedModerationFilter]
   );
+  const hasModerationFilter = Boolean(normalizedModerationFilter);
+  const vipIndexMap = useMemo(() => {
+    const map = new Set();
+    if (Array.isArray(vipQueue)) {
+      vipQueue.forEach((value) => {
+        const id = Number(value);
+        if (Number.isFinite(id)) {
+          map.add(id);
+        }
+      });
+    }
+    return map;
+  }, [vipQueue]);
 
   const fetchStatusSummary = useCallback(async () => {
     if (!currentChannelId) return;
@@ -2648,17 +2703,52 @@ const Dashboard = () => {
                               Flag videos with warnings or give them a thumbs up for the production team.
                             </Typography>
                           </Box>
-                          <Box display="flex" alignItems="center" gap={1}>
-                            <FormControlLabel
-                              control={
-                                <Switch
-                                  size="small"
-                                  checked={showAutoOnly}
-                                  onChange={(e) => setShowAutoOnly(e.target.checked)}
-                                />
-                              }
-                              label="Only Auto‑approved"
-                            />
+                        <Stack
+                          direction={{ xs: 'column', sm: 'row' }}
+                          spacing={1}
+                          alignItems={{ xs: 'stretch', sm: 'center' }}
+                          justifyContent="flex-end"
+                          width={{ xs: '100%', sm: 'auto' }}
+                        >
+                          <TextField
+                            size="small"
+                            type="search"
+                            value={moderationSubmitterFilter}
+                            onChange={(event) => setModerationSubmitterFilter(event.target.value)}
+                            placeholder="Filter by submitter"
+                            aria-label="Filter moderation queue by submitter"
+                            sx={{ minWidth: { xs: '100%', sm: 220 } }}
+                            InputProps={{
+                              startAdornment: (
+                                <InputAdornment position="start">
+                                  <SearchIcon fontSize="small" />
+                                </InputAdornment>
+                              ),
+                              endAdornment: hasModerationFilter ? (
+                                <InputAdornment position="end">
+                                  <IconButton
+                                    size="small"
+                                    aria-label="Clear submitter filter"
+                                    onClick={() => setModerationSubmitterFilter('')}
+                                    edge="end"
+                                  >
+                                    <CloseIcon fontSize="small" />
+                                  </IconButton>
+                                </InputAdornment>
+                              ) : null
+                            }}
+                          />
+                          <FormControlLabel
+                            sx={{ m: 0 }}
+                            control={
+                              <Switch
+                                size="small"
+                                checked={showAutoOnly}
+                                onChange={(e) => setShowAutoOnly(e.target.checked)}
+                              />
+                            }
+                            label="Only Auto‑approved"
+                          />
                           <Button
                             variant="outlined"
                             size="small"
@@ -2667,7 +2757,7 @@ const Dashboard = () => {
                           >
                             Refresh
                           </Button>
-                        </Box>
+                        </Stack>
                         </Box>
 
                         {moderationError && (
@@ -2681,13 +2771,22 @@ const Dashboard = () => {
                             <CircularProgress size={32} />
                           </Box>
                         ) : filteredModerationItems.length === 0 ? (
-                          <Alert severity="success">
-                            No videos need attention right now. You&rsquo;re all caught up!
-                          </Alert>
+                          hasModerationFilter ? (
+                            <Alert severity="info">
+                              No submissions match that submitter filter. Try clearing or adjusting the filter to review more videos.
+                            </Alert>
+                          ) : (
+                            <Alert severity="success">
+                              No videos need attention right now. You&rsquo;re all caught up!
+                            </Alert>
+                          )
                         ) : (
                           <Stack spacing={2}>
-                            {filteredModerationItems.map((item) => (
-                              <Paper key={item.id} variant="outlined" sx={{ p: 2 }}>
+                            {filteredModerationItems.map((item) => {
+                              const numericId = Number(item.id);
+                              const isVip = Number.isFinite(numericId) && vipIndexMap.has(numericId);
+                              return (
+                                <Paper key={item.id} variant="outlined" sx={{ p: 2 }}>
                                 <Box display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={2}>
                                   <Box flex={1} minWidth={220}>
                                     <Typography variant="subtitle1" fontWeight={600}>
@@ -2723,6 +2822,13 @@ const Dashboard = () => {
                                     />
                                     {item.platform && (
                                       <Chip label={item.platform.toUpperCase()} size="small" variant="outlined" />
+                                    )}
+                                    {isVip && (
+                                      <Chip
+                                        label="VIP"
+                                        size="small"
+                                        color="secondary"
+                                      />
                                     )}
                                     {item.moderationStatus === 'WARNING' && (
                                       <Chip
@@ -2797,6 +2903,15 @@ const Dashboard = () => {
                                   </Button>
                                   <Button
                                     variant="outlined"
+                                    color={isVip ? 'secondary' : 'primary'}
+                                    size="small"
+                                    disabled={moderationActionId === item.id}
+                                    onClick={() => handleModerationAction(item.id, isVip ? 'UNVIP' : 'VIP')}
+                                  >
+                                    {isVip ? 'Un-VIP' : 'VIP'}
+                                  </Button>
+                                  <Button
+                                    variant="outlined"
                                     color="error"
                                     startIcon={<Delete />}
                                     size="small"
@@ -2806,8 +2921,9 @@ const Dashboard = () => {
                                     Remove
                                   </Button>
                                 </Stack>
-                              </Paper>
-                            ))}
+                                </Paper>
+                              );
+                            })}
                           </Stack>
                         )}
                       </CardContent>
