@@ -55,6 +55,29 @@ const cornerGlow = keyframes`
   }
 `;
 
+const gongStrike = keyframes`
+  0% {
+    transform: scale(0.6) rotate(-6deg);
+    opacity: 0;
+    filter: drop-shadow(0 0 0 rgba(252, 186, 3, 0));
+  }
+  45% {
+    transform: scale(1.08) rotate(6deg);
+    opacity: 1;
+    filter: drop-shadow(0 6px 12px rgba(252, 186, 3, 0.45));
+  }
+  65% {
+    transform: scale(0.95) rotate(-3deg);
+  }
+  85% {
+    transform: scale(1.02) rotate(1deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    filter: drop-shadow(0 6px 18px rgba(252, 186, 3, 0.35));
+  }
+`;
+
 const OverlayContainer = ({ children }) => (
   <Box
     sx={{
@@ -476,31 +499,34 @@ const PlayerOverlay = () => {
               }}
             >
               {activeGongs.map((entry) => (
-                <Box
-                  key={entry.id}
-                  sx={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    bgcolor: 'rgba(0,0,0,0.45)',
-                    borderRadius: 2,
-                    px: 1.5,
-                    py: 1,
-                    minWidth: { xs: 96, sm: 110 }
-                  }}
-                >
-                  <Box
-                    component="img"
-                    src={GONG_IMAGE_URL}
-                    alt="Gong"
-                    sx={{
-                      width: { xs: 56, sm: 70 },
-                      height: { xs: 56, sm: 70 },
-                      objectFit: 'cover',
-                      borderRadius: 1,
-                      boxShadow: '0 0 16px rgba(0,0,0,0.5)'
-                    }}
-                  />
+            <Box
+              key={entry.id}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                bgcolor: 'rgba(0,0,0,0.45)',
+                borderRadius: 2,
+                px: 1.5,
+                py: 1,
+                minWidth: { xs: 96, sm: 110 },
+                animation: `${gongStrike} 900ms ease-out`,
+                transformOrigin: 'center'
+              }}
+            >
+              <Box
+                component="img"
+                src={GONG_IMAGE_URL}
+                alt="Gong"
+                sx={{
+                  width: { xs: 56, sm: 70 },
+                  height: { xs: 56, sm: 70 },
+                  objectFit: 'cover',
+                  borderRadius: 1,
+                  boxShadow: '0 0 16px rgba(0,0,0,0.5)',
+                  animation: `${gongStrike} 900ms ease-out`
+                }}
+              />
                   <Typography
                     variant="subtitle2"
                     sx={{

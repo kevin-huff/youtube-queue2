@@ -904,9 +904,13 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }, [lastShuffle]);
 
-  const currentStandings = useMemo(() => {
-    return activeCupId ? cupStandings[activeCupId] : null;
-  }, [activeCupId, cupStandings]);
+  const currentStandings = useMemo(() => (
+    activeCupId ? cupStandings[activeCupId] : null
+  ), [activeCupId, cupStandings]);
+
+  const activeCupMeta = useMemo(() => (
+    currentCupId ? (cupMetadata?.[currentCupId] || null) : null
+  ), [currentCupId, cupMetadata]);
 
   // Channel owners/managers and show producers/hosts can operate playback
   const canOperatePlayback = hasChannelRole(normalizedChannelId, ['OWNER', 'MANAGER', 'PRODUCER', 'HOST']);
@@ -1958,19 +1962,41 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           Manage judge lock-ins and reveal the scores when you're ready.
                         </Typography>
                       </Box>
-                      <Chip
-                        label={votingState ? votingStageMeta.label : 'Idle'}
-                        size="small"
-                        sx={{
-                          bgcolor: votingState
-                            ? alpha(votingStageMeta.accent, 0.15)
-                            : alpha('#9ea7b8', 0.2),
-                          color: votingState ? votingStageMeta.accent : 'text.secondary',
-                          fontWeight: 600,
-                          letterSpacing: 0.6
-                        }}
-                      />
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip
+                          label={votingState ? votingStageMeta.label : 'Idle'}
+                          size="small"
+                          sx={{
+                            bgcolor: votingState
+                              ? alpha(votingStageMeta.accent, 0.15)
+                              : alpha('#9ea7b8', 0.2),
+                            color: votingState ? votingStageMeta.accent : 'text.secondary',
+                            fontWeight: 600,
+                            letterSpacing: 0.6
+                          }}
+                        />
+                        <Chip
+                          label={currentCupId ? `Cup: ${activeCupMeta?.title || currentCupId}` : 'No Active Cup'}
+                          size="small"
+                          color={currentCupId ? 'primary' : 'warning'}
+                          variant={currentCupId ? 'outlined' : 'filled'}
+                        />
+                        <Button
+                          variant="text"
+                          size="small"
+                          onClick={() => window.open(`/channel/${channelName}/cups`, '_blank', 'noopener')}
+                          sx={{ whiteSpace: 'nowrap' }}
+                        >
+                          Manage Cups
+                        </Button>
+                      </Stack>
                     </Box>
+
+                    {!currentCupId && (
+                      <Alert severity="warning" sx={{ pointerEvents: 'auto' }}>
+                        No active cup selected. Activate one in Manage Cups so voting and judge scoring stay enabled.
+                      </Alert>
+                    )}
 
                     {votingError && (
                       <Alert severity="error" onClose={() => setVotingError(null)} sx={{ pointerEvents: 'auto' }}>
