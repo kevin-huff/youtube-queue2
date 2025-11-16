@@ -315,6 +315,94 @@ const JudgePage = () => {
     setGongError(null);
   }, [currentlyPlaying?.id]);
 
+  const GongControlCard = () => (
+    <Card>
+      <CardContent>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          alignItems={{ xs: 'stretch', md: 'center' }}
+          justifyContent="space-between"
+          spacing={2}
+        >
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Gong Control
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Smash the gong once per video. Producers can undo accidents if needed.
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            size="large"
+            color={hasGonged ? 'warning' : 'error'}
+            startIcon={hasGonged ? <UndoIcon /> : <GavelIcon />}
+            onClick={handleToggleGong}
+            disabled={gongBusy || !currentlyPlaying?.id || !judgeToken || !session}
+          >
+            {hasGonged ? 'Undo Gong' : 'Gong'}
+          </Button>
+        </Stack>
+        {gongError && (
+          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGongError(null)}>
+            {gongError}
+          </Alert>
+        )}
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Active Gongs
+          </Typography>
+          {activeGongs.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              No gongs yet. You could be the first smash.
+            </Typography>
+          ) : (
+            <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
+              {activeGongs.map((entry) => (
+                <Box
+                  key={entry.id}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: entry.id === judgeIdentifier ? 'warning.main' : 'divider',
+                    px: 1.5,
+                    py: 1,
+                    minWidth: 96,
+                    bgcolor: entry.id === judgeIdentifier ? 'rgba(255,193,7,0.08)' : 'transparent'
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src={GONG_IMAGE_URL}
+                    alt="Gong"
+                    sx={{
+                      width: 56,
+                      height: 56,
+                      objectFit: 'cover',
+                      borderRadius: 1,
+                      mb: 0.75
+                    }}
+                  />
+                  <Typography variant="body2" fontWeight={600} align="center">
+                    {entry.displayName || (entry.id === GONG_OWNER_ID ? 'Host' : 'Judge')}
+                  </Typography>
+                  {entry.id === GONG_OWNER_ID && (
+                    <Typography variant="caption" color="text.secondary">
+                      Host Gong
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            </Stack>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
   const handleToggleGong = useCallback(async () => {
     if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken || !judgeIdentifier) {
       return;
@@ -672,91 +760,7 @@ const JudgePage = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent>
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                alignItems={{ xs: 'stretch', md: 'center' }}
-                justifyContent="space-between"
-                spacing={2}
-              >
-                <Box>
-                  <Typography variant="h6" gutterBottom>
-                    Gong Control
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Smash the gong once per video. Producers can undo accidents if needed.
-                  </Typography>
-                </Box>
-                <Button
-                  variant="contained"
-                  size="large"
-                  color={hasGonged ? 'warning' : 'error'}
-                  startIcon={hasGonged ? <UndoIcon /> : <GavelIcon />}
-                  onClick={handleToggleGong}
-                  disabled={gongBusy || !currentlyPlaying?.id || !judgeToken || !session}
-                >
-                  {hasGonged ? 'Undo Gong' : 'Gong'}
-                </Button>
-              </Stack>
-              {gongError && (
-                <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGongError(null)}>
-                  {gongError}
-                </Alert>
-              )}
-              <Box sx={{ mt: 2 }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Active Gongs
-                </Typography>
-                {activeGongs.length === 0 ? (
-                  <Typography variant="body2" color="text.secondary">
-                    No gongs yet. You could be the first smash.
-                  </Typography>
-                ) : (
-                  <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-                    {activeGongs.map((entry) => (
-                      <Box
-                        key={entry.id}
-                        sx={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          borderRadius: 2,
-                          border: '1px solid',
-                          borderColor: entry.id === judgeIdentifier ? 'warning.main' : 'divider',
-                          px: 1.5,
-                          py: 1,
-                          minWidth: 96,
-                          bgcolor: entry.id === judgeIdentifier ? 'rgba(255,193,7,0.08)' : 'transparent'
-                        }}
-                      >
-                        <Box
-                          component="img"
-                          src={GONG_IMAGE_URL}
-                          alt="Gong"
-                          sx={{
-                            width: 56,
-                            height: 56,
-                            objectFit: 'cover',
-                            borderRadius: 1,
-                            mb: 0.75
-                          }}
-                        />
-                        <Typography variant="body2" fontWeight={600} align="center">
-                          {entry.displayName || (entry.id === GONG_OWNER_ID ? 'Host' : 'Judge')}
-                        </Typography>
-                        {entry.id === GONG_OWNER_ID && (
-                          <Typography variant="caption" color="text.secondary">
-                            Host Gong
-                          </Typography>
-                        )}
-                      </Box>
-                    ))}
-                  </Stack>
-                )}
-              </Box>
-            </CardContent>
-          </Card>
+          <GongControlCard />
 
           {/* Soundboard (Judges can trigger) */}
           <Card>
@@ -888,6 +892,8 @@ const JudgePage = () => {
               </Typography>
             </CardContent>
           </Card>
+
+          <GongControlCard />
 
           {/* Soundboard (Judges can trigger) */}
           <Card>

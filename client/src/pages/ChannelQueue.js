@@ -524,13 +524,18 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }, delay);
   }, [saveAdSetting]);
 
+  const queueCupIdFallback = useMemo(() => (
+    queue.find((item) => item?.cupId)?.cupId || null
+  ), [queue]);
+
   const currentCupId = useMemo(() => (
     currentlyPlaying?.cupId
     || votingState?.cupId
     || settings?.activeCupId
     || activeCupId
+    || queueCupIdFallback
     || null
-  ), [currentlyPlaying?.cupId, votingState?.cupId, settings?.activeCupId, activeCupId]);
+  ), [currentlyPlaying?.cupId, votingState?.cupId, settings?.activeCupId, activeCupId, queueCupIdFallback]);
 
   const activeGongs = useMemo(
     () => getActiveGongEntries(gongState, currentlyPlaying?.id || null),
@@ -837,13 +842,12 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   useEffect(() => {
     if (settings?.activeCupId) {
       setActiveCupId(settings.activeCupId);
-    } else if (queue.length > 0) {
-      const cupId = queue.find(item => item.cupId)?.cupId;
-      if (cupId) {
-        setActiveCupId(cupId);
-      }
+      return;
     }
-  }, [settings, queue]);
+    if (!activeCupId && queueCupIdFallback) {
+      setActiveCupId(queueCupIdFallback);
+    }
+  }, [settings?.activeCupId, queueCupIdFallback, activeCupId]);
 
   // Fetch cup info when activeCupId changes
   useEffect(() => {
@@ -1454,6 +1458,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   }, [canHostJudge]);
 
   useEffect(() => {
+    if (!canHostJudge) {
+      return;
+    }
+    setHostJudgeSessionReady(false);
+    hostJudgeSessionTokenRef.current = null;
+  }, [canHostJudge, currentCupId]);
+
+  useEffect(() => {
     setGongActionError(null);
     setOwnerGongError(null);
     setGongActionTarget(null);
@@ -1806,7 +1818,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
               </Box>
             )}
 
-            {canHostJudge && currentCupId && hostJudgeToken && (
+            {canHostJudge && hostJudgeToken && (
               <Card sx={{ mt: 3 }}>
                 <CardContent>
                   <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>
@@ -1816,16 +1828,21 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     )}
                   </Box>
 
-                  {hostJudgeError && (
-                    <Alert severity="error" sx={{ mb: 2 }} onClose={() => setHostJudgeError(null)}>
-                      {hostJudgeError}
-                    </Alert>
-                  )}
-                  {ownerGongError && (
-                    <Alert severity="error" sx={{ mb: 2 }} onClose={() => setOwnerGongError(null)}>
-                      {ownerGongError}
-                    </Alert>
-                  )}
+                    {hostJudgeError && (
+                      <Alert severity="error" sx={{ mb: 2 }} onClose={() => setHostJudgeError(null)}>
+                        {hostJudgeError}
+                      </Alert>
+                    )}
+                    {ownerGongError && (
+                      <Alert severity="error" sx={{ mb: 2 }} onClose={() => setOwnerGongError(null)}>
+                        {ownerGongError}
+                      </Alert>
+                    )}
+                    {!currentCupId && (
+                      <Alert severity="warning" sx={{ mb: 2 }}>
+                        Select an active cup to unlock host judging controls.
+                      </Alert>
+                    )}
 
                   <PrecisionSlider
                     value={hostJudgeScore}
@@ -1840,14 +1857,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     <Button
                       variant="outlined"
                       onClick={saveHostJudgeScore}
-                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady || !currentCupId}
                     >
                       Save Score
                     </Button>
                     <Button
                       variant="contained"
                       onClick={lockHostJudgeScore}
-                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady || !currentCupId}
                     >
                       Lock In
                     </Button>
