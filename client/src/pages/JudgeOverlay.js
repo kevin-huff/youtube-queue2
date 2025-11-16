@@ -4,6 +4,21 @@ import { Box, Typography } from '@mui/material';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import { getActiveGongEntries, GONG_IMAGE_URL, GONG_AUDIO_URL } from '../constants/gongs';
+import { keyframes } from '@emotion/react';
+
+const gongStrike = keyframes`
+  0% { transform: scale(0.6) rotate(-6deg); opacity: 0; }
+  50% { transform: scale(1.08) rotate(6deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); }
+`;
+
+const gongVibrate = keyframes`
+  0%, 100% { transform: translate3d(0,0,0) rotate(0deg); }
+  20% { transform: translate3d(-2px, 1px, 0) rotate(-1deg); }
+  40% { transform: translate3d(2px,-1px,0) rotate(1deg); }
+  60% { transform: translate3d(-1px,0,0) rotate(-0.5deg); }
+  80% { transform: translate3d(1px,0,0) rotate(0.5deg); }
+`;
 
 const OverlayContainer = ({ children }) => (
   <Box
@@ -133,14 +148,16 @@ const JudgeOverlay = () => {
         >
           {activeGongs.map((entry) => (
             <Box
-              key={entry.id}
+              key={`${entry.id}-${entry.createdAt || 'active'}`}
               sx={{
                 bgcolor: 'rgba(0,0,0,0.45)',
                 borderRadius: 2,
                 px: 1.5,
                 py: 1,
                 minWidth: 96,
-                textAlign: 'center'
+                textAlign: 'center',
+                animation: `${gongStrike} 0.7s ease-out, ${gongVibrate} 1.6s ease-in-out 0.7s infinite`,
+                transformOrigin: 'center'
               }}
             >
               <Box
