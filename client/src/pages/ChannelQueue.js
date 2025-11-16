@@ -65,7 +65,6 @@ import PrecisionSlider from '../components/PrecisionSlider';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getActiveGongEntries,
-  findGongEntry,
   GONG_OWNER_ID,
   GONG_IMAGE_URL
 } from '../constants/gongs';
@@ -411,6 +410,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     triggerShuffle,
     settings,
     cupStandings,
+    cupMetadata,
     refreshCupStandings,
     votingState,
     startVotingSession,

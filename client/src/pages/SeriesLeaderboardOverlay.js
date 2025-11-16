@@ -4,7 +4,6 @@ import {
   Box,
   Chip,
   CircularProgress,
-  Grid,
   Paper,
   Typography
 } from '@mui/material';
@@ -220,57 +219,6 @@ const SeriesLeaderboardOverlay = () => {
 
     const topThree = standings.slice(0, 3);
     const remaining = standings.slice(3);
-    const renderCard = (entry, highlight = false) => {
-      const latestResult = Array.isArray(entry.placements) && entry.placements.length
-        ? entry.placements[entry.placements.length - 1]
-        : null;
-      return (
-        <Paper
-          key={`${entry.submitterUsername}-${entry.rank}`}
-          elevation={0}
-          sx={{
-            flex: 1,
-            p: 2.5,
-            borderRadius: 3,
-            background: highlight
-              ? 'linear-gradient(135deg, rgba(0,184,255,0.25) 0%, rgba(58,123,213,0.15) 100%)'
-              : 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            minWidth: 0
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Box>
-              <Typography variant="overline" sx={{ letterSpacing: 2, opacity: 0.8 }}>
-                #{entry.rank}
-              </Typography>
-              <Typography
-                variant={highlight ? 'h5' : 'subtitle1'}
-                sx={{ fontWeight: 700, color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              >
-                {formatName(entry.submitterUsername)}
-              </Typography>
-              <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                {entry.cupsPlayed || 0} cup{entry.cupsPlayed === 1 ? '' : 's'}
-                {' • '}
-                best {entry.bestFinish ? formatOrdinal(entry.bestFinish) : '—'}
-              </Typography>
-            </Box>
-            <Chip
-              label={`${formatPoints(entry.totalPoints)} pts`}
-              color="info"
-              sx={{ fontWeight: 700, fontSize: highlight ? '1rem' : '0.85rem' }}
-            />
-          </Box>
-          {latestResult && (
-            <Typography sx={{ color: 'rgba(255,255,255,0.65)', mt: 1 }}>
-              Last cup: {formatOrdinal(latestResult.rank)} • +{formatPoints(latestResult.pointsAwarded || 0)} pts
-            </Typography>
-          )}
-        </Paper>
-      );
-    };
-
     const laneData = remaining.length ? remaining : topThree;
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 2 }}>
