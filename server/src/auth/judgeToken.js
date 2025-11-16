@@ -104,12 +104,16 @@ const authenticateJudgeToken = async (req, res, next) => {
       }
     });
 
-    if (!session || session.status !== 'ACTIVE') {
-      logger.warn(`Judge token rejected: session not active for ${decoded.judgeId}`);
-      return res.status(401).json({
-        error: 'Judge token revoked or session inactive',
-        message: 'This judge link has been revoked or the session is not active. Please request a new link.'
-      });
+    if (session) {
+      if (session.status !== 'ACTIVE') {
+        logger.warn(`Judge token rejected: session not active for ${decoded.judgeId}`);
+        return res.status(401).json({
+          error: 'Judge token revoked or session inactive',
+          message: 'This judge link has been revoked or the session is not active. Please request a new link.'
+        });
+      }
+    } else {
+      logger.info(`Judge token ${decoded.judgeId} has no session yet; allowing bootstrap authentication`);
     }
   } catch (err) {
     logger.error('Error checking judge session for token:', err);

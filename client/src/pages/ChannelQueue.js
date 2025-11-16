@@ -454,6 +454,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [hostJudgeLocked, setHostJudgeLocked] = useState(false);
   const [hostJudgeBusy, setHostJudgeBusy] = useState(false);
   const [hostJudgeError, setHostJudgeError] = useState(null);
+  const [hostJudgeSessionReady, setHostJudgeSessionReady] = useState(false);
+  const hostJudgeSessionTokenRef = useRef(null);
 
   const normalizedChannelId = channelName?.toLowerCase();
 
@@ -1440,7 +1442,16 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     setHostJudgeError(null);
     setHostJudgeLocked(false);
     setHostJudgeScore(2.5);
+    setHostJudgeSessionReady(false);
+    hostJudgeSessionTokenRef.current = null;
   }, [canHostJudge, currentCupId, currentlyPlaying?.id]);
+
+  useEffect(() => {
+    if (!canHostJudge) {
+      hostJudgeSessionTokenRef.current = null;
+      setHostJudgeSessionReady(false);
+    }
+  }, [canHostJudge]);
 
   useEffect(() => {
     setGongActionError(null);
@@ -1520,6 +1531,57 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       setHostJudgeBusy(false);
     }
   }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, saveHostJudgeScore, ensureHostJudgeToken]);
+
+  useEffect(() => {
+    if (!canHostJudge || !hostJudgeToken || !normalizedChannelId || !currentCupId) {
+      setHostJudgeSessionReady(false);
+      if (!hostJudgeToken) {
+        hostJudgeSessionTokenRef.current = null;
+      }
+      return () => {};
+    }
+
+    if (hostJudgeSessionTokenRef.current !== hostJudgeToken) {
+      setHostJudgeSessionReady(false);
+    }
+
+    if (hostJudgeSessionTokenRef.current === hostJudgeToken && hostJudgeSessionReady) {
+      return () => {};
+    }
+
+    let cancelled = false;
+    const startSession = async () => {
+      try {
+        const encodedToken = encodeURIComponent(hostJudgeToken);
+        const res = await fetch(
+          `/api/channels/${normalizedChannelId}/cups/${currentCupId}/judge/session/start?token=${encodedToken}`,
+          {
+            method: 'POST',
+            credentials: 'include'
+          }
+        );
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload.error || 'Failed to initialize judge session');
+        }
+        if (!cancelled) {
+          hostJudgeSessionTokenRef.current = hostJudgeToken;
+          setHostJudgeSessionReady(true);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setHostJudgeError((prev) => prev || err.message || 'Failed to initialize judge session');
+          setHostJudgeSessionReady(false);
+        }
+      }
+    };
+
+    startSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canHostJudge, hostJudgeToken, normalizedChannelId, currentCupId, hostJudgeSessionReady]);
 
   const handleOwnerGongToggle = useCallback(async () => {
     if (!canHostJudge || !normalizedChannelId || !currentlyPlaying?.id) {
@@ -1778,14 +1840,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     <Button
                       variant="outlined"
                       onClick={saveHostJudgeScore}
-                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady}
                     >
                       Save Score
                     </Button>
                     <Button
                       variant="contained"
                       onClick={lockHostJudgeScore}
-                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying}
+                      disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying || !hostJudgeSessionReady}
                     >
                       Lock In
                     </Button>
