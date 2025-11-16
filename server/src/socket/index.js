@@ -45,6 +45,7 @@ function socketHandler(io, channelManager) {
             votingState: queueService.getVotingState(),
             overlayState: namespace._overlayState || { showPlayer: null },
             vipQueue,
+            gongState: queueService.getGongState(),
             settings: {
               shuffle_audio_url: shuffleAudioUrl || ''
             }

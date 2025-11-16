@@ -53,7 +53,8 @@ import {
   Lock as LockIcon,
   Timeline as TimelineIcon,
   Delete as DeleteIcon,
-  WarningAmber
+  WarningAmber,
+  Undo as UndoIcon
 } from '@mui/icons-material';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
@@ -62,6 +63,12 @@ import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import PlayerControlPanel from '../components/PlayerControlPanel';
 import PrecisionSlider from '../components/PrecisionSlider';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  getActiveGongEntries,
+  findGongEntry,
+  GONG_OWNER_ID,
+  GONG_IMAGE_URL
+} from '../constants/gongs';
 
 const formatDuration = (seconds) => {
   if (!seconds && seconds !== 0) {
@@ -415,6 +422,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     showOverlayPlayer,
     hideOverlayPlayer,
     vipQueue,
+    gongState,
     emitToChannel
   } = useSocket();
 
@@ -434,6 +442,10 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [votingAction, setVotingAction] = useState(null);
   const [finalizeLoading, setFinalizeLoading] = useState(false);
   const [forceLockLoading, setForceLockLoading] = useState(false);
+  const [gongActionTarget, setGongActionTarget] = useState(null);
+  const [gongActionError, setGongActionError] = useState(null);
+  const [ownerGongBusy, setOwnerGongBusy] = useState(false);
+  const [ownerGongError, setOwnerGongError] = useState(null);
 
   // Host-only judge controls (embedded slider on producer page)
   // Visible and active only when the user has the HOST role for this channel
@@ -517,6 +529,24 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     || activeCupId
     || null
   ), [currentlyPlaying?.cupId, votingState?.cupId, settings?.activeCupId, activeCupId]);
+
+  const activeGongs = useMemo(
+    () => getActiveGongEntries(gongState, currentlyPlaying?.id || null),
+    [gongState, currentlyPlaying?.id]
+  );
+
+  const gongMap = useMemo(() => {
+    const map = new Map();
+    activeGongs.forEach((entry) => {
+      if (entry?.id) {
+        map.set(entry.id, entry);
+      }
+    });
+    return map;
+  }, [activeGongs]);
+
+  const ownerGongEntry = gongMap.get(GONG_OWNER_ID) || null;
+  const ownerHasGong = Boolean(ownerGongEntry);
 
   const votingStageMeta = useMemo(() => (
     VOTING_STAGE_META[votingState?.stage || 'collecting'] || VOTING_STAGE_META.collecting
@@ -1412,6 +1442,12 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     setHostJudgeScore(2.5);
   }, [canHostJudge, currentCupId, currentlyPlaying?.id]);
 
+  useEffect(() => {
+    setGongActionError(null);
+    setOwnerGongError(null);
+    setGongActionTarget(null);
+  }, [currentlyPlaying?.id]);
+
   const loadHostJudgeScore = useCallback(async () => {
     if (!hostJudgeToken || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) return;
     try {
@@ -1485,6 +1521,26 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [hostJudgeToken, normalizedChannelId, currentCupId, currentlyPlaying?.id, saveHostJudgeScore, ensureHostJudgeToken]);
 
+  const handleOwnerGongToggle = useCallback(async () => {
+    if (!canHostJudge || !normalizedChannelId || !currentlyPlaying?.id) {
+      return;
+    }
+    try {
+      setOwnerGongBusy(true);
+      setOwnerGongError(null);
+      await axios.post(
+        `/api/channels/${normalizedChannelId}/queue/gong`,
+        { itemId: currentlyPlaying.id, active: !ownerHasGong },
+        { withCredentials: true }
+      );
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to update gong';
+      setOwnerGongError(msg);
+    } finally {
+      setOwnerGongBusy(false);
+    }
+  }, [canHostJudge, normalizedChannelId, currentlyPlaying?.id, ownerHasGong]);
+
   const handleSkip = () => {
     if (!canOperatePlayback) {
       return;
@@ -1514,6 +1570,32 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       setShuffleLoading(false);
     }
   };
+
+  const handleClearGong = useCallback(async (participantId) => {
+    if (!participantId || !normalizedChannelId || !currentCupId || !currentlyPlaying?.id) {
+      return;
+    }
+    try {
+      setGongActionTarget(participantId);
+      setGongActionError(null);
+      const encoded = encodeURIComponent(participantId);
+      const response = await fetch(
+        `/api/channels/${normalizedChannelId}/cups/${currentCupId}/items/${currentlyPlaying.id}/gongs/${encoded}`,
+        {
+          method: 'DELETE',
+          credentials: 'include'
+        }
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to clear gong');
+      }
+    } catch (err) {
+      setGongActionError(err.message || 'Failed to clear gong');
+    } finally {
+      setGongActionTarget(null);
+    }
+  }, [normalizedChannelId, currentCupId, currentlyPlaying?.id]);
 
   if (loading) {
     return (
@@ -1677,6 +1759,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       {hostJudgeError}
                     </Alert>
                   )}
+                  {ownerGongError && (
+                    <Alert severity="error" sx={{ mb: 2 }} onClose={() => setOwnerGongError(null)}>
+                      {ownerGongError}
+                    </Alert>
+                  )}
 
                   <PrecisionSlider
                     value={hostJudgeScore}
@@ -1701,6 +1788,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       disabled={hostJudgeLocked || hostJudgeBusy || !currentlyPlaying}
                     >
                       Lock In
+                    </Button>
+                    <Button
+                      variant={ownerHasGong ? 'outlined' : 'contained'}
+                      color={ownerHasGong ? 'warning' : 'error'}
+                      onClick={handleOwnerGongToggle}
+                      disabled={ownerGongBusy || !currentlyPlaying}
+                    >
+                      {ownerHasGong ? 'Undo Gong' : 'Owner Gong'}
                     </Button>
                   </Stack>
                 </CardContent>
@@ -1801,6 +1896,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                     {votingError && (
                       <Alert severity="error" onClose={() => setVotingError(null)} sx={{ pointerEvents: 'auto' }}>
                         {votingError}
+                      </Alert>
+                    )}
+                    {gongActionError && (
+                      <Alert severity="error" onClose={() => setGongActionError(null)} sx={{ pointerEvents: 'auto' }}>
+                        {gongActionError}
                       </Alert>
                     )}
 
@@ -1936,6 +2036,50 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                         </Stack>
 
                         <Stack spacing={1.2}>
+                          {ownerHasGong && (
+                            <Box
+                              sx={{
+                                borderRadius: 2,
+                                border: `1px solid ${alpha('#ffffff', 0.12)}`,
+                                px: 1.5,
+                                py: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between'
+                              }}
+                            >
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Box
+                                  component="img"
+                                  src={GONG_IMAGE_URL}
+                                  alt="Host Gong"
+                                  sx={{ width: 42, height: 42, borderRadius: 1 }}
+                                />
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                                    {ownerGongEntry?.displayName || 'Host Gong'}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Host gonged this video
+                                  </Typography>
+                                </Box>
+                              </Stack>
+                              {canOperatePlayback && (
+                                <Tooltip title="Remove host gong">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => handleClearGong(GONG_OWNER_ID)}
+                                      disabled={gongActionTarget === GONG_OWNER_ID}
+                                      color="warning"
+                                    >
+                                      <UndoIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              )}
+                            </Box>
+                          )}
                           {votingJudges.length === 0 ? (
                             <Typography variant="body2" color="text.secondary">
                               Judges will appear here as they connect to the control panel.
@@ -1943,12 +2087,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           ) : (
                             votingJudges.map((judge) => {
                               const status = describeJudgeStatus(judge);
+                              const judgeGongEntry = gongMap.get(judge.id);
                               const detail = (() => {
                                 if (judge.revealStatus === 'skipped') {
                                   if (judge.skippedReason === 'not_locked') return 'Excluded (vote not locked)';
                                   if (judge.skippedReason === 'no_score') return 'Excluded (no score submitted)';
                                   return 'Excluded from round';
                                 }
+                                if (judgeGongEntry) return 'Gonged this video';
                                 if (judge.connected === false) return 'Disconnected';
                                 if (judge.locked) return 'Vote locked';
                                 if (typeof judge.score === 'number') return 'Score submitted';
@@ -1973,7 +2119,38 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                                     <Typography variant="caption" color="text.secondary">{detail}</Typography>
                                   </Box>
                                   <Stack direction="row" spacing={1} alignItems="center">
-                                    <Chip size="small" label={formatScoreValue(judge.score)} color={judge.revealStatus === 'revealed' ? 'primary' : 'default'} variant={judge.revealStatus === 'revealed' ? 'filled' : 'outlined'} />
+                                    {judgeGongEntry ? (
+                                      <Stack direction="row" spacing={0.5} alignItems="center">
+                                        <Box
+                                          component="img"
+                                          src={GONG_IMAGE_URL}
+                                          alt="Gong"
+                                          sx={{ width: 32, height: 32, borderRadius: 0.75 }}
+                                        />
+                                        <Chip size="small" label="Gonged" color="warning" />
+                                        {canOperatePlayback && (
+                                          <Tooltip title="Remove gong">
+                                            <span>
+                                              <IconButton
+                                                size="small"
+                                                color="warning"
+                                                onClick={() => handleClearGong(judge.id)}
+                                                disabled={gongActionTarget === judge.id}
+                                              >
+                                                <UndoIcon fontSize="small" />
+                                              </IconButton>
+                                            </span>
+                                          </Tooltip>
+                                        )}
+                                      </Stack>
+                                    ) : (
+                                      <Chip
+                                        size="small"
+                                        label={formatScoreValue(judge.score)}
+                                        color={judge.revealStatus === 'revealed' ? 'primary' : 'default'}
+                                        variant={judge.revealStatus === 'revealed' ? 'filled' : 'outlined'}
+                                      />
+                                    )}
                                     <Chip size="small" label={status.label} color={status.color} variant={status.color === 'default' ? 'outlined' : 'filled'} />
                                   </Stack>
                                 </Box>

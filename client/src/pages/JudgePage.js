@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -22,11 +22,20 @@ import {
   VolumeOff as VolumeOffIcon,
   OpenInNew as OpenInNewIcon,
   Sync as SyncIcon,
+  Gavel as GavelIcon,
+  Undo as UndoIcon
 } from '@mui/icons-material';
 import PrecisionSlider from '../components/PrecisionSlider';
 import JudgeSettings from '../components/JudgeSettings';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
+import {
+  getActiveGongEntries,
+  findGongEntry,
+  GONG_IMAGE_URL,
+  GONG_AUDIO_URL,
+  GONG_OWNER_ID
+} from '../constants/gongs';
 
 const JudgePage = () => {
   const { channelName, cupId } = useParams();
@@ -41,7 +50,8 @@ const JudgePage = () => {
     removeChannelListener,
     playOverlay,
     pauseOverlay,
-    seekOverlay
+    seekOverlay,
+    gongState
   } = useSocket();
   // Track multiple concurrent soundboard audio instances
   const sbAudiosRef = useRef(new Set());
@@ -61,6 +71,9 @@ const JudgePage = () => {
   const [sbItems, setSbItems] = useState([]);
   const [sbLoading, setSbLoading] = useState(false);
   const [sbError, setSbError] = useState(null);
+  const [gongBusy, setGongBusy] = useState(false);
+  const [gongError, setGongError] = useState(null);
+  const gongSeenRef = useRef(new Set());
 
   // Synced YouTube player
   const {
@@ -252,6 +265,84 @@ const JudgePage = () => {
     
     return () => clearTimeout(timeout);
   }, [channelConnected, currentlyPlaying?.videoId, forceReloadKey, hasVideo, handleResyncVideo]);
+
+  const judgeIdentifier = useMemo(() => (
+    session?.judgeTokenId || session?.judgeAccountId || null
+  ), [session?.judgeTokenId, session?.judgeAccountId]);
+
+  const activeGongs = useMemo(
+    () => getActiveGongEntries(gongState, currentlyPlaying?.id || null),
+    [gongState, currentlyPlaying?.id]
+  );
+
+  const judgeGongEntry = useMemo(
+    () => findGongEntry(gongState, currentlyPlaying?.id || null, judgeIdentifier),
+    [gongState, currentlyPlaying?.id, judgeIdentifier]
+  );
+
+  const hasGonged = Boolean(judgeGongEntry);
+
+  const playGongAudio = useCallback(() => {
+    if (!GONG_AUDIO_URL) {
+      return;
+    }
+    try {
+      const audio = new Audio(GONG_AUDIO_URL);
+      audio.volume = 1;
+      audio.play().catch(() => {});
+    } catch (err) {
+      console.warn('Failed to play gong audio in judge panel', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    gongSeenRef.current = new Set();
+  }, [currentlyPlaying?.id]);
+
+  useEffect(() => {
+    const previous = gongSeenRef.current || new Set();
+    const next = new Set();
+    activeGongs.forEach((entry) => {
+      next.add(entry.id);
+      if (!previous.has(entry.id)) {
+        playGongAudio();
+      }
+    });
+    gongSeenRef.current = next;
+  }, [activeGongs, playGongAudio]);
+
+  useEffect(() => {
+    setGongError(null);
+  }, [currentlyPlaying?.id]);
+
+  const handleToggleGong = useCallback(async () => {
+    if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken || !judgeIdentifier) {
+      return;
+    }
+    setGongBusy(true);
+    setGongError(null);
+    try {
+      const response = await fetch(
+        `/api/channels/${channelName}/cups/${cupId}/items/${currentlyPlaying.id}/gong`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${judgeToken}`
+          },
+          body: JSON.stringify({ active: !hasGonged })
+        }
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to update gong');
+      }
+    } catch (err) {
+      setGongError(err.message || 'Failed to update gong');
+    } finally {
+      setGongBusy(false);
+    }
+  }, [channelName, cupId, currentlyPlaying?.id, judgeToken, judgeIdentifier, hasGonged]);
 
   const resolvedDuration = typeof duration === 'number' && duration > 0 ? duration : 0;
   const displayTime = isSeeking && typeof pendingSeek === 'number'
@@ -578,6 +669,92 @@ const JudgePage = () => {
                   Connecting to channel...
                 </Typography>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                alignItems={{ xs: 'stretch', md: 'center' }}
+                justifyContent="space-between"
+                spacing={2}
+              >
+                <Box>
+                  <Typography variant="h6" gutterBottom>
+                    Gong Control
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Smash the gong once per video. Producers can undo accidents if needed.
+                  </Typography>
+                </Box>
+                <Button
+                  variant="contained"
+                  size="large"
+                  color={hasGonged ? 'warning' : 'error'}
+                  startIcon={hasGonged ? <UndoIcon /> : <GavelIcon />}
+                  onClick={handleToggleGong}
+                  disabled={gongBusy || !currentlyPlaying?.id || !judgeToken || !session}
+                >
+                  {hasGonged ? 'Undo Gong' : 'Gong'}
+                </Button>
+              </Stack>
+              {gongError && (
+                <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGongError(null)}>
+                  {gongError}
+                </Alert>
+              )}
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Active Gongs
+                </Typography>
+                {activeGongs.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No gongs yet. You could be the first smash.
+                  </Typography>
+                ) : (
+                  <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
+                    {activeGongs.map((entry) => (
+                      <Box
+                        key={entry.id}
+                        sx={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          borderRadius: 2,
+                          border: '1px solid',
+                          borderColor: entry.id === judgeIdentifier ? 'warning.main' : 'divider',
+                          px: 1.5,
+                          py: 1,
+                          minWidth: 96,
+                          bgcolor: entry.id === judgeIdentifier ? 'rgba(255,193,7,0.08)' : 'transparent'
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={GONG_IMAGE_URL}
+                          alt="Gong"
+                          sx={{
+                            width: 56,
+                            height: 56,
+                            objectFit: 'cover',
+                            borderRadius: 1,
+                            mb: 0.75
+                          }}
+                        />
+                        <Typography variant="body2" fontWeight={600} align="center">
+                          {entry.displayName || (entry.id === GONG_OWNER_ID ? 'Host' : 'Judge')}
+                        </Typography>
+                        {entry.id === GONG_OWNER_ID && (
+                          <Typography variant="caption" color="text.secondary">
+                            Host Gong
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
             </CardContent>
           </Card>
 

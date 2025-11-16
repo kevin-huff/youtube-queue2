@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Box, Typography, Chip } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import PlayerControlPanel from '../components/PlayerControlPanel';
+import { GONG_IMAGE_URL, GONG_AUDIO_URL, getActiveGongEntries } from '../constants/gongs';
 
 // High-tech reveal animation
 const techReveal = keyframes`
@@ -145,7 +146,8 @@ const PlayerOverlay = () => {
     channelConnected,
     votingState,
     startVotingSession,
-    overlayShowPlayer
+    overlayShowPlayer,
+    gongState
   } = useSocket();
 
   const [pendingSeek, setPendingSeek] = useState(null);
@@ -153,6 +155,39 @@ const PlayerOverlay = () => {
   const [shouldShowPlayer, setShouldShowPlayer] = useState(false);
 
   const currentVideoId = currentlyPlaying?.id ?? null;
+  const activeGongs = useMemo(
+    () => getActiveGongEntries(gongState, currentVideoId),
+    [gongState, currentVideoId]
+  );
+  const gongSeenRef = useRef(new Set());
+  const playGongAudio = useCallback(() => {
+    if (!GONG_AUDIO_URL) {
+      return;
+    }
+    try {
+      const audio = new Audio(GONG_AUDIO_URL);
+      audio.volume = 1;
+      audio.play().catch(() => {});
+    } catch (err) {
+      console.warn('Failed to play gong audio on overlay', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    gongSeenRef.current = new Set();
+  }, [currentVideoId]);
+
+  useEffect(() => {
+    const previous = gongSeenRef.current || new Set();
+    const nextIds = new Set();
+    activeGongs.forEach((entry) => {
+      nextIds.add(entry.id);
+      if (!previous.has(entry.id)) {
+        playGongAudio();
+      }
+    });
+    gongSeenRef.current = nextIds;
+  }, [activeGongs, playGongAudio]);
   
   // Check if voting is active for the CURRENT video that's playing
   const votingActive = useMemo(() => {
@@ -427,6 +462,61 @@ const PlayerOverlay = () => {
               zIndex: 1
             }} 
           />
+          {shouldShowPlayer && activeGongs.length > 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: { xs: '3%', sm: '4%' },
+                right: { xs: '3%', sm: '4%' },
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1.5,
+                zIndex: 4,
+                pointerEvents: 'none'
+              }}
+            >
+              {activeGongs.map((entry) => (
+                <Box
+                  key={entry.id}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    bgcolor: 'rgba(0,0,0,0.45)',
+                    borderRadius: 2,
+                    px: 1.5,
+                    py: 1,
+                    minWidth: { xs: 96, sm: 110 }
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src={GONG_IMAGE_URL}
+                    alt="Gong"
+                    sx={{
+                      width: { xs: 56, sm: 70 },
+                      height: { xs: 56, sm: 70 },
+                      objectFit: 'cover',
+                      borderRadius: 1,
+                      boxShadow: '0 0 16px rgba(0,0,0,0.5)'
+                    }}
+                  />
+                  <Typography
+                    variant="subtitle2"
+                    sx={{
+                      textTransform: 'uppercase',
+                      fontWeight: 700,
+                      letterSpacing: 1,
+                      mt: 0.75,
+                      textAlign: 'center'
+                    }}
+                  >
+                    {entry.displayName || 'Judge'}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          )}
           {showControls && !hideQueue && shouldShowPlayer && (
             <Metadata
               title={currentlyPlaying?.title}

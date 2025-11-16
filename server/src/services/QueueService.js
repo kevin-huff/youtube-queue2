@@ -98,6 +98,10 @@ class QueueService {
     this.lastTopEight = [];
     this.votingState = null;
     this.votingHistory = [];
+    this.gongQueueItemId = null;
+    this.gongEntries = new Map();
+    this.gongLastUpdate = null;
+    this.gongPausedReason = null;
   }
 
   async initialize() {
@@ -112,6 +116,166 @@ class QueueService {
       return null;
     }
     return JSON.parse(JSON.stringify(this.votingState));
+  }
+
+  getGongState() {
+    return {
+      queueItemId: this.gongQueueItemId,
+      entries: (this.gongEntries && typeof this.gongEntries.values === 'function')
+        ? Array.from(this.gongEntries.values())
+        : [],
+      lastUpdated: this.gongLastUpdate,
+      pausedReason: this.gongPausedReason || null
+    };
+  }
+
+  _emitGongUpdate(reason = 'update') {
+    if (!this.io) {
+      return;
+    }
+    const payload = {
+      ...this.getGongState(),
+      reason
+    };
+    this.io.emit('gong:update', payload);
+  }
+
+  _resetGongs(queueItemId = null) {
+    if (!this.gongEntries || typeof this.gongEntries.clear !== 'function') {
+      this.gongEntries = new Map();
+    }
+    this.gongEntries.clear();
+    this.gongQueueItemId = queueItemId || null;
+    this.gongLastUpdate = queueItemId ? new Date().toISOString() : null;
+    this.gongPausedReason = null;
+    this._emitGongUpdate('reset');
+  }
+
+  _getConnectedJudgeIds() {
+    if (!this.votingState || !Array.isArray(this.votingState.judges)) {
+      return [];
+    }
+    return this.votingState.judges
+      .filter((judge) => judge && judge.id && judge.connected !== false)
+      .map((judge) => judge.id);
+  }
+
+  _evaluateGongAutoPause() {
+    const activeId = this.currentlyPlaying?.id || null;
+    if (!activeId || activeId !== this.gongQueueItemId) {
+      this.gongPausedReason = null;
+      return;
+    }
+
+    const connectedJudges = this._getConnectedJudgeIds();
+    if (!Array.isArray(connectedJudges) || connectedJudges.length === 0) {
+      this.gongPausedReason = null;
+      return;
+    }
+
+    const entries = this.gongEntries || new Map();
+    const allJudgesGonged = connectedJudges.every((judgeId) => entries.has(String(judgeId)));
+    const ownerGonged = entries.has('owner');
+
+    if (allJudgesGonged && ownerGonged) {
+      if (this.gongPausedReason !== 'all_gongs') {
+        this.gongPausedReason = 'all_gongs';
+        try {
+          this.io.emit('player:pause', { reason: 'gong' });
+        } catch (err) {
+          logger.warn('Failed to emit pause for gong auto-stop', { channelId: this.channelId, error: err });
+        }
+      }
+    } else if (this.gongPausedReason) {
+      this.gongPausedReason = null;
+    }
+  }
+
+  _assertActiveGongItem(queueItemId) {
+    const activeId = this.currentlyPlaying?.id;
+    if (!activeId) {
+      throw new Error('No video currently playing');
+    }
+    if (Number(queueItemId) !== Number(activeId)) {
+      throw new Error('Gongs only apply to the currently playing video');
+    }
+    if (!this.gongQueueItemId) {
+      this.gongQueueItemId = activeId;
+    }
+  }
+
+  setJudgeGong(queueItemId, judgeId, judgeName, active = true) {
+    this._assertActiveGongItem(queueItemId);
+    if (!judgeId) {
+      throw new Error('Judge ID is required to gong');
+    }
+
+    const normalizedId = String(judgeId);
+    if (!this.gongEntries || typeof this.gongEntries.set !== 'function') {
+      this.gongEntries = new Map();
+    }
+
+    if (active) {
+      const fallbackName = this.votingState?.judges?.find((j) => j.id === normalizedId)?.name || judgeName || 'Judge';
+      const entry = {
+        id: normalizedId,
+        displayName: fallbackName,
+        type: 'judge',
+        createdAt: new Date().toISOString()
+      };
+      this.gongEntries.set(normalizedId, entry);
+    } else {
+      this.gongEntries.delete(normalizedId);
+    }
+
+    this.gongLastUpdate = new Date().toISOString();
+    this._evaluateGongAutoPause();
+    this._emitGongUpdate('judge');
+    return this.getGongState();
+  }
+
+  setOwnerGong(queueItemId, ownerAccountId, ownerName, active = true) {
+    this._assertActiveGongItem(queueItemId);
+    if (!this.gongEntries || typeof this.gongEntries.set !== 'function') {
+      this.gongEntries = new Map();
+    }
+
+    if (active) {
+      const entry = {
+        id: 'owner',
+        displayName: ownerName || 'Owner',
+        type: 'owner',
+        ownerAccountId: ownerAccountId || null,
+        createdAt: new Date().toISOString()
+      };
+      this.gongEntries.set('owner', entry);
+    } else {
+      this.gongEntries.delete('owner');
+    }
+
+    this.gongLastUpdate = new Date().toISOString();
+    this._evaluateGongAutoPause();
+    this._emitGongUpdate('owner');
+    return this.getGongState();
+  }
+
+  clearGong(queueItemId, participantId) {
+    this._assertActiveGongItem(queueItemId);
+    if (!participantId) {
+      throw new Error('Participant ID is required');
+    }
+
+    const normalizedId = String(participantId);
+
+    if (!this.gongEntries || !this.gongEntries.has(normalizedId)) {
+      return this.getGongState();
+    }
+
+    this.gongEntries.delete(normalizedId);
+    this.gongLastUpdate = new Date().toISOString();
+    this._evaluateGongAutoPause();
+    this._emitGongUpdate('cleared');
+    return this.getGongState();
   }
 
   isVotingActive() {
@@ -1638,6 +1802,7 @@ class QueueService {
           logger.error('Failed to finalize current video before advancing:', finalizeError);
         } finally {
           this.currentlyPlaying = null;
+          this._resetGongs(null);
         }
       }
 
@@ -1646,6 +1811,7 @@ class QueueService {
       if (!nextVideo) {
         this.currentlyPlaying = null;
         this.io.emit('queue:now_playing', null);
+        this._resetGongs(null);
         if (removalOccurred) {
           await this.reorderQueue();
         }
@@ -1668,6 +1834,7 @@ class QueueService {
       });
 
       this.currentlyPlaying = nextVideo;
+      this._resetGongs(nextVideo.id);
       this.io.emit('queue:now_playing', nextVideo);
 
       logger.info(`Now playing: ${nextVideo.title}`);
@@ -1783,6 +1950,7 @@ class QueueService {
       } else {
         this.currentlyPlaying = null;
         this.io.emit('queue:now_playing', null);
+        this._resetGongs(null);
       }
 
       await this.reorderQueue();
@@ -1812,6 +1980,7 @@ class QueueService {
       });
 
       this.currentlyPlaying = null;
+      this._resetGongs(null);
 
       // Clear VIP queue since all active items were removed
       try {

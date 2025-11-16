@@ -2677,6 +2677,28 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/unlock',
   }
 );
 
+router.post('/channels/:channelId/cups/:cupId/items/:itemId/gong',
+  authenticateJudgeToken,
+  [
+    param('itemId').isInt().withMessage('Valid item ID is required'),
+    body('active').optional().isBoolean().withMessage('Active must be a boolean')
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const queueService = getQueueServiceOrThrow(channelManager, req.judgeAuth.channelId);
+      const itemId = parseInt(req.params.itemId, 10);
+      const active = req.body?.active !== false;
+      const gongState = queueService.setJudgeGong(itemId, req.judgeAuth.judgeId, req.judgeAuth.judgeName, active);
+      res.json({ gongState });
+    } catch (error) {
+      logger.error('Error updating judge gong:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to update gong' });
+    }
+  }
+);
+
 router.get('/channels/:channelId/cups/:cupId/items/:itemId/score',
   authenticateJudgeToken,
   [param('itemId').isInt().withMessage('Valid item ID is required')],
@@ -2729,6 +2751,55 @@ router.get('/channels/:channelId/cups/:cupId/items/:itemId/scores',
     } catch (error) {
       logger.error('Error getting scores for item:', error);
       res.status(error.status || 500).json({ error: error.message || 'Failed to get scores' });
+    }
+  }
+);
+
+router.post('/channels/:channelId/queue/gong',
+  requireAuth,
+  requireChannelRole(['OWNER']),
+  [
+    body('itemId').isInt().withMessage('Active queue item ID is required'),
+    body('active').optional().isBoolean().withMessage('Active must be a boolean')
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+      const itemId = parseInt(req.body.itemId, 10);
+      const active = req.body?.active !== false;
+      const displayName = req.user?.displayName || req.user?.username || 'Owner';
+      const gongState = queueService.setOwnerGong(itemId, req.user.id, displayName, active);
+      res.json({ gongState });
+    } catch (error) {
+      logger.error('Error updating owner gong:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to update gong' });
+    }
+  }
+);
+
+router.delete('/channels/:channelId/cups/:cupId/items/:itemId/gongs/:participantId',
+  requireAuth,
+  requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER', 'HOST']),
+  [
+    param('itemId').isInt().withMessage('Valid item ID is required'),
+    param('participantId').isString().notEmpty().withMessage('Participant ID is required')
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const channelManager = getChannelManager(req);
+      const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+      const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+      const itemId = parseInt(req.params.itemId, 10);
+      const participantId = req.params.participantId;
+      const gongState = queueService.clearGong(itemId, participantId);
+      res.json({ gongState });
+    } catch (error) {
+      logger.error('Error clearing gong:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Failed to clear gong' });
     }
   }
 );

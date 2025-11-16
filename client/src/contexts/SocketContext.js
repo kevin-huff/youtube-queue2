@@ -71,6 +71,7 @@ export const SocketProvider = ({ children }) => {
   const [lastShuffle, setLastShuffle] = useState(null);
   const [votingState, setVotingState] = useState(null);
   const [overlayShowPlayer, setOverlayShowPlayer] = useState(null); // null=auto, true=show, false=hide
+  const [gongState, setGongState] = useState(null);
   // Track if a route/page explicitly requested a channel connection.
   // When true, suppress provider auto-connect to the user's default channel.
   const explicitConnectRef = useRef(false);
@@ -135,6 +136,7 @@ export const SocketProvider = ({ children }) => {
     setLastShuffle(null);
     setVotingState(null);
     setOverlayShowPlayer(null);
+    setGongState(null);
     setActiveChannelId(null);
     // Reset explicit suppression once channel is torn down
     explicitConnectRef.current = false;
@@ -155,6 +157,11 @@ export const SocketProvider = ({ children }) => {
     setQueueEnabled(Boolean(payload.enabled));
     setCurrentlyPlaying(payload.currentlyPlaying || null);
     setVotingState(payload.votingState || null);
+    if (payload.gongState) {
+      setGongState(payload.gongState);
+    } else {
+      setGongState(null);
+    }
     const initialOverlay = payload.overlayState && typeof payload.overlayState.showPlayer === 'boolean'
       ? payload.overlayState.showPlayer
       : null;
@@ -500,6 +507,9 @@ export const SocketProvider = ({ children }) => {
       if (typeof payload.showPlayer === 'boolean') {
         setOverlayShowPlayer(payload.showPlayer);
       }
+    });
+    socket.on('gong:update', (payload = {}) => {
+      setGongState(payload);
     });
 
     socket.on('error', (error) => {
@@ -909,6 +919,7 @@ export const SocketProvider = ({ children }) => {
     lastShuffle,
     votingState,
     overlayShowPlayer,
+    gongState,
     
 
     // Controls
@@ -964,6 +975,7 @@ export const SocketProvider = ({ children }) => {
     lastShuffle,
     votingState,
     overlayShowPlayer,
+    gongState,
     connectToChannel,
     cleanupChannelSocket,
     playNext,
