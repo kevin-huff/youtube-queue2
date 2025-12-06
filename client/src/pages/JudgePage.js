@@ -12,11 +12,6 @@ import {
   CircularProgress,
   IconButton,
   Slider,
-  Grid,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
 } from '@mui/material';
 import {
   Lock as LockIcon,
@@ -66,7 +61,6 @@ const JudgePage = () => {
   const sbAudiosRef = useRef(new Set());
   const [sbAudioError, setSbAudioError] = useState(false);
   const [shuffleAudioError, setShuffleAudioError] = useState(false);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(true);
   const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
@@ -87,10 +81,6 @@ const JudgePage = () => {
   const gongSeenRef = useRef(new Set());
   const shuffleSignatureRef = useRef(null);
   const shuffleAudioRef = useRef(null);
-
-  const handleOnboardingAcknowledge = useCallback(() => {
-    setIsOnboardingOpen(false);
-  }, []);
 
   const handleLocalPlayBroadcast = useCallback((time) => {
     setIsPlaying(true);
@@ -562,7 +552,7 @@ const JudgePage = () => {
           <Typography variant="h6">Soundboard</Typography>
           <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>
             Refresh
-          />
+          </Button>
         </Box>
         {sbAudioError && (
           <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
@@ -627,221 +617,6 @@ const JudgePage = () => {
   const sliderValue = resolvedDuration > 0
     ? Math.min(Math.max(displayTime, 0), resolvedDuration)
     : 0;
-  const formattedScore = useMemo(() => Number(score ?? 0).toFixed(2), [score]);
-
-  const renderPrimaryPanel = () => {
-    if (!currentlyPlaying) {
-      return (
-        <Card sx={{ height: '100%' }}>
-          <CardContent
-            sx={{
-              minHeight: 360,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              textAlign: 'center',
-              gap: 2
-            }}
-          >
-            <Typography variant="h5" fontWeight={600}>
-              Waiting for the next clip
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Keep this tab open—your player will sync automatically when the host starts the video.
-            </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
-              <Chip
-                icon={<SyncIcon fontSize="small" />}
-                label={channelConnected ? 'Channel Connected' : 'Connecting to channel'}
-                color={channelConnected ? 'success' : 'warning'}
-                variant={channelConnected ? 'filled' : 'outlined'}
-              />
-              <Chip
-                icon={<PlayArrowIcon fontSize="small" />}
-                label="Sound on & be ready"
-                variant="outlined"
-              />
-            </Stack>
-          </CardContent>
-        </Card>
-      );
-    }
-
-    return (
-      <Card sx={{ height: '100%' }}>
-        <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            justifyContent="space-between"
-            spacing={1.5}
-            alignItems={{ xs: 'flex-start', sm: 'center' }}
-          >
-            <Box>
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                Now Judging
-              </Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {currentlyPlaying?.title || 'Untitled Submission'}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Submitter identity hidden until reveal
-              </Typography>
-            </Box>
-            {currentlyPlaying?.hasDuplicateHistory && (
-              <Chip label="Duplicate Submission" color="warning" size="small" />
-            )}
-          </Stack>
-
-          <Box
-            sx={{
-              position: 'relative',
-              paddingTop: '56.25%',
-              backgroundColor: 'black',
-              borderRadius: 2,
-              overflow: 'hidden',
-              border: hasVideo ? 'none' : '1px solid rgba(255, 255, 255, 0.1)'
-            }}
-          >
-            <Box
-              ref={containerRef}
-              sx={{
-                position: 'absolute',
-                inset: 0
-              }}
-            />
-          </Box>
-
-          <Stack spacing={1.5}>
-            <Stack
-              direction={{ xs: 'column', lg: 'row' }}
-              spacing={2}
-              alignItems="center"
-              flexWrap="wrap"
-            >
-              <IconButton onClick={handlePlayPause} disabled={!hasVideo} color="primary">
-                {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-              </IconButton>
-
-              <IconButton
-                onClick={handleResyncVideo}
-                disabled={!hasVideo}
-                color="secondary"
-                title="Resync video if playback is broken"
-              >
-                <SyncIcon />
-              </IconButton>
-
-              <Typography variant="caption" sx={{ minWidth: 44 }}>
-                {formatTime(displayTime)}
-              </Typography>
-
-              <Slider
-                value={sliderValue}
-                onChange={handleSeekChange}
-                onChangeCommitted={handleSeekCommit}
-                min={0}
-                max={resolvedDuration}
-                disabled={!hasVideo || resolvedDuration === 0}
-                sx={{ flexGrow: 1, minWidth: 160 }}
-              />
-
-              <Typography variant="caption" sx={{ minWidth: 44 }}>
-                {formatTime(resolvedDuration)}
-              </Typography>
-            </Stack>
-
-            <Stack direction="row" spacing={1} alignItems="center">
-              <IconButton onClick={toggleMute} disabled={!hasVideo} size="small">
-                {muted ? <VolumeOffIcon /> : <VolumeUpIcon />}
-              </IconButton>
-              <Slider
-                value={volume}
-                onChange={handleVolumeChange}
-                min={0}
-                max={100}
-                disabled={!hasVideo}
-                sx={{ flexGrow: 1, maxWidth: 200 }}
-              />
-            </Stack>
-          </Stack>
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const renderScoreCard = () => (
-    <Card sx={{ height: '100%' }}>
-      <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <Box>
-          <Typography variant="h6" gutterBottom>
-            Score & Actions
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {currentlyPlaying
-              ? 'Adjust your score, then lock it in when you are confident.'
-              : 'The slider will unlock automatically when the next clip starts.'}
-          </Typography>
-        </Box>
-
-        <Box>
-          <Typography variant="overline" color="text.secondary">
-            Current Score
-          </Typography>
-          <Typography variant="h3" sx={{ fontWeight: 700 }}>
-            {formattedScore}
-          </Typography>
-        </Box>
-
-        <PrecisionSlider
-          value={score}
-          onChange={setScore}
-          disabled={!currentlyPlaying || isLocked}
-          min={0}
-          max={5}
-          step={0.00001}
-        />
-
-        {isLocked && lockType === 'MANUAL' && (
-          <Alert severity="info">
-            You locked this score. Unlock below to make additional tweaks.
-          </Alert>
-        )}
-        {lockType === 'FORCED' && (
-          <Alert severity="warning">
-            The host forced a lock. Scores cannot be changed right now.
-          </Alert>
-        )}
-
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-          <Button
-            variant="contained"
-            size="large"
-            startIcon={<LockIcon />}
-            onClick={handleLockIn}
-            disabled={!currentlyPlaying || isLocked || loading}
-            fullWidth
-          >
-            {isLocked ? 'Locked In' : 'Lock In'}
-          </Button>
-
-          {isLocked && lockType === 'MANUAL' && (
-            <Button
-              variant="outlined"
-              size="large"
-              color="warning"
-              startIcon={<UnlockIcon />}
-              onClick={handleUnlockVote}
-              disabled={loading}
-              fullWidth
-            >
-              Unlock
-            </Button>
-          )}
-        </Stack>
-      </CardContent>
-    </Card>
-  );
 
   // Helper to get headers with judge token
   const getHeaders = useCallback(() => {
