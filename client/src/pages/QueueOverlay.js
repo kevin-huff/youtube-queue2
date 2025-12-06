@@ -12,13 +12,13 @@ import { keyframes } from '@emotion/react';
 import { useSocket } from '../contexts/SocketContext';
 import VotingOverlay from '../components/VotingOverlay';
 
-const SHUFFLE_DURATION_MS = 30000;
+const DEFAULT_SHUFFLE_DURATION_MS = 30000;
 const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
 const RING_TILT_DEG = 16;
-// Phase timing (must sum to <= SHUFFLE_DURATION_MS)
-const SCATTER_END_MS = 9000;   // initial scatter
-const RIFFLE_END_MS = 14000;   // card-like shuffle interleave
-const SCATTER_PHASE_MS = 20000; // end of star flyby, then settle
+// Phase timing (based on DEFAULT_SHUFFLE_DURATION_MS)
+const SCATTER_END_RATIO = 9000 / DEFAULT_SHUFFLE_DURATION_MS;
+const RIFFLE_END_RATIO = 14000 / DEFAULT_SHUFFLE_DURATION_MS;
+const STAR_PHASE_END_RATIO = 20000 / DEFAULT_SHUFFLE_DURATION_MS;
 
 const STAR_POSITIONS = [
   { x: 0, y: -260, z: 220 },
@@ -242,12 +242,16 @@ const QueueOverlay = () => {
     removeChannelListener
   } = useSocket();
   const [shuffleVisual, setShuffleVisual] = useState(null);
+  const [shuffleDurationMs, setShuffleDurationMs] = useState(DEFAULT_SHUFFLE_DURATION_MS);
   const [progress, setProgress] = useState(0);
   const [audioError, setAudioError] = useState(false);
   const [sbAudioError, setSbAudioError] = useState(false);
   // Removed predicted placement feature; no active cup tracking needed
   // removed social reveal state (unused)
   const shuffleSignatureRef = useRef(null);
+  const preloadedShuffleDurationRef = useRef(DEFAULT_SHUFFLE_DURATION_MS);
+  const shuffleDurationRef = useRef(DEFAULT_SHUFFLE_DURATION_MS);
+  const isShufflingRef = useRef(false);
   const audioRef = useRef(null);
   // Track multiple concurrent soundboard audio instances
   const sbAudiosRef = useRef(new Set());
@@ -258,20 +262,27 @@ const QueueOverlay = () => {
   const previousVotingItemRef = useRef(null);
   // removed: requestedCupIdsRef (no standings prefetch)
   const socialRevealItemRef = useRef(null);
-  const elapsedMs = useMemo(() => (progress / 100) * SHUFFLE_DURATION_MS, [progress]);
+  const elapsedMs = useMemo(() => (progress / 100) * shuffleDurationMs, [progress, shuffleDurationMs]);
+  const scatterEndMs = shuffleDurationMs * SCATTER_END_RATIO;
+  const riffleEndMs = shuffleDurationMs * RIFFLE_END_RATIO;
+  const starPhaseEndMs = shuffleDurationMs * STAR_PHASE_END_RATIO;
   const shuffleStage = useMemo(() => {
     if (!shuffleVisual) {
       return 'idle';
     }
-    if (elapsedMs < SCATTER_END_MS) return 'scatter';
-    if (elapsedMs < RIFFLE_END_MS) return 'riffle';
-    if (elapsedMs < SCATTER_PHASE_MS) return 'star';
+    if (elapsedMs < scatterEndMs) return 'scatter';
+    if (elapsedMs < riffleEndMs) return 'riffle';
+    if (elapsedMs < starPhaseEndMs) return 'star';
     return 'settle';
-  }, [shuffleVisual, elapsedMs]);
+  }, [shuffleVisual, elapsedMs, scatterEndMs, riffleEndMs, starPhaseEndMs]);
   const isScatterStage = shuffleStage === 'scatter';
   const isRiffleStage = shuffleStage === 'riffle';
   const isStarStage = shuffleStage === 'star';
   const isSettleStage = shuffleStage === 'settle';
+
+  useEffect(() => {
+    isShufflingRef.current = Boolean(shuffleVisual);
+  }, [shuffleVisual]);
 
   // removed: derivedCupId/activeCupId logic used only for predictions
 
@@ -286,6 +297,61 @@ const QueueOverlay = () => {
     }
     return DEFAULT_SHUFFLE_AUDIO_SRC;
   }, [settings?.shuffle_audio_url, SERVER_BASE]);
+
+  useEffect(() => {
+    if (typeof Audio === 'undefined') {
+      preloadedShuffleDurationRef.current = DEFAULT_SHUFFLE_DURATION_MS;
+      if (!isShufflingRef.current) {
+        shuffleDurationRef.current = DEFAULT_SHUFFLE_DURATION_MS;
+        setShuffleDurationMs(DEFAULT_SHUFFLE_DURATION_MS);
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const applyDuration = (rawMs) => {
+      if (cancelled) {
+        return;
+      }
+      const safeDuration =
+        typeof rawMs === 'number' && Number.isFinite(rawMs) && rawMs > 0
+          ? Math.round(rawMs)
+          : DEFAULT_SHUFFLE_DURATION_MS;
+      preloadedShuffleDurationRef.current = safeDuration;
+      if (!isShufflingRef.current && shuffleDurationRef.current !== safeDuration) {
+        shuffleDurationRef.current = safeDuration;
+        setShuffleDurationMs(safeDuration);
+      }
+    };
+
+    const probeAudio = new Audio();
+    try { probeAudio.crossOrigin = 'anonymous'; } catch (_) {}
+    probeAudio.preload = 'metadata';
+
+    const handleLoaded = () => {
+      const durationMs = (probeAudio.duration || 0) * 1000;
+      applyDuration(durationMs);
+    };
+
+    const handleError = () => {
+      applyDuration(DEFAULT_SHUFFLE_DURATION_MS);
+    };
+
+    probeAudio.addEventListener('loadedmetadata', handleLoaded);
+    probeAudio.addEventListener('error', handleError);
+    probeAudio.src = shuffleAudioSrc;
+    try {
+      probeAudio.load();
+    } catch (_) {}
+
+    return () => {
+      cancelled = true;
+      probeAudio.removeEventListener('loadedmetadata', handleLoaded);
+      probeAudio.removeEventListener('error', handleError);
+      try { probeAudio.pause(); } catch (_) {}
+      probeAudio.src = '';
+    };
+  }, [shuffleAudioSrc]);
 
   // removed: standings prefetch effect (no predictions)
 
@@ -395,6 +461,9 @@ const QueueOverlay = () => {
       return;
     }
     shuffleSignatureRef.current = signature;
+    const durationMs = preloadedShuffleDurationRef.current || DEFAULT_SHUFFLE_DURATION_MS;
+    shuffleDurationRef.current = durationMs;
+    setShuffleDurationMs(durationMs);
     setShuffleVisual({
       payload: lastShuffle,
       startedAt: Date.now()
@@ -419,6 +488,10 @@ const QueueOverlay = () => {
     }
 
     setAudioError(false);
+    const activeDurationMs =
+      (shuffleDurationRef.current && shuffleDurationRef.current > 0
+        ? shuffleDurationRef.current
+        : DEFAULT_SHUFFLE_DURATION_MS) || DEFAULT_SHUFFLE_DURATION_MS;
 
     let shuffleUrl = shuffleAudioSrc;
     try {
@@ -458,9 +531,13 @@ const QueueOverlay = () => {
         return;
       }
       const elapsed = Date.now() - start;
-      const pct = Math.min(100, (elapsed / SHUFFLE_DURATION_MS) * 100);
+      const durationMs =
+        (shuffleDurationRef.current && shuffleDurationRef.current > 0
+          ? shuffleDurationRef.current
+          : activeDurationMs) || activeDurationMs;
+      const pct = durationMs > 0 ? Math.min(100, (elapsed / durationMs) * 100) : 100;
       setProgress(pct);
-      if (elapsed < SHUFFLE_DURATION_MS) {
+      if (elapsed < durationMs) {
         rafRef.current = requestAnimationFrame(tick);
       }
     };
@@ -468,7 +545,7 @@ const QueueOverlay = () => {
     rafRef.current = requestAnimationFrame(tick);
     timerRef.current = setTimeout(() => {
       setShuffleVisual(null);
-    }, SHUFFLE_DURATION_MS);
+    }, activeDurationMs);
 
     return () => {
       cancelled = true;
@@ -691,7 +768,7 @@ const ringLayout = useMemo(() => {
                 radial-gradient(circle at 30% 40%, ${alpha('#ff89df', 0.35)}, transparent 55%)
               `,
               filter: 'blur(95px)',
-              animation: `${auroraKeyframes} ${SHUFFLE_DURATION_MS}ms ease-in-out forwards`
+              animation: `${auroraKeyframes} ${shuffleDurationMs}ms ease-in-out forwards`
             }}
           />
           <Box
@@ -744,7 +821,7 @@ const ringLayout = useMemo(() => {
                 conic-gradient(from 210deg, ${alpha('#061434', 0.85)}, ${alpha('#10264a', 0.45)}, ${alpha('#060b1a', 0.92)})
               `,
               mixBlendMode: 'screen',
-              animation: `${nebulaDriftKeyframes} ${SHUFFLE_DURATION_MS}ms ease-in-out forwards`
+              animation: `${nebulaDriftKeyframes} ${shuffleDurationMs}ms ease-in-out forwards`
             }}
           />
           {Array.from({ length: 6 }).map((_, index) => (
@@ -815,7 +892,7 @@ const ringLayout = useMemo(() => {
                   position: 'absolute',
                   inset: 0,
                   transformStyle: 'preserve-3d',
-                  animation: `${ringSpinKeyframes} ${SHUFFLE_DURATION_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
+                  animation: `${ringSpinKeyframes} ${shuffleDurationMs}ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
                   animationPlayState: isSettleStage ? 'running' : 'paused'
                 }}
               >
@@ -846,9 +923,9 @@ const ringLayout = useMemo(() => {
                     } else if (isStarStage) {
                       transformValue = starTransform;
                     } else if (isRiffleStage) {
-                      const riffleT = (elapsedMs - SCATTER_END_MS) / Math.max(1, (RIFFLE_END_MS - SCATTER_END_MS));
+                      const riffleT = (elapsedMs - scatterEndMs) / Math.max(1, riffleEndMs - scatterEndMs);
                       transformValue = getRiffleTransform(seed, globalIndex, riffleT);
-                    } else if (elapsedMs > SCATTER_END_MS * 0.7) {
+                    } else if (elapsedMs > scatterEndMs * 0.7) {
                       transformValue = midTransform;
                     }
 
@@ -885,7 +962,7 @@ const ringLayout = useMemo(() => {
                           : `${flybyGlowKeyframes} ${1500 + (seed % 600)}ms ease-in-out ${(seed % 260)}ms infinite`;
 
                     const delayJitter = seed % 60; // eslint-disable-line no-bitwise
-                    const animationString = `${cardFlipKeyframes} ${SHUFFLE_DURATION_MS}ms ease-in-out ${globalIndex * 80 + delayJitter}ms forwards, ${glowAnimation}`;
+                    const animationString = `${cardFlipKeyframes} ${shuffleDurationMs}ms ease-in-out ${globalIndex * 80 + delayJitter}ms forwards, ${glowAnimation}`;
 
                     const isVip = vipIndexMap.has(Number(item.id));
 

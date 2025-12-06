@@ -684,9 +684,12 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     votingState && currentlyPlaying?.id && votingState.queueItemId === currentlyPlaying.id
   );
 
+  const hasRevealedAverage = typeof votingState?.revealedAverage === 'number';
+  const hasRevealedSocial = typeof votingState?.revealedSocial === 'number';
+
   const canRevealAverage = Boolean(
     votingState
-    && !votingState.revealedAverage
+    && typeof votingState.revealedAverage !== 'number'
     && typeof votingState.computedAverage === 'number'
     && allScoredRevealed
     && votingJudges.length > 0
@@ -694,14 +697,14 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
 
   const canRevealSocial = Boolean(
     votingState
-    && votingState.revealedAverage
-    && !votingState.revealedSocial
+    && hasRevealedAverage
+    && !hasRevealedSocial
   );
 
   const canFinalizeScore = Boolean(
     votingState
-    && votingState.revealedAverage
-    && votingState.revealedSocial
+    && hasRevealedAverage
+    && hasRevealedSocial
   );
 
   const canForceLockVotes = Boolean(

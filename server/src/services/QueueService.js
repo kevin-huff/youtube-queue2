@@ -864,7 +864,7 @@ class QueueService {
       throw new Error('No voting session in progress');
     }
 
-    if (!this.votingState.revealedAverage) {
+    if (typeof this.votingState.revealedAverage !== 'number') {
       throw new Error('Average must be revealed before calculating social score');
     }
 
@@ -1083,12 +1083,12 @@ class QueueService {
 
     const timestamp = new Date().toISOString();
 
-    if (!this.votingState.revealedAverage && typeof this.votingState.computedAverage === 'number') {
+    if (typeof this.votingState.revealedAverage !== 'number' && typeof this.votingState.computedAverage === 'number') {
       this.votingState.revealedAverage = this.votingState.computedAverage;
       this.votingState.revealedAverageAt = timestamp;
     }
 
-    if (!this.votingState.revealedSocial && typeof this.votingState.computedSocial === 'number') {
+    if (typeof this.votingState.revealedSocial !== 'number' && typeof this.votingState.computedSocial === 'number') {
       this.votingState.revealedSocial = this.votingState.computedSocial;
       this.votingState.revealedSocialAt = timestamp;
     }
@@ -1358,6 +1358,7 @@ class QueueService {
 
   async addToQueue(videoData, submitter, options = {}) {
     try {
+      const isVipSubmission = Boolean(options.isVip);
       // Check if queue is enabled
       if (!(await this.isQueueEnabled())) {
         throw new Error('Queue is currently disabled');
@@ -1373,16 +1374,37 @@ class QueueService {
       }
 
       const maxPerUserSetting = parseInt(await this.getSetting('max_per_user', '3'), 10);
-      if (!Number.isNaN(maxPerUserSetting) && maxPerUserSetting > 0) {
-        const activeForUser = await this.db.queueItem.count({
+      if (!Number.isNaN(maxPerUserSetting) && maxPerUserSetting > 0 && !isVipSubmission) {
+        const activeItems = await this.db.queueItem.findMany({
           where: {
             channelId: this.channelId,
             submitterUsername: submitter,
             status: { in: ACTIVE_QUEUE_STATUSES }
-          }
+          },
+          select: { id: true }
         });
 
-        if (activeForUser >= maxPerUserSetting) {
+        let activeNonVipCount = activeItems.length;
+        if (activeItems.length > 0) {
+          try {
+            const vipIds = await this._getVipList();
+            if (Array.isArray(vipIds) && vipIds.length) {
+              const vipSet = new Set(vipIds);
+              activeNonVipCount = activeItems.reduce(
+                (count, item) => count + (vipSet.has(item.id) ? 0 : 1),
+                0
+              );
+            }
+          } catch (vipListError) {
+            logger.warn('Failed to read VIP queue when enforcing per-user limit', {
+              channelId: this.channelId,
+              submitter,
+              error: vipListError
+            });
+          }
+        }
+
+        if (activeNonVipCount >= maxPerUserSetting) {
           throw new Error(`You already have ${maxPerUserSetting} video${maxPerUserSetting === 1 ? '' : 's'} in the queue.`);
         }
       }

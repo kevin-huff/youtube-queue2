@@ -17,6 +17,10 @@ class TwitchBot {
     this.channelBannedUsers = new Map(); // channelId -> Set of banned users
     this.pendingDuplicateConfirms = new Map(); // key: `${channelId}:${username}` -> { videoId, expiresAt }
     this._historicalIds = null; // lazy-loaded Set of historical YouTube IDs
+    this.cleanupInterval = null;
+    this.cleanupIntervalMs = 5 * 60 * 1000; // sweep stale maps every 5 minutes
+    this.rateLimitTtlMs = 15 * 60 * 1000; // keep rate-limit history for 15 minutes max
+    this.duplicateConfirmTtlMs = 2 * 60 * 1000; // matches the 2 minute confirmation window
     
     this.config = {
       options: {
@@ -55,6 +59,7 @@ class TwitchBot {
       await this.client.connect();
       this.connected = true;
 
+      this._startCleanupTask();
       logger.info(`Twitch bot connected to ${activeChannels.length} channels: ${activeChannels.join(', ')}`);
     } catch (error) {
       logger.error('Failed to initialize Twitch bot:', error);
@@ -176,7 +181,7 @@ class TwitchBot {
             maxDuration: parseInt(maxVideoDuration, 10)
           });
 
-          const result = await queueService.addToQueue(metadata, username);
+          const result = await queueService.addToQueue(metadata, username, { isVip: true });
           const added = result?.queueItem || null;
 
           if (added) {
@@ -481,7 +486,7 @@ class TwitchBot {
         const metadata = await this.videoService.getVideoMetadata(url, {
           maxDuration: parseInt(maxVideoDuration, 10)
         });
-        
+
         // Duplicate history detection (DB + historical file)
         const duplicateInfo = await queueService.getDuplicateInfo(metadata.videoId);
         const hasDbHistory = Boolean(duplicateInfo?.previousItem);
@@ -497,7 +502,7 @@ class TwitchBot {
             // Ask user to submit again to confirm
             this.pendingDuplicateConfirms.set(confirmKey, {
               videoId: metadata.videoId,
-              expiresAt: now + 2 * 60 * 1000 // 2 minutes
+              expiresAt: now + this.duplicateConfirmTtlMs
             });
             this.sendMessage(channel, `@${username} This video has already been rated before. To confirm, submit the same link again within 2 minutes. You must beat your previous run to keep your score.`);
             break; // don't add on first attempt
@@ -596,6 +601,49 @@ class TwitchBot {
     });
   }
 
+  _startCleanupTask() {
+    this._stopCleanupTask();
+    const sweep = () => {
+      const now = Date.now();
+      let removed = 0;
+
+      for (const [key, meta] of this.rateLimiter.entries()) {
+        if (!meta?.lastSubmission || now - meta.lastSubmission > this.rateLimitTtlMs) {
+          this.rateLimiter.delete(key);
+          removed++;
+        }
+      }
+
+      for (const [key, meta] of this.pendingDuplicateConfirms.entries()) {
+        if (!meta?.expiresAt || meta.expiresAt <= now) {
+          this.pendingDuplicateConfirms.delete(key);
+          removed++;
+        }
+      }
+
+      if (typeof this.videoService?.pruneExpiredCache === 'function') {
+        removed += this.videoService.pruneExpiredCache(now);
+      }
+
+      if (removed > 0 && logger.debug) {
+        logger.debug('TwitchBot: cleaned stale state', { removed });
+      }
+    };
+
+    sweep();
+    this.cleanupInterval = setInterval(sweep, this.cleanupIntervalMs);
+    if (typeof this.cleanupInterval.unref === 'function') {
+      this.cleanupInterval.unref();
+    }
+  }
+
+  _stopCleanupTask() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+  }
+
   sendMessage(channel, message) {
     if (this.client && this.connected) {
       this.client.say(channel, message);
@@ -619,6 +667,7 @@ class TwitchBot {
   }
 
   async disconnect() {
+    this._stopCleanupTask();
     if (this.client) {
       try {
         await this.client.disconnect();

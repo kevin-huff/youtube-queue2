@@ -248,6 +248,18 @@ class VideoService {
     logger.info('Video metadata cache cleared');
   }
 
+  pruneExpiredCache(now = Date.now()) {
+    let removed = 0;
+    for (const [key, value] of this.cache.entries()) {
+      const ts = value?.timestamp;
+      if (!ts || now - ts >= this.cacheExpiry) {
+        this.cache.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   // Get cache stats
   getCacheStats() {
     const now = Date.now();

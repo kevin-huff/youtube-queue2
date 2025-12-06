@@ -44,6 +44,8 @@ class Server {
     this.videoService = null;
     this.roleService = null;
     this.adEventService = null;
+    this.sessionStore = new session.MemoryStore();
+    this.sessionCleanupInterval = null;
   }
 
   async initialize() {
@@ -172,6 +174,7 @@ class Server {
 
     // Session configuration
     this.app.use(session({
+      store: this.sessionStore,
       secret: process.env.SESSION_SECRET || 'your-secret-key',
       resave: false,
       saveUninitialized: false,
@@ -181,6 +184,7 @@ class Server {
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
       }
     }));
+    this._startSessionCleanup();
 
     // Initialize Passport
     this.app.use(passport.initialize());
@@ -196,6 +200,45 @@ class Server {
         channels: this.channelManager ? this.channelManager.getActiveChannels().length : 0
       });
     });
+  }
+
+  _startSessionCleanup() {
+    if (!this.sessionStore || typeof this.sessionStore.destroy !== 'function') {
+      return;
+    }
+
+    if (this.sessionCleanupInterval) {
+      clearInterval(this.sessionCleanupInterval);
+    }
+
+    const sweep = () => {
+      const now = Date.now();
+      let removed = 0;
+
+      if (this.sessionStore.sessions && typeof this.sessionStore.destroy === 'function') {
+        for (const [sid, raw] of Object.entries(this.sessionStore.sessions)) {
+          let sess = raw;
+          if (typeof raw === 'string') {
+            try { sess = JSON.parse(raw); } catch (_) { continue; }
+          }
+          const exp = sess?.cookie?.expires ? new Date(sess.cookie.expires).getTime() : null;
+          if (exp && exp <= now) {
+            this.sessionStore.destroy(sid, () => {});
+            removed++;
+          }
+        }
+      }
+
+      if (removed > 0 && logger.debug) {
+        logger.debug('Pruned expired sessions from memory store', { removed });
+      }
+    };
+
+    sweep();
+    this.sessionCleanupInterval = setInterval(sweep, 30 * 60 * 1000);
+    if (typeof this.sessionCleanupInterval.unref === 'function') {
+      this.sessionCleanupInterval.unref();
+    }
   }
 
   setupRoutes() {
@@ -567,6 +610,9 @@ class Server {
     logger.info(`Received ${signal}, shutting down gracefully...`);
     
     try {
+      if (this.sessionCleanupInterval) {
+        clearInterval(this.sessionCleanupInterval);
+      }
       // Close Twitch bot connection
       if (this.bot) {
         await this.bot.disconnect();

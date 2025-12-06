@@ -12,6 +12,11 @@ import {
   CircularProgress,
   IconButton,
   Slider,
+  Grid,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Lock as LockIcon,
@@ -37,6 +42,8 @@ import {
   GONG_OWNER_ID
 } from '../constants/gongs';
 
+const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
+
 const JudgePage = () => {
   const { channelName, cupId } = useParams();
   const [searchParams] = useSearchParams();
@@ -51,11 +58,15 @@ const JudgePage = () => {
     playOverlay,
     pauseOverlay,
     seekOverlay,
-    gongState
+    gongState,
+    settings,
+    lastShuffle
   } = useSocket();
   // Track multiple concurrent soundboard audio instances
   const sbAudiosRef = useRef(new Set());
   const [sbAudioError, setSbAudioError] = useState(false);
+  const [shuffleAudioError, setShuffleAudioError] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(true);
   const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
@@ -74,6 +85,12 @@ const JudgePage = () => {
   const [gongBusy, setGongBusy] = useState(false);
   const [gongError, setGongError] = useState(null);
   const gongSeenRef = useRef(new Set());
+  const shuffleSignatureRef = useRef(null);
+  const shuffleAudioRef = useRef(null);
+
+  const handleOnboardingAcknowledge = useCallback(() => {
+    setIsOnboardingOpen(false);
+  }, []);
 
   // Synced YouTube player
   const {
@@ -100,6 +117,17 @@ const JudgePage = () => {
     onLocalPause: pauseOverlay,
     onLocalSeek: seekOverlay
   });
+
+  const shuffleAudioSrc = useMemo(() => {
+    const raw = settings?.shuffle_audio_url;
+    const base = (SERVER_BASE || '').replace(/\/$/, '');
+    if (typeof raw === 'string' && raw.trim().length) {
+      const val = raw.trim();
+      if (val.startsWith('/')) return `${base}${val}`;
+      return val;
+    }
+    return DEFAULT_SHUFFLE_AUDIO_SRC;
+  }, [settings?.shuffle_audio_url, SERVER_BASE]);
 
   // Connect to channel socket
   useEffect(() => {
@@ -157,6 +185,83 @@ const JudgePage = () => {
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
   }, [addChannelListener, removeChannelListener, channelConnected, SERVER_BASE]);
+
+  // Cleanup shuffle audio on unmount
+  useEffect(() => () => {
+    if (shuffleAudioRef.current) {
+      try { shuffleAudioRef.current.pause(); } catch (_) {}
+      try { shuffleAudioRef.current.currentTime = 0; } catch (_) {}
+      shuffleAudioRef.current = null;
+    }
+  }, []);
+
+  // Play shuffle theme when a shuffle event is broadcast
+  useEffect(() => {
+    if (!lastShuffle) {
+      shuffleSignatureRef.current = null;
+      return;
+    }
+
+    const signature = `${lastShuffle?.timestamp || ''}:${lastShuffle?.seed || ''}:${lastShuffle?.initiatedBy || ''}:${shuffleAudioSrc}`;
+    if (shuffleSignatureRef.current === signature) {
+      return;
+    }
+
+    shuffleSignatureRef.current = signature;
+    setShuffleAudioError(false);
+
+    if (shuffleAudioRef.current) {
+      try { shuffleAudioRef.current.pause(); } catch (_) {}
+      try { shuffleAudioRef.current.currentTime = 0; } catch (_) {}
+      shuffleAudioRef.current = null;
+    }
+
+    let shuffleUrl = shuffleAudioSrc;
+    try {
+      const u = new URL(shuffleUrl, window.location.origin);
+      if (window.location.protocol === 'https:' && u.protocol === 'http:') {
+        shuffleUrl = `https://${u.host}${u.pathname}${u.search}${u.hash}`;
+      } else {
+        shuffleUrl = u.toString();
+      }
+    } catch (_) {
+      // leave as-is
+    }
+
+    const audio = new Audio(shuffleUrl);
+    try { audio.crossOrigin = 'anonymous'; } catch (_) {}
+    audio.volume = 1;
+    shuffleAudioRef.current = audio;
+
+    const handleFinish = () => {
+      if (shuffleAudioRef.current === audio) {
+        try { audio.pause(); } catch (_) {}
+        try { audio.currentTime = 0; } catch (_) {}
+        shuffleAudioRef.current = null;
+      }
+    };
+
+    audio.addEventListener('ended', handleFinish);
+    audio.addEventListener('error', handleFinish);
+
+    const playAudio = async () => {
+      try {
+        await audio.play();
+      } catch (err) {
+        console.warn('JudgePage: shuffle audio playback failed:', err);
+        setShuffleAudioError(true);
+        handleFinish();
+      }
+    };
+
+    void playAudio();
+
+    return () => {
+      audio.removeEventListener('ended', handleFinish);
+      audio.removeEventListener('error', handleFinish);
+      handleFinish();
+    };
+  }, [lastShuffle, shuffleAudioSrc]);
 
   // Cleanup all active soundboard audio on unmount
   useEffect(() => () => {
@@ -316,13 +421,14 @@ const JudgePage = () => {
   }, [currentlyPlaying?.id]);
 
   const GongControlCard = () => (
-    <Card>
+    <Card sx={{ height: '100%' }}>
       <CardContent>
         <Stack
           direction={{ xs: 'column', md: 'row' }}
           alignItems={{ xs: 'stretch', md: 'center' }}
           justifyContent="space-between"
           spacing={2}
+          sx={{ flexWrap: 'wrap' }}
         >
           <Box>
             <Typography variant="h6" gutterBottom>
@@ -403,6 +509,51 @@ const JudgePage = () => {
     </Card>
   );
 
+  const SoundboardCard = () => (
+    <Card sx={{ height: '100%' }}>
+      <CardContent>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1,
+            mb: 1.5,
+            flexWrap: 'wrap'
+          }}
+        >
+          <Typography variant="h6">Soundboard</Typography>
+          <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>
+            Refresh
+          />
+        </Box>
+        {sbAudioError && (
+          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
+            Sound playback blocked by the browser. Click anywhere on the page once, then try again.
+          </Alert>
+        )}
+        {sbError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
+            {sbError}
+          </Alert>
+        )}
+        {sbItems.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+            {sbItems.map((it) => (
+              <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
+                {it.name}
+              </Button>
+            ))}
+          </Stack>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   const handleToggleGong = useCallback(async () => {
     if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken || !judgeIdentifier) {
       return;
@@ -439,6 +590,221 @@ const JudgePage = () => {
   const sliderValue = resolvedDuration > 0
     ? Math.min(Math.max(displayTime, 0), resolvedDuration)
     : 0;
+  const formattedScore = useMemo(() => Number(score ?? 0).toFixed(2), [score]);
+
+  const renderPrimaryPanel = () => {
+    if (!currentlyPlaying) {
+      return (
+        <Card sx={{ height: '100%' }}>
+          <CardContent
+            sx={{
+              minHeight: 360,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'center',
+              textAlign: 'center',
+              gap: 2
+            }}
+          >
+            <Typography variant="h5" fontWeight={600}>
+              Waiting for the next clip
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Keep this tab open—your player will sync automatically when the host starts the video.
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
+              <Chip
+                icon={<SyncIcon fontSize="small" />}
+                label={channelConnected ? 'Channel Connected' : 'Connecting to channel'}
+                color={channelConnected ? 'success' : 'warning'}
+                variant={channelConnected ? 'filled' : 'outlined'}
+              />
+              <Chip
+                icon={<PlayArrowIcon fontSize="small" />}
+                label="Sound on & be ready"
+                variant="outlined"
+              />
+            </Stack>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <Card sx={{ height: '100%' }}>
+        <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            justifyContent="space-between"
+            spacing={1.5}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+          >
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                Now Judging
+              </Typography>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {currentlyPlaying?.title || 'Untitled Submission'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Submitter identity hidden until reveal
+              </Typography>
+            </Box>
+            {currentlyPlaying?.hasDuplicateHistory && (
+              <Chip label="Duplicate Submission" color="warning" size="small" />
+            )}
+          </Stack>
+
+          <Box
+            sx={{
+              position: 'relative',
+              paddingTop: '56.25%',
+              backgroundColor: 'black',
+              borderRadius: 2,
+              overflow: 'hidden',
+              border: hasVideo ? 'none' : '1px solid rgba(255, 255, 255, 0.1)'
+            }}
+          >
+            <Box
+              ref={containerRef}
+              sx={{
+                position: 'absolute',
+                inset: 0
+              }}
+            />
+          </Box>
+
+          <Stack spacing={1.5}>
+            <Stack
+              direction={{ xs: 'column', lg: 'row' }}
+              spacing={2}
+              alignItems="center"
+              flexWrap="wrap"
+            >
+              <IconButton onClick={handlePlayPause} disabled={!hasVideo} color="primary">
+                {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
+              </IconButton>
+
+              <IconButton
+                onClick={handleResyncVideo}
+                disabled={!hasVideo}
+                color="secondary"
+                title="Resync video if playback is broken"
+              >
+                <SyncIcon />
+              </IconButton>
+
+              <Typography variant="caption" sx={{ minWidth: 44 }}>
+                {formatTime(displayTime)}
+              </Typography>
+
+              <Slider
+                value={sliderValue}
+                onChange={handleSeekChange}
+                onChangeCommitted={handleSeekCommit}
+                min={0}
+                max={resolvedDuration}
+                disabled={!hasVideo || resolvedDuration === 0}
+                sx={{ flexGrow: 1, minWidth: 160 }}
+              />
+
+              <Typography variant="caption" sx={{ minWidth: 44 }}>
+                {formatTime(resolvedDuration)}
+              </Typography>
+            </Stack>
+
+            <Stack direction="row" spacing={1} alignItems="center">
+              <IconButton onClick={toggleMute} disabled={!hasVideo} size="small">
+                {muted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+              </IconButton>
+              <Slider
+                value={volume}
+                onChange={handleVolumeChange}
+                min={0}
+                max={100}
+                disabled={!hasVideo}
+                sx={{ flexGrow: 1, maxWidth: 200 }}
+              />
+            </Stack>
+          </Stack>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderScoreCard = () => (
+    <Card sx={{ height: '100%' }}>
+      <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Box>
+          <Typography variant="h6" gutterBottom>
+            Score & Actions
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {currentlyPlaying
+              ? 'Adjust your score, then lock it in when you are confident.'
+              : 'The slider will unlock automatically when the next clip starts.'}
+          </Typography>
+        </Box>
+
+        <Box>
+          <Typography variant="overline" color="text.secondary">
+            Current Score
+          </Typography>
+          <Typography variant="h3" sx={{ fontWeight: 700 }}>
+            {formattedScore}
+          </Typography>
+        </Box>
+
+        <PrecisionSlider
+          value={score}
+          onChange={setScore}
+          disabled={!currentlyPlaying || isLocked}
+          min={0}
+          max={5}
+          step={0.00001}
+        />
+
+        {isLocked && lockType === 'MANUAL' && (
+          <Alert severity="info">
+            You locked this score. Unlock below to make additional tweaks.
+          </Alert>
+        )}
+        {lockType === 'FORCED' && (
+          <Alert severity="warning">
+            The host forced a lock. Scores cannot be changed right now.
+          </Alert>
+        )}
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={<LockIcon />}
+            onClick={handleLockIn}
+            disabled={!currentlyPlaying || isLocked || loading}
+            fullWidth
+          >
+            {isLocked ? 'Locked In' : 'Lock In'}
+          </Button>
+
+          {isLocked && lockType === 'MANUAL' && (
+            <Button
+              variant="outlined"
+              size="large"
+              color="warning"
+              startIcon={<UnlockIcon />}
+              onClick={handleUnlockVote}
+              disabled={loading}
+              fullWidth
+            >
+              Unlock
+            </Button>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
 
   // Helper to get headers with judge token
   const getHeaders = useCallback(() => {
@@ -739,6 +1105,11 @@ const JudgePage = () => {
       {success && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
           {success}
+        </Alert>
+      )}
+      {shuffleAudioError && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setShuffleAudioError(false)}>
+          Shuffle music playback was blocked by the browser. Click on the page once, then trigger the shuffle again.
         </Alert>
       )}
 
