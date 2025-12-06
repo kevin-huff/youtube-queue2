@@ -58,6 +58,9 @@
       "!src/index.js",
       "!src/database/seed.js"
     ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.js"
+    ],
     "testMatch": [
       "**/tests/**/*.test.js"
     ]
