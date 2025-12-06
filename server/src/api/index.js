@@ -1446,6 +1446,19 @@ router.patch('/channels/:channelId/cups/:cupId/set-active',
         data: { isActive: true }
       });
 
+      try {
+        const queueService = channelManager.getQueueService(normalizedChannelId);
+        if (queueService?.io) {
+          queueService.io.emit('setting:updated', { key: 'activeCupId', value: cup.id });
+        }
+      } catch (emitError) {
+        logger.warn('Failed to broadcast active cup update', {
+          channelId: normalizedChannelId,
+          cupId,
+          error: emitError?.message || emitError
+        });
+      }
+
       logger.info(`Cup ${cupId} set as active for channel ${normalizedChannelId}`);
       res.json({ cup });
     } catch (error) {
@@ -2043,22 +2056,32 @@ router.get('/channels/:channelId/settings', requireAuth, async (req, res) => {
     const channelManager = getChannelManager(req);
     const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
     const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+    const activeCup = await channelManager.prisma.cup.findFirst({
+      where: {
+        channelId: normalizedChannelId,
+        isActive: true
+      },
+      select: {
+        id: true
+      }
+    });
 
-  const settings = {
-    queue_enabled: await queueService.getSetting('queue_enabled', 'false'),
-    max_queue_size: await queueService.getSetting('max_queue_size', '0'),
-    submission_cooldown: await queueService.getSetting('submission_cooldown', '30'),
-    max_video_duration: await queueService.getSetting('max_video_duration', '300'),
-    auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
-    current_volume: await queueService.getSetting('current_volume', '75'),
-    max_per_user: await queueService.getSetting('max_per_user', '3'),
-    shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', ''),
-    // Ad announcements
-    ad_announcements_enabled: await queueService.getSetting('ad_announcements_enabled', 'true'),
-    ad_warn_message: await queueService.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!'),
-    ad_start_message: await queueService.getSetting('ad_start_message', 'Ad break starting now — see you after the ads!'),
-    ad_end_message: await queueService.getSetting('ad_end_message', 'Ads are over — welcome back!')
-  };
+    const settings = {
+      queue_enabled: await queueService.getSetting('queue_enabled', 'false'),
+      max_queue_size: await queueService.getSetting('max_queue_size', '0'),
+      submission_cooldown: await queueService.getSetting('submission_cooldown', '30'),
+      max_video_duration: await queueService.getSetting('max_video_duration', '300'),
+      auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
+      current_volume: await queueService.getSetting('current_volume', '75'),
+      max_per_user: await queueService.getSetting('max_per_user', '3'),
+      shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', ''),
+      // Ad announcements
+      ad_announcements_enabled: await queueService.getSetting('ad_announcements_enabled', 'true'),
+      ad_warn_message: await queueService.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!'),
+      ad_start_message: await queueService.getSetting('ad_start_message', 'Ad break starting now — see you after the ads!'),
+      ad_end_message: await queueService.getSetting('ad_end_message', 'Ads are over — welcome back!'),
+      activeCupId: activeCup?.id || null
+    };
 
     res.json({ channelId: normalizedChannelId, settings });
   } catch (error) {

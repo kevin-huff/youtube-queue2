@@ -29,13 +29,29 @@ function socketHandler(io, channelManager) {
       // Allow clients to request the current queue state
       socket.on('queue:join', async () => {
         try {
-          const [queue, enabled, vipQueue, shuffleAudioUrl] = await Promise.all([
+          const [queue, enabled, vipQueue, shuffleAudioUrl, activeCup] = await Promise.all([
             queueService.getCurrentQueue(),
             queueService.isQueueEnabled(),
             // Provide initial VIP list to clients
             queueService._getVipList(),
             // Provide initial shuffle audio so overlays can play without auth
-            queueService.getSetting('shuffle_audio_url', '')
+            queueService.getSetting('shuffle_audio_url', ''),
+            // Surface the currently active cup so producer UI can reflect it even with an empty queue
+            queueService.db?.cup.findFirst({
+              where: {
+                channelId,
+                isActive: true
+              },
+              select: {
+                id: true,
+                title: true,
+                theme: true,
+                status: true,
+                isActive: true,
+                startsAt: true,
+                endsAt: true
+              }
+            })
           ]);
 
           socket.emit('queue:initial_state', {
@@ -46,8 +62,10 @@ function socketHandler(io, channelManager) {
             overlayState: namespace._overlayState || { showPlayer: null },
             vipQueue,
             gongState: queueService.getGongState(),
+            activeCup: activeCup || null,
             settings: {
-              shuffle_audio_url: shuffleAudioUrl || ''
+              shuffle_audio_url: shuffleAudioUrl || '',
+              activeCupId: activeCup?.id || null
             }
           });
 
