@@ -75,7 +75,7 @@ const JudgePage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [pendingSeek, setPendingSeek] = useState(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [forceReloadKey, setForceReloadKey] = useState(0);
@@ -90,6 +90,20 @@ const JudgePage = () => {
 
   const handleOnboardingAcknowledge = useCallback(() => {
     setIsOnboardingOpen(false);
+  }, []);
+
+  const handleLocalPlayBroadcast = useCallback((time) => {
+    setIsPlaying(true);
+    playOverlay(time);
+  }, [playOverlay]);
+
+  const handleLocalPauseBroadcast = useCallback((time) => {
+    setIsPlaying(false);
+    pauseOverlay(time);
+  }, [pauseOverlay]);
+
+  const handleLocalEnd = useCallback(() => {
+    setIsPlaying(false);
   }, []);
 
   // Synced YouTube player
@@ -113,9 +127,10 @@ const JudgePage = () => {
     initialVolume: 100,
     defaultMuted: false,
     autoPlayOnReady: false,
-    onLocalPlay: playOverlay,
-    onLocalPause: pauseOverlay,
-    onLocalSeek: seekOverlay
+    onLocalPlay: handleLocalPlayBroadcast,
+    onLocalPause: handleLocalPauseBroadcast,
+    onLocalSeek: seekOverlay,
+    onLocalEnd: handleLocalEnd
   });
 
   const shuffleAudioSrc = useMemo(() => {
@@ -278,10 +293,8 @@ const JudgePage = () => {
   const handlePlayPause = () => {
     if (isPlaying) {
       pauseLocal();
-      setIsPlaying(false);
     } else {
       playLocal();
-      setIsPlaying(true);
     }
   };
 
@@ -370,6 +383,30 @@ const JudgePage = () => {
     
     return () => clearTimeout(timeout);
   }, [channelConnected, currentlyPlaying?.videoId, forceReloadKey, hasVideo, handleResyncVideo]);
+
+  useEffect(() => {
+    if (!channelConnected) {
+      return undefined;
+    }
+
+    const handleRemotePlay = () => setIsPlaying(true);
+    const handleRemotePause = () => setIsPlaying(false);
+    const handleStateResponse = (state = {}) => {
+      if (typeof state.playing === 'boolean') {
+        setIsPlaying(state.playing);
+      }
+    };
+
+    addChannelListener('player:play', handleRemotePlay);
+    addChannelListener('player:pause', handleRemotePause);
+    addChannelListener('player:state_response', handleStateResponse);
+
+    return () => {
+      removeChannelListener('player:play', handleRemotePlay);
+      removeChannelListener('player:pause', handleRemotePause);
+      removeChannelListener('player:state_response', handleStateResponse);
+    };
+  }, [channelConnected, addChannelListener, removeChannelListener]);
 
   const judgeIdentifier = useMemo(() => (
     session?.judgeTokenId || session?.judgeAccountId || null
@@ -929,6 +966,20 @@ const JudgePage = () => {
     }
   }, [currentlyPlaying, loadCurrentScore]);
 
+  useEffect(() => {
+    if (currentlyPlaying) {
+      return;
+    }
+    setScore(2.5);
+    setIsLocked(false);
+    setLockType(null);
+    setSuccess(null);
+    setError(null);
+    setIsPlaying(false);
+    setPendingSeek(null);
+    setIsSeeking(false);
+  }, [currentlyPlaying]);
+
   const handleLockIn = async () => {
     if (!currentlyPlaying) return;
 
@@ -1133,38 +1184,7 @@ const JudgePage = () => {
 
           <GongControlCard />
 
-          {/* Soundboard (Judges can trigger) */}
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="h6">Soundboard</Typography>
-                <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>Refresh</Button>
-              </Box>
-              {sbAudioError && (
-                <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
-                  Sound playback blocked by the browser. Click anywhere on the page once, then try again.
-                </Alert>
-              )}
-              {sbError && (
-                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
-                  {sbError}
-                </Alert>
-              )}
-              {sbItems.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
-                </Typography>
-              ) : (
-                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-                  {sbItems.map((it) => (
-                    <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
-                      {it.name}
-                    </Button>
-                  ))}
-                </Stack>
-              )}
-            </CardContent>
-          </Card>
+          <SoundboardCard />
         </Stack>
       ) : (
         <Stack spacing={3}>
@@ -1266,33 +1286,7 @@ const JudgePage = () => {
 
           <GongControlCard />
 
-          {/* Soundboard (Judges can trigger) */}
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="h6">Soundboard</Typography>
-                <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>Refresh</Button>
-              </Box>
-              {sbError && (
-                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
-                  {sbError}
-                </Alert>
-              )}
-              {sbItems.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
-                </Typography>
-              ) : (
-                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-                  {sbItems.map((it) => (
-                    <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
-                      {it.name}
-                    </Button>
-                  ))}
-                </Stack>
-              )}
-            </CardContent>
-          </Card>
+          <SoundboardCard />
 
           {/* Rating Slider */}
           <Card>
