@@ -2635,6 +2635,16 @@ router.post('/channels/:channelId/cups/:cupId/items/:itemId/score',
       const score = Number(req.body.score);
       const comment = req.body.comment || null;
 
+       // Require an active session before scoring
+       const activeSession = await channelManager.prisma.judgeSession.findUnique({
+         where: {
+           cupId_judgeTokenId: { cupId: req.judgeAuth.cupId, judgeTokenId: req.judgeAuth.judgeId }
+         }
+       });
+       if (!activeSession || activeSession.status !== 'ACTIVE') {
+         return res.status(401).json({ error: 'Judge session not active' });
+       }
+
       const judgeScore = await judgeService.submitScore(
         req.judgeAuth.cupId,
         itemId,

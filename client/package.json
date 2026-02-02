@@ -8,17 +8,17 @@
     "@mui/icons-material": "^5.14.19",
     "@mui/material": "^5.14.20",
     "@mui/system": "^5.14.20",
+    "@react-three/drei": "^9.110.5",
+    "@react-three/fiber": "^8.15.17",
+    "@react-three/postprocessing": "^2.15.11",
     "axios": "^1.6.2",
+    "postprocessing": "^6.35.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
-    "three": "^0.160.0",
-    "@react-three/fiber": "^8.15.17",
-    "@react-three/drei": "^9.110.5",
-    "@react-three/postprocessing": "^2.15.11",
-    "postprocessing": "^6.35.3",
     "react-scripts": "5.0.1",
     "socket.io-client": "^4.7.4",
+    "three": "^0.160.0",
     "web-vitals": "^3.5.0"
   },
   "scripts": {
@@ -47,5 +47,12 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://localhost:5000"
+  "proxy": "http://localhost:5000",
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "msw": "^2.12.4",
+    "web-streams-polyfill": "^4.2.0"
+  }
 }

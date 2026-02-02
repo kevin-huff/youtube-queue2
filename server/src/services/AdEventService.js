@@ -491,10 +491,28 @@ class AdEventService {
       resp = await makeReq(token);
     } catch (e) {
       const status = e?.response?.status;
+      const responseBody = e?.response?.data;
+      logger.debug('AdEventService: subscription request failed', { 
+        status, 
+        responseBody,
+        type,
+        broadcasterId: condition.broadcaster_user_id,
+        sessionId: session.sessionId
+      });
       if (status === 401 || status === 400) {
         const refreshed = await this._refreshTokenFor(condition.broadcaster_user_id);
         if (refreshed) {
-          resp = await makeReq(refreshed);
+          try {
+            resp = await makeReq(refreshed);
+          } catch (retryErr) {
+            const retryBody = retryErr?.response?.data;
+            logger.warn('AdEventService: subscription retry also failed', {
+              status: retryErr?.response?.status,
+              responseBody: retryBody,
+              broadcasterId: condition.broadcaster_user_id
+            });
+            throw retryErr;
+          }
         } else {
           throw e;
         }

@@ -20,15 +20,20 @@ This document describes the testing strategy for the project, what to build righ
 
 ## What’s already in place
 - **Server unit**: Jest setup file that silences logger and sets test env; coverage for judge token helpers/middleware, auth role/ownership guards, TokenStore, public channel routes (with stubbed channel manager), and JudgeService submit/lock/unlock/force-lock/average behaviors with mocked Prisma/queue events.
-- **Commands**: `cd server && npm test -- --runInBand` runs the current suite fast (<1s).
+- **Server integration harness + cases**: Prisma helper to reset/seed a test DB (`tests/integration/helpers/db.js`), app helper to mount the real API with stubbed auth (`tests/integration/helpers/app.js`). DB-backed tests for JudgeService flows; judge API (token submit/lock/force-lock; rename/end; invalid/expired token; wrong cup/channel 403; idempotent lock/unlock; require active session before scoring); admin permission checks (admin debug reject non-admin/manager); channel lifecycle (multi-owner delete; non-owner/producer delete forbidden; inactive delete is a no-op 200); queue moderation review actions (approve; VIP add/remove); ads/next happy path; public queue including inactive-channel 404; and health endpoint. Uses `TEST_DATABASE_URL`/`DATABASE_URL`; validated against local Docker Postgres (`postgresql://yqueue:yqueue@localhost:5433/youtube_queue_test`). Script: `cd server && npm run test:integration`.
+- **Client unit/integration**: RTL + Jest DOM for `PrecisionSlider`; `JudgeSettings` dialog interactions; `App` protected-route redirect; `JudgePage` token auto-start + lock-in; `ChannelQueue` public queue render; `CupAdmin` judge link flow (mocked auth/socket/api).
+- **Commands**: `cd server && npm test -- --runInBand` runs the unit suite fast (<1s); `cd server && npm run test:integration` for DB-backed tests; `cd client && npm test -- --watch=false --runInBand` for client tests.
 
 ## What to build next
-- **Server integration (test DB)**: auth/user endpoint, channel create/delete/public queue, judge token/session/score/lock (manual vs forced, 5-decimal precision), admin route permission checks, health check. Add a reusable test DB helper/seed.
-- **Client unit**: `PrecisionSlider` (precision, quick-set buttons), `JudgeSettings` state, nav/auth visibility, context hooks default values.
-- **Client integration (MSW)**: `JudgePage` token auto-auth + submit/lock, `CupAdmin` judge link success/error, `ChannelQueue` renders queue items, dashboard empty state.
-- **Smoke/e2e (Playwright)**: seeded judge URL flow (session start → submit score → lock), public queue render, admin debug page access control, landing page/nav works.
-- **Seed fixtures**: a small seed script for the test DB (channel + cup + 3 videos + 1–2 judge tokens) callable from tests and Playwright.
-- **Docs/commands**: add npm scripts for `test:integration` (server), `test:client`, `test:e2e` (Playwright) with clear env expectations.
+- **Server integration (test DB)**:
+  - Queue moderation edges: review reject/warn/top-eight; VIP list GET for owners.
+  - Health endpoint when DB unavailable (simulate prisma failure) returns 500 with error.
+- **Server services (unit/integration)**: JudgeService average with multiple scores/locks, unlockAllForcedVotes idempotent, createSession trims judgeName, endSession twice safe; TokenStore expiration trimming under load.
+- **Client unit**: AuthContext error handling for `/api/auth/user` failure; protected route redirect loop prevention; post-login redirect preserves query string; `PrecisionSlider` clamp already covered, add disabled state behavior.
+- **Client integration (MSW)**: CupAdmin create-cup error banner; prune judges success; ChannelQueue producer controls disabled when not connected; filter empty state; JudgePage expired token shows error; dashboard empty state.
+- **Smoke/e2e (Playwright)**: seeded judge URL flow (session start → score → lock); public queue render; admin debug access control; login redirect + dashboard render; CupAdmin judge link generation.
+- **Seed fixtures**: minimal seed script (channel + cup + 3 videos + 1–2 judge tokens) reused by integration and Playwright.
+- **Docs/commands**: add npm scripts for `test:client`, `test:e2e` (Playwright) with env expectations; note need to `prisma db push --force-reset` for test DB before integration.
 
 ## How to run (intended commands)
 - Fast loop: `npm run test:server -- --runInBand` for server unit/integration, `npm run test:client -- --watch=false` for client.

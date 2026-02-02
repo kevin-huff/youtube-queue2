@@ -9,7 +9,7 @@
     "start:production": "NODE_ENV=production node src/index.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:integration": "jest --testPathPattern=tests/integration",
+    "test:integration": "jest --runInBand --testPathPattern=tests/integration",
     "db:setup": "npx prisma generate && npx prisma db push",
     "db:reset": "npx prisma db push --force-reset",
     "db:migrate": "npx prisma migrate dev",
