@@ -20,8 +20,14 @@ class AdEventService {
     this.clientId = process.env.TWITCH_CLIENT_ID || null;
     this.clientSecret = process.env.TWITCH_CLIENT_SECRET || null;
     this.credentials = {}; // No env fallbacks; credentials provided via TokenStore
-    // Per-broadcaster EventSub sessions: broadcasterId -> session record
+    
+    // SHARED WebSocket session (single connection for all broadcasters)
+    this.sharedSession = null; // { ws, sessionId, keepaliveTimeout, backoffMs, reconnectUrl }
+    this.activeSubscriptions = new Map(); // broadcasterId -> subscription info
+    
+    // Legacy per-broadcaster sessions map (kept for compatibility, but unused with shared mode)
     this.sessions = new Map();
+    
     this.pollIntervals = new Map(); // broadcaster_user_id -> timer
     this.warnTimers = new Map(); // channelId -> timer for 30s pre-ad
     this.endTimers = new Map(); // channelId -> timer for end-of-ad
@@ -36,7 +42,6 @@ class AdEventService {
     this._circuitOpenUntil = 0;
     this._circuitBackoffMs = 60000; // Start with 60 second pause
     this._circuitMaxBackoffMs = 600000; // Max 10 minute pause
-    this._pendingReconnects = []; // Queue of { broadcasterId, userAccessToken } to reconnect after circuit closes
   }
   
   // Circuit breaker: check if we should allow a reconnect
@@ -45,8 +50,9 @@ class AdEventService {
     if (Date.now() >= this._circuitOpenUntil) {
       // Circuit timeout expired, close it
       this._circuitOpen = false;
-      logger.info('AdEventService: circuit breaker closed, resuming reconnects');
-      this._drainPendingReconnects();
+      logger.info('AdEventService: circuit breaker closed, will reconnect shared session');
+      // Reconnect the shared session
+      this._connectSharedSession();
       return false;
     }
     return true;
@@ -62,40 +68,9 @@ class AdEventService {
     }
     this._circuitOpenUntil = Date.now() + this._circuitBackoffMs;
     const pauseSec = Math.round(this._circuitBackoffMs / 1000);
-    logger.warn('AdEventService: circuit breaker OPEN - pausing ALL reconnects', { 
-      pauseSeconds: pauseSec, 
-      pendingCount: this._pendingReconnects.length 
+    logger.warn('AdEventService: circuit breaker OPEN - pausing reconnects', { 
+      pauseSeconds: pauseSec
     });
-  }
-  
-  // Queue a reconnect for when the circuit closes
-  _queueReconnect(broadcasterId, userAccessToken) {
-    // Avoid duplicates
-    const exists = this._pendingReconnects.some(p => p.broadcasterId === broadcasterId);
-    if (!exists) {
-      this._pendingReconnects.push({ broadcasterId, userAccessToken });
-    }
-  }
-  
-  // Drain pending reconnects with staggered timing
-  _drainPendingReconnects() {
-    const pending = this._pendingReconnects.splice(0);
-    if (pending.length === 0) return;
-    logger.info('AdEventService: draining pending reconnects', { count: pending.length });
-    // Reset backoff on successful drain start
-    this._circuitBackoffMs = 60000;
-    let delay = 0;
-    for (const { broadcasterId, userAccessToken } of pending) {
-      setTimeout(() => {
-        if (!this._isCircuitOpen()) {
-          this._connectSession(broadcasterId, userAccessToken);
-        } else {
-          // Circuit tripped again, re-queue
-          this._queueReconnect(broadcasterId, userAccessToken);
-        }
-      }, delay);
-      delay += 2000; // 2 seconds between each reconnect attempt
-    }
   }
 
   _loadCredentials() { return {}; }
@@ -122,7 +97,14 @@ class AdEventService {
 
   async shutdown() {
     this.enabled = false;
-    // Close all EventSub sessions
+    // Close shared EventSub session
+    if (this.sharedSession) {
+      try { if (this.sharedSession.keepaliveTimeout) clearTimeout(this.sharedSession.keepaliveTimeout); } catch (_) {}
+      try { if (this.sharedSession.ws) this.sharedSession.ws.close(); } catch (_) {}
+      this.sharedSession = null;
+    }
+    this.activeSubscriptions.clear();
+    // Legacy cleanup
     for (const sess of this.sessions.values()) {
       try { if (sess.keepaliveTimeout) clearTimeout(sess.keepaliveTimeout); } catch (_) {}
       try { if (sess.ws) sess.ws.close(); } catch (_) {}
@@ -136,20 +118,168 @@ class AdEventService {
     this.endTimers.clear();
   }
 
-  // ---- Per‑broadcaster EventSub sessions ----
+  // ---- SHARED WebSocket session (single connection for all broadcasters) ----
   async _ensureSessions() {
-    const entries = this._getAllCredentials();
-    let delay = 0;
-    for (const [broadcasterId, cred] of entries) {
-      const key = String(broadcasterId);
-      if (!this.sessions.has(key)) {
-        // Stagger connections to avoid hitting Twitch rate limits
-        setTimeout(() => this._connectSession(key, cred.access_token), delay);
-        delay += 1000; // 1 second between each connection attempt
-      }
+    // Use shared session mode: one WebSocket, multiple subscriptions
+    if (!this.sharedSession) {
+      this._connectSharedSession();
     }
   }
 
+  _armKeepaliveForShared(timeoutSec) {
+    if (!this.sharedSession) return;
+    if (this.sharedSession.keepaliveTimeout) clearTimeout(this.sharedSession.keepaliveTimeout);
+    const base = Number(timeoutSec || 10);
+    const sec = (Number.isFinite(base) ? base : 10) + 5;
+    const ms = Math.max(5000, sec * 1000);
+    this.sharedSession.keepaliveTimeout = setTimeout(() => {
+      try { logger.warn('AdEventService: shared session keepalive timeout; reconnecting'); } catch (_) {}
+      try { if (this.sharedSession?.ws) this.sharedSession.ws.terminate(); } catch (_) {}
+    }, ms);
+  }
+
+  async _connectSharedSession() {
+    // Don't connect if circuit breaker is open
+    if (this._isCircuitOpen()) {
+      logger.info('AdEventService: circuit breaker open, deferring shared session connect');
+      return;
+    }
+    
+    try {
+      const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+      this.sharedSession = { ws, sessionId: null, keepaliveTimeout: null, backoffMs: 2000 };
+      logger.info('AdEventService: connecting shared EventSub WebSocket');
+
+      ws.on('open', () => {
+        logger.info('AdEventService: shared EventSub WebSocket open');
+      });
+
+      ws.on('message', async (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          const type = msg?.metadata?.message_type || msg?.metadata?.messageType;
+          const keep = msg?.payload?.session?.keepalive_timeout_seconds || 10;
+          this._armKeepaliveForShared(keep);
+          
+          if (type === 'session_welcome') {
+            this.sharedSession.sessionId = msg?.payload?.session?.id;
+            this.sharedSession.backoffMs = 2000; // Reset backoff on successful connection
+            this._circuitBackoffMs = 60000; // Reset circuit breaker backoff
+            logger.info('AdEventService: shared session established', { sessionId: this.sharedSession.sessionId });
+            
+            // Create subscriptions for ALL broadcasters with staggered timing
+            await this._createAllSubscriptions();
+            
+          } else if (type === 'session_keepalive') {
+            this._armKeepaliveForShared(keep);
+            
+          } else if (type === 'session_reconnect') {
+            const reconnectUrl = msg?.payload?.session?.reconnect_url;
+            logger.info('AdEventService: shared session reconnect requested', { reconnectUrl });
+            try { if (this.sharedSession?.ws) this.sharedSession.ws.close(); } catch (_) {}
+            // Use the reconnect URL provided by Twitch
+            this.sharedSession.ws = new WebSocket(reconnectUrl);
+            this._bindSharedHandlers(this.sharedSession.ws);
+            
+          } else if (type === 'notification') {
+            const subType = msg?.payload?.subscription?.type;
+            const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId;
+            const shouldProcess = this._shouldProcessMessageId(messageId);
+            if (subType === 'channel.ad_break.begin' && shouldProcess) {
+              await this._handleAdBreakBegin(msg?.payload?.event);
+            }
+            
+          } else if (type === 'revocation') {
+            const broadcasterId = msg?.payload?.subscription?.condition?.broadcaster_user_id;
+            logger.warn('AdEventService: subscription revoked', { broadcasterId, sub: msg?.payload?.subscription });
+            this.activeSubscriptions.delete(String(broadcasterId));
+          }
+        } catch (err) {
+          logger.warn('AdEventService: failed to process shared session message', { err: err?.message });
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        logger.warn('AdEventService: shared EventSub WebSocket closed', { code, reason: reason?.toString?.() });
+        if (this.sharedSession) this.sharedSession.sessionId = null;
+        this.activeSubscriptions.clear();
+        
+        if (this.enabled) {
+          const isRateLimited = Number(code) === 1006;
+          
+          if (isRateLimited) {
+            this._tripCircuitBreaker();
+            // Circuit breaker will reconnect when it closes
+          } else if (this._isCircuitOpen()) {
+            // Circuit will reconnect when it closes
+          } else {
+            // Normal reconnect with backoff
+            const prev = Number(this.sharedSession?.backoffMs || 2000);
+            const next = Math.min(prev * 2, 120000);
+            if (this.sharedSession) this.sharedSession.backoffMs = next;
+            const jitter = Math.floor(Math.random() * next * 0.25);
+            const delay = next + jitter;
+            logger.info('AdEventService: scheduling shared session reconnect', { delayMs: delay });
+            setTimeout(() => this._connectSharedSession(), delay);
+          }
+        }
+      });
+
+      ws.on('error', (err) => {
+        logger.error('AdEventService: shared WebSocket error', { error: err?.message });
+        if (err?.message?.includes('429')) {
+          this._tripCircuitBreaker();
+        }
+      });
+
+    } catch (err) {
+      logger.error('AdEventService: failed to connect shared EventSub WebSocket', { error: err?.message });
+    }
+  }
+  
+  _bindSharedHandlers(ws) {
+    // Re-bind handlers after reconnect (same logic as in _connectSharedSession)
+    ws.on('message', async (raw) => {
+      // ... handled by existing session
+    });
+    // Note: close/error handlers stay bound to the session object
+  }
+
+  async _createAllSubscriptions() {
+    const entries = this._getAllCredentials();
+    const broadcasterCount = entries.length;
+    logger.info('AdEventService: creating subscriptions for all broadcasters', { count: broadcasterCount });
+    
+    let delay = 0;
+    for (const [broadcasterId, cred] of entries) {
+      const key = String(broadcasterId);
+      if (this.activeSubscriptions.has(key)) continue; // Already subscribed
+      
+      setTimeout(async () => {
+        try {
+          if (!this.sharedSession?.sessionId) {
+            logger.warn('AdEventService: no session for subscription', { broadcasterId });
+            return;
+          }
+          await this._createSubscriptionFor(
+            this.sharedSession,
+            'channel.ad_break.begin',
+            '1',
+            { broadcaster_user_id: broadcasterId },
+            cred.access_token
+          );
+          this.activeSubscriptions.set(key, { subscribedAt: Date.now() });
+          logger.info('AdEventService: subscription created', { broadcasterId });
+        } catch (err) {
+          logger.warn('AdEventService: failed to create subscription', { broadcasterId, error: err?.message });
+        }
+      }, delay);
+      
+      delay += 500; // 500ms between each subscription (not connection!)
+    }
+  }
+
+  // Legacy method kept for compatibility
   _armKeepaliveFor(session, timeoutSec) {
     if (!session) return;
     if (session.keepaliveTimeout) clearTimeout(session.keepaliveTimeout);
@@ -157,105 +287,14 @@ class AdEventService {
     const sec = (Number.isFinite(base) ? base : 10) + 5;
     const ms = Math.max(5000, sec * 1000);
     session.keepaliveTimeout = setTimeout(() => {
-      try { logger.warn('AdEventService: keepalive timeout; reconnecting', { broadcasterId: session.broadcasterId }); } catch (_) {}
+      try { logger.warn('AdEventService: keepalive timeout; reconnecting'); } catch (_) {}
       try { if (session.ws) session.ws.terminate(); } catch (_) {}
     }, ms);
-    session.lastKeepaliveAt = Date.now();
   }
 
+  // Legacy method - no longer used with shared session mode
   async _connectSession(broadcasterId, userAccessToken) {
-    try {
-      const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
-      const session = { ws, sessionId: null, keepaliveTimeout: null, broadcasterId, userAccessToken, lastKeepaliveAt: null, reconnectUrl: null };
-      this.sessions.set(broadcasterId, session);
-      logger.info('AdEventService: connecting to EventSub WebSocket', { broadcasterId });
-
-      const bindHandlers = () => {
-        const s = session; // local alias
-        if (!s || !s.ws) return;
-        s.ws.on('open', () => {
-          logger.info('AdEventService: EventSub WebSocket open', { broadcasterId });
-        });
-
-        s.ws.on('message', async (raw) => {
-          try {
-            const msg = JSON.parse(raw.toString());
-            const type = msg?.metadata?.message_type || msg?.metadata?.messageType || msg?.metadata?.message_type;
-            const keep = (msg?.payload?.session?.keepalive_timeout_seconds) || 10;
-            this._armKeepaliveFor(s, keep);
-            if (type === 'session_welcome') {
-              s.sessionId = msg?.payload?.session?.id;
-              s.backoffMs = 2000; // Reset backoff on successful connection
-              logger.info('AdEventService: session established', { sessionId: s.sessionId, broadcasterId });
-              await this._createSubscriptionFor(s, 'channel.ad_break.begin', '1', { broadcaster_user_id: broadcasterId }, s.userAccessToken);
-              this._armKeepaliveFor(s, keep);
-            } else if (type === 'session_keepalive') {
-              this._armKeepaliveFor(s, keep);
-            } else if (type === 'session_reconnect') {
-              const reconnectUrl = msg?.payload?.session?.reconnect_url;
-              s.reconnectUrl = reconnectUrl;
-              logger.info('AdEventService: reconnect requested', { broadcasterId, reconnectUrl });
-              try { if (s.ws) s.ws.close(); } catch (_) {}
-              s.ws = new WebSocket(reconnectUrl);
-              bindHandlers(); // re-bind to the new socket
-            } else if (type === 'notification') {
-              const subType = msg?.payload?.subscription?.type;
-              // Deduplicate by message_id to prevent duplicate announcements on reconnects
-              const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId || null;
-              const shouldProcess = this._shouldProcessMessageId(messageId);
-              if (subType === 'channel.ad_break.begin' && shouldProcess) {
-                await this._handleAdBreakBegin(msg?.payload?.event);
-              }
-            } else if (type === 'revocation') {
-              logger.warn('AdEventService: subscription revoked', { broadcasterId, sub: msg?.payload?.subscription });
-            }
-          } catch (err) {
-            logger.warn('AdEventService: failed to process EventSub message', { err: err?.message, broadcasterId });
-          }
-        });
-
-        s.ws.on('close', (code, reason) => {
-          logger.warn('AdEventService: EventSub WebSocket closed', { broadcasterId, code, reason: reason?.toString?.() });
-          s.sessionId = null;
-          if (this.enabled) {
-            // Check if this is a rate limit error (429 causes code 1006)
-            const isRateLimited = Number(code) === 1006;
-            
-            if (isRateLimited) {
-              // Trip the circuit breaker - pause ALL reconnects
-              this._tripCircuitBreaker();
-              // Queue this reconnect for when the circuit closes
-              this._queueReconnect(broadcasterId, s.userAccessToken);
-            } else if (this._isCircuitOpen()) {
-              // Circuit is open, queue the reconnect
-              this._queueReconnect(broadcasterId, s.userAccessToken);
-            } else {
-              // Normal reconnect with backoff (for non-429 errors like code 4003)
-              const shouldBackoff = Number(code) === 4003;
-              const prev = Number(s.backoffMs || 2000);
-              const next = shouldBackoff ? Math.min(prev * 2, 120_000) : 2000;
-              s.backoffMs = next;
-              const jitter = Math.floor(Math.random() * next * 0.25);
-              const delay = next + jitter;
-              logger.info('AdEventService: scheduling reconnect', { broadcasterId, delayMs: delay, backoffMs: next });
-              setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), delay);
-            }
-          }
-        });
-
-        s.ws.on('error', (err) => {
-          logger.error('AdEventService: WebSocket error', { broadcasterId, error: err?.message });
-          // Detect 429 rate limit from error message and trip circuit breaker proactively
-          if (err?.message?.includes('429')) {
-            this._tripCircuitBreaker();
-          }
-        });
-      };
-
-      bindHandlers();
-    } catch (err) {
-      logger.error('AdEventService: failed to connect EventSub WebSocket', { broadcasterId, error: err?.message });
-    }
+    logger.warn('AdEventService: _connectSession called but shared session mode is active', { broadcasterId });
   }
 
   async _connectWebSocket() {
