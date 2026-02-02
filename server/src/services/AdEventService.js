@@ -33,6 +33,9 @@ class AdEventService {
     // Dedup store for EventSub notifications (message_id -> ts)
     this._seenMessageIds = new Map();
     
+    // Broadcasters with invalid tokens (skip reconnects until re-auth)
+    this._disabledBroadcasters = new Set();
+    
     // Circuit breaker for rate limiting (429 errors)
     this._circuitOpen = false;
     this._circuitOpenUntil = 0;
@@ -181,6 +184,12 @@ class AdEventService {
 
   async _connectSession(broadcasterId, userAccessToken) {
     try {
+      // Skip broadcasters with invalid tokens
+      if (this._disabledBroadcasters.has(String(broadcasterId))) {
+        logger.debug('AdEventService: skipping disabled broadcaster', { broadcasterId });
+        return;
+      }
+      
       // Check circuit breaker before connecting
       if (this._isCircuitOpen()) {
         this._queueReconnect(broadcasterId, userAccessToken);
@@ -406,7 +415,13 @@ class AdEventService {
         return newAccess;
       }
     } catch (err) {
-      logger.warn('AdEventService: failed to refresh token', { broadcasterId, error: err?.message });
+      const status = err?.response?.status;
+      logger.warn('AdEventService: failed to refresh token', { broadcasterId, error: err?.message, status });
+      // 400 means invalid_grant - token is revoked, user needs to re-auth
+      if (status === 400) {
+        this._disabledBroadcasters.add(String(broadcasterId));
+        logger.warn('AdEventService: disabling broadcaster due to invalid refresh token', { broadcasterId });
+      }
     }
     return null;
   }
