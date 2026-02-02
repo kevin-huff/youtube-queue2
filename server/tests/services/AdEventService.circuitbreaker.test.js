@@ -28,7 +28,7 @@ describe('AdEventService Circuit Breaker', () => {
       { say: jest.fn() }         // bot
     );
     // Don't actually connect
-    service._connectSharedSession = jest.fn();
+    service._connectSession = jest.fn();
   });
   
   afterEach(() => {
@@ -47,17 +47,20 @@ describe('AdEventService Circuit Breaker', () => {
       expect(service._isCircuitOpen()).toBe(true);
     });
 
-    test('returns false and reconnects when circuit timeout expires', () => {
+    test('returns false and drains pending reconnects when circuit timeout expires', () => {
       service._circuitOpen = true;
       service._circuitOpenUntil = Date.now() - 1000; // Expired
+      service._pendingReconnects = [
+        { broadcasterId: '123', userAccessToken: 'token1' }
+      ];
       
       const result = service._isCircuitOpen();
       
       expect(result).toBe(false);
       // Circuit stays open until successful connection calls _resetCircuitBreaker()
-      // This ensures backoff escalates if reconnect fails immediately
       expect(service._circuitOpen).toBe(true);
-      expect(service._connectSharedSession).toHaveBeenCalled();
+      // Pending reconnects should be drained (array emptied)
+      expect(service._pendingReconnects).toHaveLength(0);
     });
   });
 
@@ -68,7 +71,7 @@ describe('AdEventService Circuit Breaker', () => {
       expect(service._circuitOpen).toBe(true);
       expect(service._circuitBackoffMs).toBe(60000);
       expect(logger.warn).toHaveBeenCalledWith(
-        'AdEventService: circuit breaker OPEN - pausing reconnects',
+        'AdEventService: circuit breaker OPEN - pausing ALL reconnects',
         expect.objectContaining({ pauseSeconds: 60 })
       );
     });
@@ -93,14 +96,17 @@ describe('AdEventService Circuit Breaker', () => {
       expect(service._circuitBackoffMs).toBe(600000); // 10 minutes max
     });
 
-    test('schedules reconnect when backoff expires', () => {
+    test('schedules reconnect drain when backoff expires', () => {
+      service._pendingReconnects = [
+        { broadcasterId: '123', userAccessToken: 'token1' }
+      ];
       service._tripCircuitBreaker();
       
       // Fast-forward past the backoff period
       jest.advanceTimersByTime(60100);
       
-      // Should have called _isCircuitOpen which triggers reconnect
-      expect(service._connectSharedSession).toHaveBeenCalled();
+      // Should have drained pending reconnects
+      expect(service._pendingReconnects).toHaveLength(0);
     });
 
     test('clears previous timer on repeated trips', () => {
@@ -111,6 +117,73 @@ describe('AdEventService Circuit Breaker', () => {
       const secondTimer = service._circuitTimer;
       
       expect(firstTimer).not.toBe(secondTimer);
+    });
+  });
+
+  describe('_queueReconnect', () => {
+    test('adds broadcaster to pending queue', () => {
+      service._queueReconnect('123', 'token1');
+      
+      expect(service._pendingReconnects).toHaveLength(1);
+      expect(service._pendingReconnects[0]).toEqual({
+        broadcasterId: '123',
+        userAccessToken: 'token1'
+      });
+    });
+
+    test('prevents duplicate broadcasters in queue', () => {
+      service._queueReconnect('123', 'token1');
+      service._queueReconnect('123', 'token1');
+      service._queueReconnect('123', 'token2'); // Same broadcaster, different token
+      
+      expect(service._pendingReconnects).toHaveLength(1);
+    });
+
+    test('allows different broadcasters', () => {
+      service._queueReconnect('123', 'token1');
+      service._queueReconnect('456', 'token2');
+      
+      expect(service._pendingReconnects).toHaveLength(2);
+    });
+  });
+
+  describe('_drainPendingReconnects', () => {
+    test('empties the pending queue', () => {
+      service._pendingReconnects = [
+        { broadcasterId: '123', userAccessToken: 'token1' },
+        { broadcasterId: '456', userAccessToken: 'token2' }
+      ];
+      
+      service._drainPendingReconnects();
+      
+      expect(service._pendingReconnects).toHaveLength(0);
+    });
+
+    test('calls _connectSession for each pending broadcaster with stagger', () => {
+      service._pendingReconnects = [
+        { broadcasterId: '123', userAccessToken: 'token1' },
+        { broadcasterId: '456', userAccessToken: 'token2' }
+      ];
+      
+      service._drainPendingReconnects();
+      
+      // First one should connect immediately
+      jest.advanceTimersByTime(0);
+      expect(service._connectSession).toHaveBeenCalledTimes(1);
+      expect(service._connectSession).toHaveBeenCalledWith('123', 'token1');
+      
+      // Second one after 2 seconds
+      jest.advanceTimersByTime(2000);
+      expect(service._connectSession).toHaveBeenCalledTimes(2);
+      expect(service._connectSession).toHaveBeenCalledWith('456', 'token2');
+    });
+
+    test('does nothing when queue is empty', () => {
+      service._pendingReconnects = [];
+      
+      service._drainPendingReconnects();
+      
+      expect(service._connectSession).not.toHaveBeenCalled();
     });
   });
 
@@ -134,21 +207,29 @@ describe('AdEventService Circuit Breaker', () => {
   });
 
   describe('integration: rate limit recovery flow', () => {
-    test('full cycle: trip -> wait -> reconnect -> success -> reset', () => {
+    test('full cycle: trip -> queue -> wait -> drain -> success -> reset', () => {
       // 1. Rate limit hits, circuit trips
       service._tripCircuitBreaker();
       expect(service._circuitOpen).toBe(true);
-      expect(service._isCircuitOpen()).toBe(true);
       
-      // 2. During backoff, reconnects are blocked
-      expect(service._isCircuitOpen()).toBe(true);
-      expect(service._connectSharedSession).not.toHaveBeenCalled();
+      // 2. Queue some reconnects
+      service._queueReconnect('123', 'token1');
+      service._queueReconnect('456', 'token2');
+      expect(service._pendingReconnects).toHaveLength(2);
       
-      // 3. Backoff expires, circuit closes and reconnects
+      // 3. During backoff, _isCircuitOpen returns true
+      expect(service._isCircuitOpen()).toBe(true);
+      expect(service._connectSession).not.toHaveBeenCalled();
+      
+      // 4. Backoff expires, pending reconnects drain
       jest.advanceTimersByTime(60100);
-      expect(service._connectSharedSession).toHaveBeenCalledTimes(1);
+      expect(service._pendingReconnects).toHaveLength(0);
       
-      // 4. Connection succeeds, reset circuit
+      // 5. Connections happen with stagger
+      jest.advanceTimersByTime(2000);
+      expect(service._connectSession).toHaveBeenCalledTimes(2);
+      
+      // 6. Successful connection resets circuit
       service._resetCircuitBreaker();
       expect(service._circuitOpen).toBe(false);
       expect(service._circuitBackoffMs).toBe(60000);
@@ -157,14 +238,14 @@ describe('AdEventService Circuit Breaker', () => {
     test('repeated failures increase backoff progressively', () => {
       const expectedBackoffs = [60, 120, 240, 480, 600, 600]; // Caps at 600s
       
-      expectedBackoffs.forEach((expectedSec, i) => {
+      expectedBackoffs.forEach((expectedSec) => {
         service._tripCircuitBreaker();
         expect(logger.warn).toHaveBeenLastCalledWith(
-          'AdEventService: circuit breaker OPEN - pausing reconnects',
+          'AdEventService: circuit breaker OPEN - pausing ALL reconnects',
           expect.objectContaining({ pauseSeconds: expectedSec })
         );
         
-        // Fast-forward to trigger reconnect (which would fail and re-trip in real scenario)
+        // Fast-forward to trigger drain
         jest.advanceTimersByTime(service._circuitBackoffMs + 100);
       });
     });

@@ -21,11 +21,7 @@ class AdEventService {
     this.clientSecret = process.env.TWITCH_CLIENT_SECRET || null;
     this.credentials = {}; // No env fallbacks; credentials provided via TokenStore
     
-    // SHARED WebSocket session (single connection for all broadcasters)
-    this.sharedSession = null; // { ws, sessionId, keepaliveTimeout, backoffMs, reconnectUrl }
-    this.activeSubscriptions = new Map(); // broadcasterId -> subscription info
-    
-    // Legacy per-broadcaster sessions map (kept for compatibility, but unused with shared mode)
+    // Per-broadcaster EventSub sessions: broadcasterId -> session record
     this.sessions = new Map();
     
     this.pollIntervals = new Map(); // broadcaster_user_id -> timer
@@ -42,6 +38,7 @@ class AdEventService {
     this._circuitOpenUntil = 0;
     this._circuitBackoffMs = 60000; // Start with 60 second pause
     this._circuitMaxBackoffMs = 600000; // Max 10 minute pause
+    this._pendingReconnects = []; // Queue of { broadcasterId, userAccessToken } to reconnect after circuit closes
   }
   
   // Circuit breaker: check if we should allow a reconnect
@@ -49,12 +46,12 @@ class AdEventService {
   _isCircuitOpen() {
     if (!this._circuitOpen) return false;
     if (Date.now() >= this._circuitOpenUntil) {
-      // Backoff period expired - allow reconnect attempt
+      // Backoff period expired - allow reconnect attempts
       // NOTE: circuit stays "open" until _resetCircuitBreaker() on successful connection
-      // This ensures backoff escalates if the reconnect immediately fails again
-      logger.info('AdEventService: circuit breaker backoff expired, attempting reconnect');
-      this._connectSharedSession();
-      return false; // Allow this reconnect
+      // This ensures backoff escalates if reconnects immediately fail again
+      logger.info('AdEventService: circuit breaker backoff expired, draining pending reconnects');
+      this._drainPendingReconnects();
+      return false; // Allow reconnects
     }
     return true; // Still in backoff period, block reconnects
   }
@@ -79,17 +76,47 @@ class AdEventService {
     }
     this._circuitOpenUntil = Date.now() + this._circuitBackoffMs;
     const pauseSec = Math.round(this._circuitBackoffMs / 1000);
-    logger.warn('AdEventService: circuit breaker OPEN - pausing reconnects', { 
-      pauseSeconds: pauseSec
+    logger.warn('AdEventService: circuit breaker OPEN - pausing ALL reconnects', { 
+      pauseSeconds: pauseSec,
+      pendingCount: this._pendingReconnects.length
     });
     
-    // Schedule a check to close the circuit and reconnect when backoff expires
-    // Clear any existing timer to avoid duplicates
+    // Schedule a check to close the circuit and drain reconnects when backoff expires
     if (this._circuitTimer) clearTimeout(this._circuitTimer);
     this._circuitTimer = setTimeout(() => {
       this._circuitTimer = null;
-      this._isCircuitOpen(); // This will close circuit and trigger reconnect
-    }, this._circuitBackoffMs + 100); // Small buffer to ensure we're past the deadline
+      this._isCircuitOpen(); // This will drain pending reconnects
+    }, this._circuitBackoffMs + 100);
+  }
+  
+  // Queue a reconnect for when the circuit closes
+  _queueReconnect(broadcasterId, userAccessToken) {
+    // Avoid duplicates
+    const exists = this._pendingReconnects.some(p => p.broadcasterId === broadcasterId);
+    if (!exists) {
+      this._pendingReconnects.push({ broadcasterId, userAccessToken });
+      logger.debug('AdEventService: queued reconnect', { broadcasterId, queueSize: this._pendingReconnects.length });
+    }
+  }
+  
+  // Drain pending reconnects with staggered timing
+  _drainPendingReconnects() {
+    const pending = this._pendingReconnects.splice(0);
+    if (pending.length === 0) return;
+    logger.info('AdEventService: draining pending reconnects', { count: pending.length });
+    
+    let delay = 0;
+    for (const { broadcasterId, userAccessToken } of pending) {
+      setTimeout(() => {
+        if (!this._isCircuitOpen()) {
+          this._connectSession(broadcasterId, userAccessToken);
+        } else {
+          // Circuit tripped again, re-queue
+          this._queueReconnect(broadcasterId, userAccessToken);
+        }
+      }, delay);
+      delay += 2000; // 2 seconds between each reconnect attempt
+    }
   }
 
   _loadCredentials() { return {}; }
@@ -121,14 +148,9 @@ class AdEventService {
       clearTimeout(this._circuitTimer);
       this._circuitTimer = null;
     }
-    // Close shared EventSub session
-    if (this.sharedSession) {
-      try { if (this.sharedSession.keepaliveTimeout) clearTimeout(this.sharedSession.keepaliveTimeout); } catch (_) {}
-      try { if (this.sharedSession.ws) this.sharedSession.ws.close(); } catch (_) {}
-      this.sharedSession = null;
-    }
-    this.activeSubscriptions.clear();
-    // Legacy cleanup
+    // Clear pending reconnects
+    this._pendingReconnects = [];
+    // Close all per-broadcaster EventSub sessions
     for (const sess of this.sessions.values()) {
       try { if (sess.keepaliveTimeout) clearTimeout(sess.keepaliveTimeout); } catch (_) {}
       try { if (sess.ws) sess.ws.close(); } catch (_) {}
@@ -142,252 +164,148 @@ class AdEventService {
     this.endTimers.clear();
   }
 
-  // ---- SHARED WebSocket session (single connection for all broadcasters) ----
+  // ---- Per-broadcaster EventSub sessions ----
   async _ensureSessions() {
-    // Use shared session mode: one WebSocket, multiple subscriptions
-    if (!this.sharedSession) {
-      this._connectSharedSession();
-    }
-  }
-
-  _armKeepaliveForShared(timeoutSec) {
-    if (!this.sharedSession) return;
-    if (this.sharedSession.keepaliveTimeout) clearTimeout(this.sharedSession.keepaliveTimeout);
-    const base = Number(timeoutSec || 10);
-    const sec = (Number.isFinite(base) ? base : 10) + 5;
-    const ms = Math.max(5000, sec * 1000);
-    this.sharedSession.keepaliveTimeout = setTimeout(() => {
-      try { logger.warn('AdEventService: shared session keepalive timeout; reconnecting'); } catch (_) {}
-      try { if (this.sharedSession?.ws) this.sharedSession.ws.terminate(); } catch (_) {}
-    }, ms);
-  }
-
-  async _connectSharedSession() {
-    // Don't connect if circuit breaker is open
-    if (this._isCircuitOpen()) {
-      logger.info('AdEventService: circuit breaker open, deferring shared session connect');
-      return;
-    }
-    
-    try {
-      const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
-      this.sharedSession = { ws, sessionId: null, keepaliveTimeout: null, backoffMs: 2000 };
-      logger.info('AdEventService: connecting shared EventSub WebSocket');
-
-      ws.on('open', () => {
-        logger.info('AdEventService: shared EventSub WebSocket open');
-      });
-
-      ws.on('message', async (raw) => {
-        try {
-          const msg = JSON.parse(raw.toString());
-          const type = msg?.metadata?.message_type || msg?.metadata?.messageType;
-          const keep = msg?.payload?.session?.keepalive_timeout_seconds || 10;
-          this._armKeepaliveForShared(keep);
-          
-          if (type === 'session_welcome') {
-            this.sharedSession.sessionId = msg?.payload?.session?.id;
-            this.sharedSession.backoffMs = 2000; // Reset backoff on successful connection
-            this._resetCircuitBreaker(); // Reset circuit breaker on successful connection
-            logger.info('AdEventService: shared session established', { sessionId: this.sharedSession.sessionId });
-            
-            // Create subscriptions for ALL broadcasters with staggered timing
-            await this._createAllSubscriptions();
-            
-          } else if (type === 'session_keepalive') {
-            this._armKeepaliveForShared(keep);
-            
-          } else if (type === 'session_reconnect') {
-            const reconnectUrl = msg?.payload?.session?.reconnect_url;
-            logger.info('AdEventService: shared session reconnect requested', { reconnectUrl });
-            try { if (this.sharedSession?.ws) this.sharedSession.ws.close(); } catch (_) {}
-            // Use the reconnect URL provided by Twitch
-            this.sharedSession.ws = new WebSocket(reconnectUrl);
-            this._bindSharedHandlers(this.sharedSession.ws);
-            
-          } else if (type === 'notification') {
-            const subType = msg?.payload?.subscription?.type;
-            const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId;
-            const shouldProcess = this._shouldProcessMessageId(messageId);
-            if (subType === 'channel.ad_break.begin' && shouldProcess) {
-              await this._handleAdBreakBegin(msg?.payload?.event);
-            }
-            
-          } else if (type === 'revocation') {
-            const broadcasterId = msg?.payload?.subscription?.condition?.broadcaster_user_id;
-            logger.warn('AdEventService: subscription revoked', { broadcasterId, sub: msg?.payload?.subscription });
-            this.activeSubscriptions.delete(String(broadcasterId));
-          }
-        } catch (err) {
-          logger.warn('AdEventService: failed to process shared session message', { err: err?.message });
-        }
-      });
-
-      ws.on('close', (code, reason) => {
-        logger.warn('AdEventService: shared EventSub WebSocket closed', { code, reason: reason?.toString?.() });
-        if (this.sharedSession) this.sharedSession.sessionId = null;
-        this.activeSubscriptions.clear();
-        
-        if (this.enabled) {
-          const isRateLimited = Number(code) === 1006;
-          
-          if (isRateLimited) {
-            this._tripCircuitBreaker();
-            // Circuit breaker will reconnect when it closes
-          } else if (this._isCircuitOpen()) {
-            // Circuit will reconnect when it closes
-          } else {
-            // Normal reconnect with backoff
-            const prev = Number(this.sharedSession?.backoffMs || 2000);
-            const next = Math.min(prev * 2, 120000);
-            if (this.sharedSession) this.sharedSession.backoffMs = next;
-            const jitter = Math.floor(Math.random() * next * 0.25);
-            const delay = next + jitter;
-            logger.info('AdEventService: scheduling shared session reconnect', { delayMs: delay });
-            setTimeout(() => this._connectSharedSession(), delay);
-          }
-        }
-      });
-
-      ws.on('error', (err) => {
-        logger.error('AdEventService: shared WebSocket error', { error: err?.message });
-        if (err?.message?.includes('429')) {
-          this._tripCircuitBreaker();
-        }
-      });
-
-    } catch (err) {
-      logger.error('AdEventService: failed to connect shared EventSub WebSocket', { error: err?.message });
-    }
-  }
-  
-  _bindSharedHandlers(ws) {
-    // Re-bind handlers after reconnect (same logic as in _connectSharedSession)
-    ws.on('message', async (raw) => {
-      // ... handled by existing session
-    });
-    // Note: close/error handlers stay bound to the session object
-  }
-
-  async _createAllSubscriptions() {
     const entries = this._getAllCredentials();
-    const broadcasterCount = entries.length;
-    logger.info('AdEventService: creating subscriptions for all broadcasters', { count: broadcasterCount });
-    
+    logger.info('AdEventService: ensuring sessions for broadcasters', { count: entries.length });
     let delay = 0;
     for (const [broadcasterId, cred] of entries) {
       const key = String(broadcasterId);
-      if (this.activeSubscriptions.has(key)) continue; // Already subscribed
-      
-      setTimeout(async () => {
-        try {
-          if (!this.sharedSession?.sessionId) {
-            logger.warn('AdEventService: no session for subscription', { broadcasterId });
-            return;
-          }
-          await this._createSubscriptionFor(
-            this.sharedSession,
-            'channel.ad_break.begin',
-            '1',
-            { broadcaster_user_id: broadcasterId },
-            cred.access_token
-          );
-          this.activeSubscriptions.set(key, { subscribedAt: Date.now() });
-          logger.info('AdEventService: subscription created', { broadcasterId });
-        } catch (err) {
-          logger.warn('AdEventService: failed to create subscription', { broadcasterId, error: err?.message });
-        }
-      }, delay);
-      
-      delay += 500; // 500ms between each subscription (not connection!)
+      if (!this.sessions.has(key)) {
+        // Stagger connections to avoid hitting Twitch rate limits
+        setTimeout(() => this._connectSession(key, cred.access_token), delay);
+        delay += 1000; // 1 second between each connection attempt
+      }
     }
   }
 
-  // Legacy method kept for compatibility
-  _armKeepaliveFor(session, timeoutSec) {
-    if (!session) return;
-    if (session.keepaliveTimeout) clearTimeout(session.keepaliveTimeout);
-    const base = Number(timeoutSec || 10);
-    const sec = (Number.isFinite(base) ? base : 10) + 5;
-    const ms = Math.max(5000, sec * 1000);
-    session.keepaliveTimeout = setTimeout(() => {
-      try { logger.warn('AdEventService: keepalive timeout; reconnecting'); } catch (_) {}
-      try { if (session.ws) session.ws.terminate(); } catch (_) {}
-    }, ms);
-  }
-
-  // Legacy method - no longer used with shared session mode
   async _connectSession(broadcasterId, userAccessToken) {
-    logger.warn('AdEventService: _connectSession called but shared session mode is active', { broadcasterId });
-  }
-
-  async _connectWebSocket() {
     try {
-      const url = 'wss://eventsub.wss.twitch.tv/ws';
-      this.ws = new WebSocket(url);
-      logger.info('AdEventService: connecting to EventSub WebSocket');
+      // Check circuit breaker before connecting
+      if (this._isCircuitOpen()) {
+        this._queueReconnect(broadcasterId, userAccessToken);
+        return;
+      }
+      
+      const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+      const session = { 
+        ws, 
+        sessionId: null, 
+        keepaliveTimeout: null, 
+        broadcasterId, 
+        userAccessToken, 
+        backoffMs: 2000,
+        reconnectUrl: null 
+      };
+      this.sessions.set(String(broadcasterId), session);
+      logger.info('AdEventService: connecting to EventSub WebSocket', { broadcasterId });
 
-      this.ws.on('open', () => {
-        logger.info('AdEventService: EventSub WebSocket open');
-      });
+      const bindHandlers = () => {
+        const s = session;
+        if (!s || !s.ws) return;
+        
+        s.ws.on('open', () => {
+          logger.info('AdEventService: EventSub WebSocket open', { broadcasterId });
+        });
 
-      this.ws.on('message', async (raw) => {
-        try {
-          const msg = JSON.parse(raw.toString());
-          const type = msg?.metadata?.message_type || msg?.metadata?.messageType || msg?.metadata?.message_type;
-          // Any message indicates liveness; re-arm keepalive with a friendly buffer
-          this._armKeepalive((msg?.payload?.session?.keepalive_timeout_seconds) || 10);
-          if (type === 'session_welcome') {
-            this.sessionId = msg?.payload?.session?.id;
-            logger.info('AdEventService: session established', { sessionId: this.sessionId });
-            await this._subscribeToAdBreaks();
-            this._armKeepalive(msg?.payload?.session?.keepalive_timeout_seconds || 10);
-          } else if (type === 'session_keepalive') {
-            this._armKeepalive(msg?.payload?.session?.keepalive_timeout_seconds || 10);
-          } else if (type === 'session_reconnect') {
-            const reconnectUrl = msg?.payload?.session?.reconnect_url;
-            logger.info('AdEventService: reconnect requested', { reconnectUrl });
-            await this._reconnect(reconnectUrl);
-          } else if (type === 'notification') {
-            const subType = msg?.payload?.subscription?.type;
-            const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId || null;
-            const shouldProcess = this._shouldProcessMessageId(messageId);
-            if (subType === 'channel.ad_break.begin' && shouldProcess) {
-              await this._handleAdBreakBegin(msg?.payload?.event);
+        s.ws.on('message', async (raw) => {
+          try {
+            const msg = JSON.parse(raw.toString());
+            const type = msg?.metadata?.message_type || msg?.metadata?.messageType;
+            const keep = msg?.payload?.session?.keepalive_timeout_seconds || 10;
+            this._armKeepaliveFor(s, keep);
+            
+            if (type === 'session_welcome') {
+              s.sessionId = msg?.payload?.session?.id;
+              s.backoffMs = 2000; // Reset backoff on successful connection
+              this._resetCircuitBreaker(); // Reset circuit breaker on successful connection
+              logger.info('AdEventService: session established', { sessionId: s.sessionId, broadcasterId });
+              await this._createSubscriptionFor(s, 'channel.ad_break.begin', '1', { broadcaster_user_id: broadcasterId }, s.userAccessToken);
+              
+            } else if (type === 'session_keepalive') {
+              this._armKeepaliveFor(s, keep);
+              
+            } else if (type === 'session_reconnect') {
+              const reconnectUrl = msg?.payload?.session?.reconnect_url;
+              s.reconnectUrl = reconnectUrl;
+              logger.info('AdEventService: reconnect requested', { broadcasterId, reconnectUrl });
+              try { if (s.ws) s.ws.close(); } catch (_) {}
+              s.ws = new WebSocket(reconnectUrl);
+              bindHandlers(); // re-bind to the new socket
+              
+            } else if (type === 'notification') {
+              const subType = msg?.payload?.subscription?.type;
+              const messageId = msg?.metadata?.message_id || msg?.metadata?.messageId || null;
+              const shouldProcess = this._shouldProcessMessageId(messageId);
+              if (subType === 'channel.ad_break.begin' && shouldProcess) {
+                await this._handleAdBreakBegin(msg?.payload?.event);
+              }
+              
+            } else if (type === 'revocation') {
+              logger.warn('AdEventService: subscription revoked', { broadcasterId, sub: msg?.payload?.subscription });
             }
-          } else if (type === 'revocation') {
-            logger.warn('AdEventService: subscription revoked', { sub: msg?.payload?.subscription });
+          } catch (err) {
+            logger.warn('AdEventService: failed to process EventSub message', { err: err?.message, broadcasterId });
           }
-        } catch (err) {
-          logger.warn('AdEventService: failed to process EventSub message', { err: err?.message });
-        }
-      });
+        });
 
-      this.ws.on('close', (code, reason) => {
-        logger.warn('AdEventService: EventSub WebSocket closed', { code, reason: reason?.toString?.() });
-        this.sessionId = null;
-        if (this.enabled) {
-          setTimeout(() => this._connectWebSocket(), 2000);
-        }
-      });
+        s.ws.on('close', (code, reason) => {
+          logger.warn('AdEventService: EventSub WebSocket closed', { broadcasterId, code, reason: reason?.toString?.() });
+          s.sessionId = null;
+          
+          if (this.enabled) {
+            const isRateLimited = Number(code) === 1006;
+            
+            if (isRateLimited) {
+              // Trip the circuit breaker - pause ALL reconnects
+              this._tripCircuitBreaker();
+              this._queueReconnect(broadcasterId, s.userAccessToken);
+            } else if (this._isCircuitOpen()) {
+              // Circuit is open, queue the reconnect
+              this._queueReconnect(broadcasterId, s.userAccessToken);
+            } else {
+              // Normal reconnect with backoff (for non-429 errors like code 4003)
+              const shouldBackoff = Number(code) === 4003;
+              const prev = Number(s.backoffMs || 2000);
+              const next = shouldBackoff ? Math.min(prev * 2, 120000) : 2000;
+              s.backoffMs = next;
+              const jitter = Math.floor(Math.random() * next * 0.25);
+              const delay = next + jitter;
+              logger.info('AdEventService: scheduling reconnect', { broadcasterId, delayMs: delay });
+              setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), delay);
+            }
+          }
+        });
 
-      this.ws.on('error', (err) => {
-        logger.error('AdEventService: WebSocket error', { error: err?.message });
-      });
+        s.ws.on('error', (err) => {
+          logger.error('AdEventService: WebSocket error', { broadcasterId, error: err?.message });
+          if (err?.message?.includes('429')) {
+            this._tripCircuitBreaker();
+          }
+        });
+      };
+
+      bindHandlers();
     } catch (err) {
-      logger.error('AdEventService: failed to connect EventSub WebSocket', { error: err?.message });
+      logger.error('AdEventService: failed to connect EventSub WebSocket', { broadcasterId, error: err?.message });
     }
+  }
+  
+  _armKeepaliveFor(session, timeoutSec) {
+    if (session.keepaliveTimeout) clearTimeout(session.keepaliveTimeout);
+    const ms = (timeoutSec + 5) * 1000; // Add buffer
+    session.keepaliveTimeout = setTimeout(() => {
+      logger.warn('AdEventService: keepalive timeout, reconnecting', { broadcasterId: session.broadcasterId });
+      try { if (session.ws) session.ws.close(); } catch (_) {}
+    }, ms);
   }
 
   _shouldProcessMessageId(messageId) {
     try {
       const id = messageId ? String(messageId) : null;
-      // If no id provided by Twitch, allow once (cannot dedupe)
       if (!id) return true;
       const now = Date.now();
-      // Drop if we've seen it recently
       if (this._seenMessageIds.has(id)) return false;
-      // Record and opportunistically prune old entries (>10 minutes)
       this._seenMessageIds.set(id, now);
       if (this._seenMessageIds.size > 5000) {
         const cutoff = now - 10 * 60 * 1000;
@@ -401,76 +319,8 @@ class AdEventService {
     }
   }
 
-  _armKeepalive(timeoutSec) {
-    if (this.keepaliveTimeout) clearTimeout(this.keepaliveTimeout);
-    // Give a generous buffer beyond Twitch's advertised timeout to avoid flapping
-    const base = Number(timeoutSec || 10);
-    const sec = (Number.isFinite(base) ? base : 10) + 5; // +5s cushion
-    const ms = Math.max(5000, sec * 1000);
-    this.keepaliveTimeout = setTimeout(() => {
-      try { logger.warn('AdEventService: keepalive timeout; reconnecting'); } catch (_) {}
-      if (this.ws) try { this.ws.terminate(); } catch (_) {}
-    }, ms);
-  }
-
-  async _reconnect(_url) {
-    // Legacy single-session reconnect not used in per-session mode
-    try { logger.warn('AdEventService: legacy reconnect invoked; ignored'); } catch (_) {}
-  }
-
-  _getAllCredentials() {
-    // Only use tokens captured from logged-in users via TokenStore
-    return TokenStore.listBroadcasterCredentials();
-  }
-
-  // Normalize timestamp-like values to milliseconds since epoch
-  _toMs(ts) {
-    try {
-      if (ts == null) return null;
-      if (typeof ts === 'number') {
-        // If seconds (10-digit) convert to ms
-        return ts > 0 && ts < 10_000_000_000 ? ts * 1000 : ts;
-      }
-      const s = String(ts).trim();
-      if (!s) return null;
-      if (/^\d+$/.test(s)) {
-        const n = Number(s);
-        return n > 0 && n < 10_000_000_000 ? n * 1000 : n;
-      }
-      const d = new Date(s);
-      const ms = d.getTime();
-      return Number.isFinite(ms) ? ms : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  async _primeFromDatabase() {
-    try {
-      const prisma = this.channelManager.prisma;
-      const accounts = await prisma.account.findMany({
-        where: { twitchId: { not: null }, twitchAccessToken: { not: null } },
-        select: { id: true, twitchId: true, twitchAccessToken: true, twitchRefreshToken: true, twitchTokenScope: true }
-      });
-      for (const acc of accounts) {
-        TokenStore.setToken({
-          accountId: acc.id,
-          twitchUserId: acc.twitchId,
-          accessToken: acc.twitchAccessToken,
-          refreshToken: acc.twitchRefreshToken || null,
-          scopes: (acc.twitchTokenScope || '').split(/\s+/).filter(Boolean)
-        });
-      }
-      logger.info(`AdEventService: primed ${accounts.length} broadcaster token(s) from DB`);
-    } catch (err) {
-      logger.warn('AdEventService: failed to prime tokens from DB', { error: err?.message });
-    }
-  }
-
-  async _subscribeToAdBreaks() { /* no-op with per-session subscribe on welcome */ }
-
   async _createSubscriptionFor(session, type, version, condition, userAccessToken) {
-    const token = userAccessToken; // For channel.* events, user token is typically required.
+    const token = userAccessToken;
     const makeReq = async (bearer) => axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', {
       type,
       version,
@@ -486,6 +336,7 @@ class AdEventService {
         'Content-Type': 'application/json'
       }
     });
+    
     let resp;
     try {
       resp = await makeReq(token);
@@ -523,416 +374,184 @@ class AdEventService {
     return resp?.data;
   }
 
-  // removed unused helper: broadcaster id → channel id
+  async _refreshTokenFor(broadcasterId) {
+    try {
+      const entry = TokenStore.getByTwitchUserId(String(broadcasterId));
+      if (!entry || !entry.refreshToken) {
+        logger.warn('AdEventService: no refresh token for broadcaster', { broadcasterId });
+        return null;
+      }
+      const resp = await axios.post('https://id.twitch.tv/oauth2/token', null, {
+        params: {
+          grant_type: 'refresh_token',
+          refresh_token: entry.refreshToken,
+          client_id: this.clientId,
+          client_secret: this.clientSecret
+        }
+      });
+      const newAccess = resp?.data?.access_token;
+      const newRefresh = resp?.data?.refresh_token || entry.refreshToken;
+      if (newAccess) {
+        TokenStore.setToken({
+          accountId: entry.accountId,
+          twitchUserId: String(broadcasterId),
+          accessToken: newAccess,
+          refreshToken: newRefresh,
+          scopes: Array.from(entry.scopes || [])
+        });
+        // Update session if exists
+        const sess = this.sessions.get(String(broadcasterId));
+        if (sess) sess.userAccessToken = newAccess;
+        logger.info('AdEventService: refreshed broadcaster token', { broadcasterId });
+        return newAccess;
+      }
+    } catch (err) {
+      logger.warn('AdEventService: failed to refresh token', { broadcasterId, error: err?.message });
+    }
+    return null;
+  }
 
   async _handleAdBreakBegin(event) {
     try {
-      const broadcasterId = String(event?.broadcaster_user_id || event?.broadcaster_user_id);
+      const broadcasterId = String(event?.broadcaster_user_id);
       const durationSec = Number(event?.duration_seconds || event?.duration || 0);
 
-      // Map broadcasterId to our channelId (name) via Prisma
       let channelId = null;
       try {
         const prisma = this.channelManager.prisma;
         const chan = await prisma.channel.findFirst({ where: { twitchUserId: broadcasterId } });
         channelId = chan?.id || null;
       } catch (_) {}
+
       if (!channelId) {
-        logger.warn('AdEventService: unknown broadcaster id for ad event', { broadcasterId });
+        logger.warn('AdEventService: unknown broadcaster for ad event', { broadcasterId });
         return;
       }
-      const chatChannel = `#${channelId}`;
 
-      // Cancel any pre-warn timer; announce start now and schedule end
-      const wKey = channelId;
-      const eKey = channelId;
-      if (this.warnTimers.has(wKey)) {
-        clearTimeout(this.warnTimers.get(wKey));
-        this.warnTimers.delete(wKey);
-      }
+      logger.info('AdEventService: ad break starting', { channelId, durationSec });
+      this.channelManager.setAdBreak(channelId, true);
 
-      try { logger.info('AdEventService: ad break begin', { channelId, broadcasterId, durationSec: Number.isFinite(durationSec) ? durationSec : null }); } catch (_) {}
-      const { enabled, startMsg } = await this._getAdSettings(channelId);
-      if (!enabled) return;
-      this._sendMessage(chatChannel, this._formatMsg(startMsg, { durationSec }));
-
-      if (Number.isFinite(durationSec) && durationSec > 0) {
-        if (this.endTimers.has(eKey)) clearTimeout(this.endTimers.get(eKey));
-        const timer = setTimeout(async () => {
-          try {
-            const { enabled: en2, endMsg: em2 } = await this._getAdSettings(channelId);
-            if (en2) this._sendMessage(chatChannel, this._formatMsg(em2, { durationSec }));
-            try { logger.info('AdEventService: end message (event) fired', { channelId, broadcasterId, durationSec }); } catch (_) {}
-          } finally {
-            this.endTimers.delete(eKey);
-          }
-        }, durationSec * 1000);
-        this.endTimers.set(eKey, timer);
-      }
+      if (this.endTimers.has(channelId)) clearTimeout(this.endTimers.get(channelId));
+      this.endTimers.set(channelId, setTimeout(() => {
+        this.channelManager.setAdBreak(channelId, false);
+        this.endTimers.delete(channelId);
+        logger.info('AdEventService: ad break ended', { channelId });
+      }, durationSec * 1000));
     } catch (err) {
-      logger.warn('AdEventService: failed to handle ad begin', { err: err?.message });
+      logger.warn('AdEventService: failed to handle ad break event', { error: err?.message });
     }
   }
 
-  _sendMessage(channel, text) {
-    try {
-      if (this.bot?.isConnected?.()) {
-        this.bot.sendMessage(channel, text);
+  // ---- Credentials from TokenStore ----
+  _getAllCredentials() {
+    const entries = [];
+    for (const [twitchUserId, entry] of TokenStore.byTwitchUserId.entries()) {
+      if (entry.scopes?.has('channel:read:ads')) {
+        entries.push([twitchUserId, { access_token: entry.accessToken, refresh_token: entry.refreshToken }]);
       }
-    } catch (_) {}
+    }
+    return entries;
   }
 
+  async _primeFromDatabase() {
+    try {
+      const prisma = this.channelManager?.prisma;
+      if (!prisma) return;
+      const accounts = await prisma.account.findMany({
+        where: { provider: 'twitch' },
+        select: { providerAccountId: true, access_token: true, refresh_token: true, scope: true, userId: true }
+      });
+      for (const acct of accounts) {
+        if (!acct.access_token || !acct.providerAccountId) continue;
+        const scopes = (acct.scope || '').split(/[\s,]+/).filter(Boolean);
+        TokenStore.setToken({
+          accountId: acct.userId,
+          twitchUserId: acct.providerAccountId,
+          accessToken: acct.access_token,
+          refreshToken: acct.refresh_token || null,
+          scopes
+        });
+      }
+      logger.info('AdEventService: primed TokenStore from database', { count: accounts.length });
+    } catch (err) {
+      logger.warn('AdEventService: failed to prime from database', { error: err?.message });
+    }
+  }
+
+  // ---- Schedule Polling (fallback for 30s pre-warn) ----
   _startSchedulePolling() {
     const entries = this._getAllCredentials();
-    for (const [broadcasterId, cred] of entries) {
+    for (const [broadcasterId] of entries) {
       if (this.pollIntervals.has(broadcasterId)) continue;
       const poll = async () => {
         try {
-          // Skip work if the channel is not live (checked via app token)
-          const live = await this._isLive(String(broadcasterId));
-          if (!live) {
-            // Clear any pending warn timers if the channel went offline
-            try {
-              const prisma = this.channelManager.prisma;
-              const chan = await prisma.channel.findFirst({ where: { twitchUserId: String(broadcasterId) } });
-              const channelId = chan?.id || null;
-              if (channelId && this.warnTimers.has(channelId)) {
-                clearTimeout(this.warnTimers.get(channelId));
-                this.warnTimers.delete(channelId);
-              }
-            } catch (_) {}
-            return;
+          const live = await this._isLive(broadcasterId);
+          if (!live) return;
+          const schedule = await this._fetchAdSchedule(broadcasterId);
+          if (schedule?.nextAdAt) {
+            const msUntil = schedule.nextAdAt - Date.now();
+            if (msUntil > 0 && msUntil < 35000) {
+              this._schedulePreWarn(broadcasterId, msUntil);
+            }
           }
-
-          const data = await this._getAdSchedule(broadcasterId, cred.access_token);
-          const nextAtRaw = data?.data?.[0]?.next_ad_at || data?.data?.[0]?.next_ad_time;
-          const durationSec = Number(data?.data?.[0]?.duration_seconds || 0);
-          const nextAt = this._toMs(nextAtRaw);
-          if (!nextAt) {
-            // Helpful log to understand why 30s pre-warn may be missing
-            try { logger.info('AdEventService: no next ad in schedule (skipping pre-warn)', { broadcasterId }); } catch (_) {}
-            return;
-          }
-          const now = Date.now();
-          const warnAt = nextAt - 30_000;
-          if (warnAt <= now) return; // too late
-          const nextAdAtIso = new Date(nextAt).toISOString();
-
-          // Resolve channel name by broadcaster id
-          let channelId = null;
-          try {
-            const prisma = this.channelManager.prisma;
-            const chan = await prisma.channel.findFirst({ where: { twitchUserId: String(broadcasterId) } });
-            channelId = chan?.id || null;
-          } catch (_) {}
-          if (!channelId) return;
-
-          const key = channelId;
-          if (this.warnTimers.has(key)) {
-            // If an existing timer is scheduled for a different time, reset it
-            clearTimeout(this.warnTimers.get(key));
-            this.warnTimers.delete(key);
-          }
-
-          const timeoutMs = warnAt - now;
-          if (timeoutMs > 0 && timeoutMs < 60 * 60 * 1000) {
-            const chatChannel = `#${channelId}`;
-            const timer = setTimeout(async () => {
-              try {
-                try {
-                  logger.info('AdEventService: pre-warn fired', {
-                    channelId,
-                    broadcasterId,
-                    durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
-                  });
-                } catch (_) {}
-                const { enabled, warnMsg } = await this._getAdSettings(channelId);
-                if (enabled) {
-                  this._sendMessage(chatChannel, this._formatMsg(warnMsg, { durationSec }));
-                  // Also schedule end message as a fallback if EventSub notification is missed
-                  if (Number.isFinite(durationSec) && durationSec > 0) {
-                    const endKey = channelId;
-                    if (this.endTimers.has(endKey)) clearTimeout(this.endTimers.get(endKey));
-                    const endDelay = 30_000 + (durationSec * 1000);
-                    const endTimer = setTimeout(async () => {
-                      try {
-                        try { logger.info('AdEventService: end message (fallback) fired', { channelId, broadcasterId, durationSec }); } catch (_) {}
-                        const { enabled: en3, endMsg: em3 } = await this._getAdSettings(channelId);
-                        if (en3) this._sendMessage(chatChannel, this._formatMsg(em3, { durationSec }));
-                      } finally {
-                        this.endTimers.delete(endKey);
-                      }
-                    }, endDelay);
-                    this.endTimers.set(endKey, endTimer);
-                  }
-                }
-              } finally {
-                this.warnTimers.delete(key);
-              }
-            }, timeoutMs);
-            this.warnTimers.set(key, timer);
-            try {
-              logger.info('AdEventService: pre-warn scheduled', {
-                channelId,
-                broadcasterId,
-                warnAtIso: new Date(warnAt).toISOString(),
-                nextAdAtIso: nextAdAtIso,
-                inSec: Math.round(timeoutMs / 1000),
-                durationSec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
-              });
-            } catch (_) {}
-          }
-        } catch (err) {
-          logger.debug?.('AdEventService: ad schedule poll failed', { err: err?.message });
-        }
+        } catch (_) {}
       };
-
-      // Kick off now, then every 60s
       poll();
-      this.pollIntervals.set(broadcasterId, setInterval(poll, 60 * 1000));
+      this.pollIntervals.set(broadcasterId, setInterval(poll, 60000));
     }
-  }
-
-  async refreshSubscriptions() {
-    try {
-      // Ensure sessions exist for any new broadcasters; per-session subscribe on welcome
-      await this._ensureSessions();
-      // Start polling timers for any new broadcasters
-      this._startSchedulePolling();
-    } catch (err) {
-      logger.warn('AdEventService: refreshSubscriptions failed', { error: err?.message });
-    }
-  }
-
-  async _getAdSchedule(broadcasterId, userAccessToken) {
-    // Optional guard: avoid Helix call if offline
-    const live = await this._isLive(String(broadcasterId));
-    if (!live) return null;
-    const url = `https://api.twitch.tv/helix/channels/ads?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
-    const makeReq = async (bearer) => axios.get(url, {
-      headers: {
-        'Client-ID': this.clientId,
-        'Authorization': `Bearer ${bearer}`
-      }
-    });
-    try {
-      const resp = await makeReq(userAccessToken);
-      return resp?.data || null;
-    } catch (e) {
-      const status = e?.response?.status;
-      if (status === 401 || status === 400) {
-        const refreshed = await this._refreshTokenFor(String(broadcasterId));
-        if (refreshed) {
-          const resp2 = await makeReq(refreshed);
-          return resp2?.data || null;
-        }
-      }
-      throw e;
-    }
-  }
-
-  async getNextAdForChannel(channelId) {
-    try {
-      const prisma = this.channelManager.prisma;
-      const chan = await prisma.channel.findUnique({ where: { id: String(channelId).toLowerCase() }, select: { twitchUserId: true } });
-      const broadcasterId = chan?.twitchUserId ? String(chan.twitchUserId) : null;
-      if (!broadcasterId) {
-        return { live: false, nextAdAt: null, duration: null };
-      }
-      const live = await this._isLive(broadcasterId);
-      if (!live) {
-        return { live: false, nextAdAt: null, duration: null };
-      }
-      const rec = TokenStore.getByTwitchUserId(broadcasterId);
-      const bearer = rec?.accessToken || null;
-      if (!bearer) {
-        try { logger.info('AdEventService: no user token; attempting schedule with refresh', { channelId, broadcasterId }); } catch (_) {}
-      }
-      const data = await this._getAdSchedule(broadcasterId, bearer);
-      const entry = Array.isArray(data?.data) ? data.data[0] : null;
-      const nextRaw = entry?.next_ad_at || entry?.next_ad_time || null;
-      const nextMs = this._toMs(nextRaw);
-      const nextAdAt = nextMs ? new Date(nextMs).toISOString() : null;
-      const duration = typeof entry?.duration_seconds === 'number' ? entry.duration_seconds : null;
-      try {
-        logger.info('AdEventService: next ad info', {
-          channelId,
-          broadcasterId,
-          live: true,
-          nextAdAt: nextAdAt || null,
-          duration: typeof duration === 'number' ? duration : null
-        });
-      } catch (_) {}
-      return { live: true, nextAdAt, duration };
-    } catch (err) {
-      logger.warn('AdEventService: getNextAdForChannel failed', { channelId, error: err?.message, data: err?.response?.data });
-      return { live: null, nextAdAt: null, duration: null };
-    }
-  }
-
-  async _getAppAccessToken() {
-    const now = Date.now();
-    if (this.appToken && now < this.appTokenExpiresAt - 10_000) {
-      return this.appToken;
-    }
-    const params = new URLSearchParams();
-    params.append('client_id', this.clientId);
-    params.append('client_secret', this.clientSecret);
-    params.append('grant_type', 'client_credentials');
-    const resp = await axios.post('https://id.twitch.tv/oauth2/token', params);
-    const body = resp?.data || {};
-    this.appToken = body.access_token;
-    const expiresIn = Number(body.expires_in || 0);
-    this.appTokenExpiresAt = expiresIn > 0 ? now + expiresIn * 1000 : now + 3600 * 1000;
-    return this.appToken;
   }
 
   async _isLive(broadcasterId) {
+    const cached = this.liveCache.get(broadcasterId);
+    if (cached && Date.now() - cached.ts < 60000) return cached.live;
     try {
-      const cached = this.liveCache.get(broadcasterId);
-      const now = Date.now();
-      if (cached && (now - cached.ts) < 60_000) {
-        return cached.live;
-      }
-      const token = await this._getAppAccessToken();
-      const resp = await axios.get(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(broadcasterId)}`, {
-        headers: {
-          'Client-ID': this.clientId,
-          'Authorization': `Bearer ${token}`
-        }
+      const token = await this._getAppToken();
+      const resp = await axios.get('https://api.twitch.tv/helix/streams', {
+        params: { user_id: broadcasterId },
+        headers: { 'Client-ID': this.clientId, 'Authorization': `Bearer ${token}` }
       });
-      const arr = Array.isArray(resp?.data?.data) ? resp.data.data : [];
-      const live = arr.length > 0 && String(arr[0]?.type || '').toLowerCase() === 'live';
-      this.liveCache.set(broadcasterId, { live, ts: now });
+      const live = (resp?.data?.data?.length || 0) > 0;
+      this.liveCache.set(broadcasterId, { live, ts: Date.now() });
       return live;
-    } catch (err) {
-      logger.debug?.('AdEventService: _isLive check failed', { broadcasterId, error: err?.message });
-      // If rate-limited or failed, default to true to avoid missing schedules while live
-      const fallback = true;
-      this.liveCache.set(broadcasterId, { live: fallback, ts: Date.now() });
-      return fallback;
-    }
-  }
-
-  async _refreshTokenFor(broadcasterId) {
-    try {
-      const prisma = this.channelManager.prisma;
-      const account = await prisma.account.findFirst({ where: { twitchId: String(broadcasterId) } });
-      if (!account?.twitchRefreshToken) {
-        logger.warn('AdEventService: no refresh token for broadcaster', { broadcasterId });
-        return null;
-      }
-      const params = new URLSearchParams();
-      params.append('grant_type', 'refresh_token');
-      params.append('refresh_token', account.twitchRefreshToken);
-      params.append('client_id', this.clientId);
-      params.append('client_secret', this.clientSecret);
-      const resp = await axios.post('https://id.twitch.tv/oauth2/token', params);
-      const body = resp?.data || {};
-      const newAccess = body.access_token;
-      const newRefresh = body.refresh_token || account.twitchRefreshToken;
-      const expiresIn = Number(body.expires_in || 0);
-      const scopesArr = Array.isArray(body.scope) ? body.scope : (account.twitchTokenScope ? account.twitchTokenScope.split(/\s+/) : []);
-      const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null;
-
-      await prisma.account.update({
-        where: { id: account.id },
-        data: {
-          twitchAccessToken: newAccess,
-          twitchRefreshToken: newRefresh,
-          twitchTokenScope: scopesArr.join(' '),
-          twitchTokenExpiresAt: expiresAt
-        }
-      });
-
-      // Update in-memory token
-      TokenStore.setToken({
-        accountId: account.id,
-        twitchUserId: broadcasterId,
-        accessToken: newAccess,
-        refreshToken: newRefresh,
-        scopes: scopesArr
-      });
-
-      logger.info('AdEventService: refreshed broadcaster token', { broadcasterId });
-      return newAccess;
-    } catch (err) {
-      logger.warn('AdEventService: token refresh failed', { broadcasterId, error: err?.message, data: err?.response?.data });
-      return null;
-    }
-  }
-
-  async _getAdSettings(channelId) {
-    try {
-      // Prefer per-channel bot settings managed by QueueService (reflects UI changes immediately)
-      const qs = this.channelManager.getQueueService(channelId);
-      if (qs) {
-        const enabledRaw = await qs.getSetting('ad_announcements_enabled', 'true');
-        const enabled = String(enabledRaw) === 'true';
-        const warnMsg = (await qs.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!')) || 'Heads up: ads will run in 30 seconds. BRB!';
-        const startMsg = (await qs.getSetting('ad_start_message', 'Ad break starting now — see you after the ads!')) || 'Ad break starting now — see you after the ads!';
-        const endMsg = (await qs.getSetting('ad_end_message', 'Ads are over — welcome back!')) || 'Ads are over — welcome back!';
-        return { enabled, warnMsg, startMsg, endMsg };
-      }
-      // Fallback to ChannelManager info if QueueService is unavailable
-      const info = await this.channelManager.getChannelInfo(channelId);
-      const settings = info?.settings || {};
-      const enabled = String(settings.ad_announcements_enabled ?? 'true') === 'true';
-      const warnMsg = settings.ad_warn_message || 'Heads up: ads will run in 30 seconds. BRB!';
-      const startMsg = settings.ad_start_message || 'Ad break starting now — see you after the ads!';
-      const endMsg = settings.ad_end_message || 'Ads are over — welcome back!';
-      return { enabled, warnMsg, startMsg, endMsg };
     } catch (_) {
-      return {
-        enabled: true,
-        warnMsg: 'Heads up: ads will run in 30 seconds. BRB!',
-        startMsg: 'Ad break starting now — see you after the ads!',
-        endMsg: 'Ads are over — welcome back!'
-      };
+      return false;
     }
   }
 
-  _formatMsg(template, { durationSec = null } = {}) {
+  async _fetchAdSchedule(broadcasterId) {
     try {
-      let msg = String(template || '');
-      if (typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0) {
-        const m = Math.floor(durationSec / 60);
-        const s = Math.floor(durationSec % 60);
-        const mmss = `${m}:${s.toString().padStart(2, '0')}`;
-        const human = m > 0 ? `${m}m${s ? ` ${s}s` : ''}` : `${s}s`;
-        msg = msg
-          .replaceAll('{duration}', String(durationSec))
-          .replaceAll('{duration_sec}', String(durationSec))
-          .replaceAll('{duration_min}', String(m))
-          .replaceAll('{duration_mmss}', mmss)
-          .replaceAll('{duration_human}', human);
-      }
-      return msg;
-    } catch (_) {
-      return template || '';
-    }
-  }
-
-  // ---- Admin helpers ----
-  listSessions() {
-    const list = [];
-    for (const [broadcasterId, s] of this.sessions.entries()) {
-      const connected = !!s.ws && s.ws.readyState === 1; // OPEN
-      list.push({
-        broadcasterId,
-        sessionId: s.sessionId || null,
-        connected,
-        lastKeepaliveAt: s.lastKeepaliveAt || null,
-        hasReconnectUrl: !!s.reconnectUrl
+      const entry = TokenStore.getByTwitchUserId(String(broadcasterId));
+      if (!entry) return null;
+      const resp = await axios.get('https://api.twitch.tv/helix/channels/ads', {
+        params: { broadcaster_id: broadcasterId },
+        headers: { 'Client-ID': this.clientId, 'Authorization': `Bearer ${entry.accessToken}` }
       });
-    }
-    return list;
+      const data = resp?.data?.data?.[0];
+      if (data?.next_ad_at) {
+        return { nextAdAt: new Date(data.next_ad_at).getTime() };
+      }
+    } catch (_) {}
+    return null;
   }
 
-  async reconnectSessionFor(broadcasterId) {
-    const s = this.sessions.get(String(broadcasterId));
-    if (!s) return false;
-    try { if (s.ws) s.ws.terminate(); return true; } catch (_) { return false; }
+  _schedulePreWarn(broadcasterId, msUntil) {
+    // Not implemented - placeholder for 30s pre-warn
+  }
+
+  async _getAppToken() {
+    if (this.appToken && Date.now() < this.appTokenExpiresAt - 60000) {
+      return this.appToken;
+    }
+    const resp = await axios.post('https://id.twitch.tv/oauth2/token', null, {
+      params: {
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        grant_type: 'client_credentials'
+      }
+    });
+    this.appToken = resp?.data?.access_token;
+    this.appTokenExpiresAt = Date.now() + (resp?.data?.expires_in || 3600) * 1000;
+    return this.appToken;
   }
 }
 
