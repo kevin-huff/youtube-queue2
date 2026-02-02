@@ -30,6 +30,72 @@ class AdEventService {
     this.liveCache = new Map(); // broadcasterId -> { live: boolean, ts: number }
     // Dedup store for EventSub notifications (message_id -> ts)
     this._seenMessageIds = new Map();
+    
+    // Circuit breaker for rate limiting (429 errors)
+    this._circuitOpen = false;
+    this._circuitOpenUntil = 0;
+    this._circuitBackoffMs = 60000; // Start with 60 second pause
+    this._circuitMaxBackoffMs = 600000; // Max 10 minute pause
+    this._pendingReconnects = []; // Queue of { broadcasterId, userAccessToken } to reconnect after circuit closes
+  }
+  
+  // Circuit breaker: check if we should allow a reconnect
+  _isCircuitOpen() {
+    if (!this._circuitOpen) return false;
+    if (Date.now() >= this._circuitOpenUntil) {
+      // Circuit timeout expired, close it
+      this._circuitOpen = false;
+      logger.info('AdEventService: circuit breaker closed, resuming reconnects');
+      this._drainPendingReconnects();
+      return false;
+    }
+    return true;
+  }
+  
+  // Trip the circuit breaker on 429 errors
+  _tripCircuitBreaker() {
+    const wasOpen = this._circuitOpen;
+    this._circuitOpen = true;
+    // Exponential backoff: double the pause time on repeated trips, up to max
+    if (wasOpen) {
+      this._circuitBackoffMs = Math.min(this._circuitBackoffMs * 2, this._circuitMaxBackoffMs);
+    }
+    this._circuitOpenUntil = Date.now() + this._circuitBackoffMs;
+    const pauseSec = Math.round(this._circuitBackoffMs / 1000);
+    logger.warn('AdEventService: circuit breaker OPEN - pausing ALL reconnects', { 
+      pauseSeconds: pauseSec, 
+      pendingCount: this._pendingReconnects.length 
+    });
+  }
+  
+  // Queue a reconnect for when the circuit closes
+  _queueReconnect(broadcasterId, userAccessToken) {
+    // Avoid duplicates
+    const exists = this._pendingReconnects.some(p => p.broadcasterId === broadcasterId);
+    if (!exists) {
+      this._pendingReconnects.push({ broadcasterId, userAccessToken });
+    }
+  }
+  
+  // Drain pending reconnects with staggered timing
+  _drainPendingReconnects() {
+    const pending = this._pendingReconnects.splice(0);
+    if (pending.length === 0) return;
+    logger.info('AdEventService: draining pending reconnects', { count: pending.length });
+    // Reset backoff on successful drain start
+    this._circuitBackoffMs = 60000;
+    let delay = 0;
+    for (const { broadcasterId, userAccessToken } of pending) {
+      setTimeout(() => {
+        if (!this._isCircuitOpen()) {
+          this._connectSession(broadcasterId, userAccessToken);
+        } else {
+          // Circuit tripped again, re-queue
+          this._queueReconnect(broadcasterId, userAccessToken);
+        }
+      }, delay);
+      delay += 2000; // 2 seconds between each reconnect attempt
+    }
   }
 
   _loadCredentials() { return {}; }
@@ -73,10 +139,13 @@ class AdEventService {
   // ---- Per‑broadcaster EventSub sessions ----
   async _ensureSessions() {
     const entries = this._getAllCredentials();
+    let delay = 0;
     for (const [broadcasterId, cred] of entries) {
       const key = String(broadcasterId);
       if (!this.sessions.has(key)) {
-        await this._connectSession(key, cred.access_token);
+        // Stagger connections to avoid hitting Twitch rate limits
+        setTimeout(() => this._connectSession(key, cred.access_token), delay);
+        delay += 1000; // 1 second between each connection attempt
       }
     }
   }
@@ -116,6 +185,7 @@ class AdEventService {
             this._armKeepaliveFor(s, keep);
             if (type === 'session_welcome') {
               s.sessionId = msg?.payload?.session?.id;
+              s.backoffMs = 2000; // Reset backoff on successful connection
               logger.info('AdEventService: session established', { sessionId: s.sessionId, broadcasterId });
               await this._createSubscriptionFor(s, 'channel.ad_break.begin', '1', { broadcaster_user_id: broadcasterId }, s.userAccessToken);
               this._armKeepaliveFor(s, keep);
@@ -148,17 +218,37 @@ class AdEventService {
           logger.warn('AdEventService: EventSub WebSocket closed', { broadcasterId, code, reason: reason?.toString?.() });
           s.sessionId = null;
           if (this.enabled) {
-            // Exponential backoff for reconnects; Twitch may close with 4003 when no sub created (e.g., rate limited)
-            const isUnused = Number(code) === 4003;
-            const prev = Number(s.backoffMs || 2000);
-            const next = isUnused ? Math.min(prev * 2, 60_000) : 2000;
-            s.backoffMs = next;
-            setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), next);
+            // Check if this is a rate limit error (429 causes code 1006)
+            const isRateLimited = Number(code) === 1006;
+            
+            if (isRateLimited) {
+              // Trip the circuit breaker - pause ALL reconnects
+              this._tripCircuitBreaker();
+              // Queue this reconnect for when the circuit closes
+              this._queueReconnect(broadcasterId, s.userAccessToken);
+            } else if (this._isCircuitOpen()) {
+              // Circuit is open, queue the reconnect
+              this._queueReconnect(broadcasterId, s.userAccessToken);
+            } else {
+              // Normal reconnect with backoff (for non-429 errors like code 4003)
+              const shouldBackoff = Number(code) === 4003;
+              const prev = Number(s.backoffMs || 2000);
+              const next = shouldBackoff ? Math.min(prev * 2, 120_000) : 2000;
+              s.backoffMs = next;
+              const jitter = Math.floor(Math.random() * next * 0.25);
+              const delay = next + jitter;
+              logger.info('AdEventService: scheduling reconnect', { broadcasterId, delayMs: delay, backoffMs: next });
+              setTimeout(() => this._connectSession(broadcasterId, s.userAccessToken), delay);
+            }
           }
         });
 
         s.ws.on('error', (err) => {
           logger.error('AdEventService: WebSocket error', { broadcasterId, error: err?.message });
+          // Detect 429 rate limit from error message and trip circuit breaker proactively
+          if (err?.message?.includes('429')) {
+            this._tripCircuitBreaker();
+          }
         });
       };
 
