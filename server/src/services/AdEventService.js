@@ -457,18 +457,28 @@ class AdEventService {
     try {
       const prisma = this.channelManager?.prisma;
       if (!prisma) return;
+      // Query accounts that have Twitch credentials
       const accounts = await prisma.account.findMany({
-        where: { provider: 'twitch' },
-        select: { providerAccountId: true, access_token: true, refresh_token: true, scope: true, userId: true }
+        where: { 
+          twitchId: { not: null },
+          twitchAccessToken: { not: null }
+        },
+        select: { 
+          id: true,
+          twitchId: true, 
+          twitchAccessToken: true, 
+          twitchRefreshToken: true, 
+          twitchTokenScope: true 
+        }
       });
       for (const acct of accounts) {
-        if (!acct.access_token || !acct.providerAccountId) continue;
-        const scopes = (acct.scope || '').split(/[\s,]+/).filter(Boolean);
+        if (!acct.twitchAccessToken || !acct.twitchId) continue;
+        const scopes = (acct.twitchTokenScope || '').split(/[\s,]+/).filter(Boolean);
         TokenStore.setToken({
-          accountId: acct.userId,
-          twitchUserId: acct.providerAccountId,
-          accessToken: acct.access_token,
-          refreshToken: acct.refresh_token || null,
+          accountId: acct.id,
+          twitchUserId: acct.twitchId,
+          accessToken: acct.twitchAccessToken,
+          refreshToken: acct.twitchRefreshToken || null,
           scopes
         });
       }
