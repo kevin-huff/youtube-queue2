@@ -45,17 +45,28 @@ class AdEventService {
   }
   
   // Circuit breaker: check if we should allow a reconnect
+  // Returns true if reconnects should be blocked, false if allowed
   _isCircuitOpen() {
     if (!this._circuitOpen) return false;
     if (Date.now() >= this._circuitOpenUntil) {
-      // Circuit timeout expired, close it
-      this._circuitOpen = false;
-      logger.info('AdEventService: circuit breaker closed, will reconnect shared session');
-      // Reconnect the shared session
+      // Backoff period expired - allow reconnect attempt
+      // NOTE: circuit stays "open" until _resetCircuitBreaker() on successful connection
+      // This ensures backoff escalates if the reconnect immediately fails again
+      logger.info('AdEventService: circuit breaker backoff expired, attempting reconnect');
       this._connectSharedSession();
-      return false;
+      return false; // Allow this reconnect
     }
-    return true;
+    return true; // Still in backoff period, block reconnects
+  }
+  
+  // Reset circuit breaker after successful connection
+  _resetCircuitBreaker() {
+    this._circuitOpen = false;
+    this._circuitBackoffMs = 60000; // Reset to initial 60s
+    if (this._circuitTimer) {
+      clearTimeout(this._circuitTimer);
+      this._circuitTimer = null;
+    }
   }
   
   // Trip the circuit breaker on 429 errors
@@ -71,6 +82,14 @@ class AdEventService {
     logger.warn('AdEventService: circuit breaker OPEN - pausing reconnects', { 
       pauseSeconds: pauseSec
     });
+    
+    // Schedule a check to close the circuit and reconnect when backoff expires
+    // Clear any existing timer to avoid duplicates
+    if (this._circuitTimer) clearTimeout(this._circuitTimer);
+    this._circuitTimer = setTimeout(() => {
+      this._circuitTimer = null;
+      this._isCircuitOpen(); // This will close circuit and trigger reconnect
+    }, this._circuitBackoffMs + 100); // Small buffer to ensure we're past the deadline
   }
 
   _loadCredentials() { return {}; }
@@ -97,6 +116,11 @@ class AdEventService {
 
   async shutdown() {
     this.enabled = false;
+    // Clear circuit breaker timer
+    if (this._circuitTimer) {
+      clearTimeout(this._circuitTimer);
+      this._circuitTimer = null;
+    }
     // Close shared EventSub session
     if (this.sharedSession) {
       try { if (this.sharedSession.keepaliveTimeout) clearTimeout(this.sharedSession.keepaliveTimeout); } catch (_) {}
@@ -164,7 +188,7 @@ class AdEventService {
           if (type === 'session_welcome') {
             this.sharedSession.sessionId = msg?.payload?.session?.id;
             this.sharedSession.backoffMs = 2000; // Reset backoff on successful connection
-            this._circuitBackoffMs = 60000; // Reset circuit breaker backoff
+            this._resetCircuitBreaker(); // Reset circuit breaker on successful connection
             logger.info('AdEventService: shared session established', { sessionId: this.sharedSession.sessionId });
             
             // Create subscriptions for ALL broadcasters with staggered timing
