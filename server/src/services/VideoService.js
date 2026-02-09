@@ -217,14 +217,18 @@ class VideoService {
 
   // Helper method to parse YouTube duration format
   parseYouTubeDuration(duration) {
+    // Livestreams and zero-duration entries report P0D or PT0S
+    if (!duration || duration === 'P0D' || duration === 'PT0S') return null;
+
     const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-    if (!match) return 0;
+    if (!match) return null;
 
     const hours = parseInt(match[1]) || 0;
     const minutes = parseInt(match[2]) || 0;
     const seconds = parseInt(match[3]) || 0;
 
-    return hours * 3600 + minutes * 60 + seconds;
+    const total = hours * 3600 + minutes * 60 + seconds;
+    return total === 0 ? null : total;
   }
 
   // Validate video URL

@@ -6,6 +6,7 @@ import { SocketProvider } from './contexts/SocketContext';
 import { AuthProvider } from './contexts/AuthContext';
 import AuthContext from './contexts/AuthContext';
 import NavBar from './components/NavBar';
+import ErrorBoundary from './components/ErrorBoundary';
 import theme from './theme';
 
 // Pages
@@ -52,6 +53,7 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <ErrorBoundary>
       <AuthProvider>
         <SocketProvider>
           <Box
@@ -68,10 +70,10 @@ function App() {
               <Route path="/viewer/:channelName" element={<ViewerHub />} />
               <Route path="/channel/:channelName" element={<ChannelQueue />} />
               <Route path="/u/:username" element={<SubmitterProfile />} />
-              <Route path="/player/:channelName" element={<PlayerOverlay />} />
-              <Route path="/overlay/:channelName/queue" element={<QueueOverlay />} />
-              <Route path="/overlay/:channelName/leaderboard" element={<LeaderboardOverlay />} />
-              <Route path="/overlay/:channelName/series" element={<SeriesLeaderboardOverlay />} />
+              <Route path="/player/:channelName" element={<ErrorBoundary><PlayerOverlay /></ErrorBoundary>} />
+              <Route path="/overlay/:channelName/queue" element={<ErrorBoundary><QueueOverlay /></ErrorBoundary>} />
+              <Route path="/overlay/:channelName/leaderboard" element={<ErrorBoundary><LeaderboardOverlay /></ErrorBoundary>} />
+              <Route path="/overlay/:channelName/series" element={<ErrorBoundary><SeriesLeaderboardOverlay /></ErrorBoundary>} />
               
               {/* Judge Route - Public route that uses token-based auth */}
               <Route 
@@ -136,6 +138,7 @@ function App() {
           </Box>
         </SocketProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </ThemeProvider>
   );
 }

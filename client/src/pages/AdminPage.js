@@ -35,29 +35,13 @@ import {
   , OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
-
-const formatTimestamp = (value) => {
-  if (!value) return 'Just now';
-  try {
-    const date = new Date(value);
-    return date.toLocaleString(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      month: 'short',
-      day: 'numeric'
-    });
-  } catch (error) {
-    return value;
-  }
-};
-
-const getSubmitterUsername = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
-
-const formatSubmitterLabel = (item) => getSubmitterUsername(item);
+import {
+  formatDateTimestamp as formatTimestamp,
+  formatSubmitterLabel
+} from '../utils/format';
+import { SERVER_BASE } from '../utils/api';
 
 const AdminPage = () => {
-  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
   const {
     connected,
@@ -237,7 +221,7 @@ const AdminPage = () => {
       return `https://www.youtube.com/watch?v=${submission.videoId}`;
     }
     return raw;
-  }, [SERVER_BASE]);
+  }, []);
 
   if (!connected) {
     return (

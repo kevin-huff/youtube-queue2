@@ -1,5 +1,19 @@
 const logger = require('../utils/logger');
 
+// Admin socket events that require an authenticated user with channel access
+const ADMIN_EVENTS = new Set([
+  'queue:remove', 'queue:reorder', 'queue:play_next', 'queue:skip',
+  'queue:mark_played', 'queue:clear', 'settings:update', 'volume:change',
+  'admin:enable_queue', 'admin:disable_queue',
+  'player:play', 'player:pause', 'player:seek',
+  'overlay:show_player', 'overlay:hide_player'
+]);
+
+function getSocketUser(socket) {
+  // Passport attaches user to request via session
+  return socket.request?.user || null;
+}
+
 function socketHandler(io, channelManager) {
   const setupChannelNamespace = (channelId, providedNamespace) => {
     const namespacePath = `/channel/${channelId}`;
@@ -18,6 +32,24 @@ function socketHandler(io, channelManager) {
 
     namespace.on('connection', (socket) => {
       logger.info(`Client connected to channel ${channelId}: ${socket.id}`);
+
+      // Attach user info from session (may be null for anonymous overlay clients)
+      socket.data.user = getSocketUser(socket);
+
+      // Gate admin events behind authentication
+      const originalOn = socket.on.bind(socket);
+      socket.on = function(event, handler) {
+        if (ADMIN_EVENTS.has(event)) {
+          return originalOn(event, async (...args) => {
+            if (!socket.data.user) {
+              socket.emit('error', { message: 'Authentication required for this action' });
+              return;
+            }
+            return handler(...args);
+          });
+        }
+        return originalOn(event, handler);
+      };
 
       const queueService = channelManager.getQueueService(channelId);
       if (!queueService) {

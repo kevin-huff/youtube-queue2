@@ -29,7 +29,8 @@ class Server {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const socketCorsOrigin = this.allowedOrigins.length ? this.allowedOrigins : true; // reflect request origin when not set
+    const isProduction = process.env.NODE_ENV === 'production';
+    const socketCorsOrigin = this.allowedOrigins.length ? this.allowedOrigins : (isProduction ? false : true);
 
     this.io = new SocketIOServer(this.server, {
       cors: {
@@ -135,7 +136,7 @@ class Server {
     }));
 
     // CORS
-    const expressCorsOrigin = this.allowedOrigins.length ? this.allowedOrigins : true;
+    const expressCorsOrigin = this.allowedOrigins.length ? this.allowedOrigins : (process.env.NODE_ENV === 'production' ? false : true);
     this.app.use(cors({
       origin: expressCorsOrigin,
       credentials: true
@@ -175,12 +176,20 @@ class Server {
     // Session configuration
     this.app.use(session({
       store: this.sessionStore,
-      secret: process.env.SESSION_SECRET || 'your-secret-key',
+      secret: (() => {
+        const secret = process.env.SESSION_SECRET;
+        if (!secret && process.env.NODE_ENV === 'production') {
+          throw new Error('SESSION_SECRET environment variable is required in production');
+        }
+        return secret || 'dev-session-secret';
+      })(),
+      name: 'yq2.sid',
       resave: false,
       saveUninitialized: false,
       cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
       }
     }));
@@ -219,7 +228,7 @@ class Server {
         for (const [sid, raw] of Object.entries(this.sessionStore.sessions)) {
           let sess = raw;
           if (typeof raw === 'string') {
-            try { sess = JSON.parse(raw); } catch (_) { continue; }
+            try { sess = JSON.parse(raw); } catch (err) { logger.warn('Failed to parse session data', { error: err?.message }); continue; }
           }
           const exp = sess?.cookie?.expires ? new Date(sess.cookie.expires).getTime() : null;
           if (exp && exp <= now) {
@@ -254,7 +263,7 @@ class Server {
         if (fs.existsSync(p)) {
           return fs.readFileSync(p, 'utf8');
         }
-      } catch (_) {}
+      } catch (err) { logger.warn('Failed to read base index.html', { error: err?.message }); }
       // Minimal fallback
       return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FREE* Mediashare</title></head><body><div id="root"></div></body></html>';
     };
@@ -518,9 +527,7 @@ class Server {
       : path.join(__dirname, '../uploads');
     // Use fallthrough: false so missing files return 404 instead of SPA index.html
     this.app.use('/uploads', express.static(uploadsDir, { fallthrough: false }));
-    try {
-      logger.info('Serving /uploads from', { uploadsDir });
-    } catch (_) {}
+    logger.info('Serving /uploads from', { uploadsDir });
 
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
@@ -552,6 +559,31 @@ class Server {
   }
 
   setupSocket() {
+    // Share Express session with Socket.IO so we can identify users
+    const sessionMiddleware = session({
+      store: this.sessionStore,
+      secret: (() => {
+        const secret = process.env.SESSION_SECRET;
+        if (!secret && process.env.NODE_ENV === 'production') {
+          throw new Error('SESSION_SECRET environment variable is required in production');
+        }
+        return secret || 'dev-session-secret';
+      })(),
+      resave: false,
+      saveUninitialized: false,
+      name: 'yq2.sid',
+      cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+      }
+    });
+
+    this.io.engine.use(sessionMiddleware);
+    this.io.engine.use(passport.initialize());
+    this.io.engine.use(passport.session());
+
     socketHandler(this.io, this.channelManager);
     logger.info('Socket.io server configured');
   }

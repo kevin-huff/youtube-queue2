@@ -6,6 +6,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import PlayerControlPanel from '../components/PlayerControlPanel';
 import { GONG_IMAGE_URL, GONG_AUDIO_URL, getActiveGongEntries } from '../constants/gongs';
+import { formatTimestamp } from '../utils/format';
 
 // High-tech reveal animation
 const techReveal = keyframes`
@@ -146,22 +147,6 @@ const Metadata = ({ title, submitter, sx }) => {
   );
 };
 
-const formatTimestamp = (seconds) => {
-  if (typeof seconds !== 'number' || Number.isNaN(seconds) || seconds < 0) {
-    return '0:00';
-  }
-
-  const totalSeconds = Math.floor(seconds);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const secs = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-};
 
 const getSubmitterUsername = (item) =>
   item?.submitter?.twitchUsername || item?.submitterUsername || null;
@@ -201,13 +186,20 @@ const PlayerOverlay = () => {
     [gongState, currentVideoId]
   );
   const gongSeenRef = useRef(new Set());
+  const gongAudioRef = useRef(null);
   const playGongAudio = useCallback(() => {
     if (!GONG_AUDIO_URL) {
       return;
     }
     try {
+      // Clean up previous Audio instance before creating a new one
+      if (gongAudioRef.current) {
+        gongAudioRef.current.pause();
+        gongAudioRef.current.src = '';
+      }
       const audio = new Audio(GONG_AUDIO_URL);
       audio.volume = 1;
+      gongAudioRef.current = audio;
       audio.play().catch(() => {});
     } catch (err) {
       console.warn('Failed to play gong audio on overlay', err);
@@ -229,7 +221,18 @@ const PlayerOverlay = () => {
     });
     gongSeenRef.current = nextIds;
   }, [activeGongs, playGongAudio]);
-  
+
+  // Clean up gong Audio instance on unmount
+  useEffect(() => {
+    return () => {
+      if (gongAudioRef.current) {
+        gongAudioRef.current.pause();
+        gongAudioRef.current.src = '';
+        gongAudioRef.current = null;
+      }
+    };
+  }, []);
+
   // Check if voting is active for the CURRENT video that's playing
   const votingActive = useMemo(() => {
     if (!votingState || !votingState.stage || votingState.stage === 'cancelled') {

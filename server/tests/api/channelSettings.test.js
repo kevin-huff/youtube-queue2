@@ -29,7 +29,8 @@ const createAuthedApp = (overrides = {}) => {
         findFirst: jest.fn().mockResolvedValue(null),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn().mockResolvedValue({ id: 'cup-123', channelId: 'mychan', isActive: true })
-      }
+      },
+      $transaction: jest.fn(async (promises) => Promise.all(promises))
     },
     ...overrides.channelManager
   };

@@ -62,7 +62,7 @@ setup_production_env() {
         
         # Set production defaults
         sed -i.bak 's|NODE_ENV="development"|NODE_ENV="production"|' server/.env
-        sed -i.bak 's|CORS_ORIGIN="http://localhost:3000"|CORS_ORIGIN="*"|' server/.env
+        # Note: Set CORS_ORIGIN in server/.env to your production domain
         
         # Generate secure secrets
         JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || echo "prod_jwt_secret_$(date +%s)")
@@ -80,11 +80,7 @@ setup_production_env() {
         print_warning "Generated admin password: $ADMIN_PASSWORD"
         print_warning "Save this password securely!"
         
-        # Save credentials to file
-        echo "Admin Password: $ADMIN_PASSWORD" > .admin-credentials
-        echo "JWT Secret: $JWT_SECRET" >> .admin-credentials
-        chmod 600 .admin-credentials
-        print_info "Credentials saved to .admin-credentials (secure file)"
+        print_warning "Store these credentials securely - they will not be saved to disk."
     else
         print_status "Production .env file already exists"
     fi
@@ -106,9 +102,9 @@ install_production_deps() {
     print_info "Installing production dependencies..."
     
     # Clean install for production
-    npm ci --only=production
-    cd server && npm ci --only=production && cd ..
-    cd client && npm ci --only=production && cd ..
+    npm ci --omit=dev
+    cd server && npm ci --omit=dev && cd ..
+    cd client && npm ci --omit=dev && cd ..
     
     print_status "Production dependencies installed"
 }
@@ -234,11 +230,7 @@ show_production_info() {
     echo "- Restart: ./start-production.sh"
     echo "- Logs: tail -f production.log"
     echo ""
-    if [ -f ".admin-credentials" ]; then
-        echo "🔐 Admin Credentials:"
-        cat .admin-credentials
-        echo ""
-    fi
+    echo ""
     echo "⚠️  For Twitch integration, edit server/.env with:"
     echo "   TWITCH_USERNAME, TWITCH_OAUTH_TOKEN, TWITCH_CHANNEL"
     echo ""

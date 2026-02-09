@@ -125,6 +125,10 @@ model QueueItem {
   cup         Cup?         @relation(fields: [cupId], references: [id])
   judgeScores JudgeScore[]
 
+  @@index([channelId])
+  @@index([cupId])
+  @@index([status])
+  @@index([channelId, status])
   @@map("queue_items")
 }
 
@@ -154,6 +158,8 @@ model SubmissionLog {
   channel Channel @relation(fields: [channelId], references: [id])
   user    User    @relation(fields: [username, channelId], references: [twitchUsername, channelId])
 
+  @@index([channelId])
+  @@index([username, channelId])
   @@map("submission_logs")
 }
 
@@ -175,6 +181,7 @@ model Series {
   standings SeriesStanding[]
 
   @@unique([channelId, slug])
+  @@index([channelId])
   @@map("series")
 }
 
@@ -203,6 +210,8 @@ model Cup {
   judgeSessions   JudgeSession[]
 
   @@unique([channelId, slug])
+  @@index([channelId])
+  @@index([seriesId])
   @@map("cups")
 }
 
@@ -223,6 +232,8 @@ model ChannelRoleAssignment {
   assignedByAccount Account? @relation("RoleAssignmentsAssignedBy", fields: [assignedBy], references: [id])
 
   @@unique([channelId, accountId, role, cupId])
+  @@index([channelId])
+  @@index([accountId])
   @@map("channel_role_assignments")
 }
 
@@ -294,6 +305,8 @@ model JudgeScore {
   @@unique([cupId, queueItemId, judgeAccountId])
   @@unique([cupId, queueItemId, judgeTokenId])
   @@index([judgeAccountId])
+  @@index([queueItemId])
+  @@index([cupId])
   @@map("judge_scores")
 }
 

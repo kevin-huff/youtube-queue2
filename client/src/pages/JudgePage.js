@@ -36,6 +36,7 @@ import {
   GONG_AUDIO_URL,
   GONG_OWNER_ID
 } from '../constants/gongs';
+import { SERVER_BASE } from '../utils/api';
 
 const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
 
@@ -43,9 +44,9 @@ const JudgePage = () => {
   const { channelName, cupId } = useParams();
   const [searchParams] = useSearchParams();
   const judgeToken = searchParams.get('token');
-  const { 
-    connectToChannel, 
-    disconnectFromChannel, 
+  const {
+    connectToChannel,
+    disconnectFromChannel,
     currentlyPlaying,
     channelConnected,
     addChannelListener,
@@ -53,6 +54,7 @@ const JudgePage = () => {
     playOverlay,
     pauseOverlay,
     seekOverlay,
+    emitToChannel,
     gongState,
     settings,
     lastShuffle
@@ -61,7 +63,6 @@ const JudgePage = () => {
   const sbAudiosRef = useRef(new Set());
   const [sbAudioError, setSbAudioError] = useState(false);
   const [shuffleAudioError, setShuffleAudioError] = useState(false);
-  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [session, setSession] = useState(null);
   const [score, setScore] = useState(2.5);
   const [isLocked, setIsLocked] = useState(false);
@@ -132,7 +133,7 @@ const JudgePage = () => {
       return val;
     }
     return DEFAULT_SHUFFLE_AUDIO_SRC;
-  }, [settings?.shuffle_audio_url, SERVER_BASE]);
+  }, [settings?.shuffle_audio_url]);
 
   // Connect to channel socket
   useEffect(() => {
@@ -189,7 +190,7 @@ const JudgePage = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener, channelConnected, SERVER_BASE]);
+  }, [addChannelListener, removeChannelListener, channelConnected]);
 
   // Cleanup shuffle audio on unmount
   useEffect(() => () => {
@@ -353,12 +354,9 @@ const JudgePage = () => {
     
     addChannelListener('player:state_response', stateHandler);
     
-    // Emit the state request
-    if (window.io && channelName) {
-      const socket = window.io(`/channel/${channelName}`);
-      socket.emit('player:state_request');
-    }
-  }, [currentlyPlaying?.videoId, channelConnected, channelName, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
+    // Emit the state request via the existing channel socket
+    emitToChannel('player:state_request');
+  }, [currentlyPlaying?.videoId, channelConnected, emitToChannel, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
 
   // Auto-sync player state on initial page load if video is already playing
   useEffect(() => {

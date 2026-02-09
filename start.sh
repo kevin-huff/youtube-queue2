@@ -148,7 +148,7 @@ setup_database() {
     npx prisma generate
     
     print_info "Running database setup..."
-    npx prisma db push --force-reset
+    npx prisma db push
     
     cd ..
     print_status "Database setup completed"

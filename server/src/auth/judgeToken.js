@@ -2,8 +2,11 @@ const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const { getDatabase } = require('../database/connection');
 
-// Secret for signing judge tokens (in production, use environment variable)
-const JUDGE_TOKEN_SECRET = process.env.JUDGE_TOKEN_SECRET || 'your-judge-secret-key-change-in-production';
+// Secret for signing judge tokens
+const JUDGE_TOKEN_SECRET = process.env.JUDGE_TOKEN_SECRET || process.env.JWT_SECRET;
+if (!JUDGE_TOKEN_SECRET) {
+  throw new Error('JUDGE_TOKEN_SECRET or JWT_SECRET environment variable is required');
+}
 
 /**
  * Generate a JWT token that grants judge access to a specific cup
@@ -34,7 +37,7 @@ function generateJudgeToken({ channelId, cupId, judgeName = 'Anonymous Judge', e
  */
 function verifyJudgeToken(token) {
   try {
-    const decoded = jwt.verify(token, JUDGE_TOKEN_SECRET);
+    const decoded = jwt.verify(token, JUDGE_TOKEN_SECRET, { algorithms: ['HS256'] });
     
     // Ensure it's a judge token
     if (decoded.type !== 'JUDGE') {

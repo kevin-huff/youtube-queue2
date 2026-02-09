@@ -206,6 +206,7 @@ const useAnimatedNumber = (value, { duration = 400, precision = 5 } = {}) => {
     typeof value === 'number' ? Number(value.toFixed(precision)) : null
   );
   const previousRef = useRef(displayValue);
+  const rafRef = useRef(null);
 
   useEffect(() => {
     if (typeof value !== 'number') {
@@ -231,15 +232,15 @@ const useAnimatedNumber = (value, { duration = 400, precision = 5 } = {}) => {
       const next = from + (to - from) * eased;
       setDisplayValue(Number(next.toFixed(precision)));
       if (t < 1) {
-        requestAnimationFrame(step);
+        rafRef.current = requestAnimationFrame(step);
       } else {
         previousRef.current = to;
       }
     };
-    requestAnimationFrame(step);
+    rafRef.current = requestAnimationFrame(step);
 
     return () => {
-      previousRef.current = null;
+      cancelAnimationFrame(rafRef.current);
     };
   }, [value, duration, precision]);
 

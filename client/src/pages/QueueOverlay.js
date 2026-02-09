@@ -11,6 +11,8 @@ import {
 import { keyframes } from '@emotion/react';
 import { useSocket } from '../contexts/SocketContext';
 import VotingOverlay from '../components/VotingOverlay';
+import { getQueueAlias } from '../utils/format';
+import { SERVER_BASE } from '../utils/api';
 
 const DEFAULT_SHUFFLE_DURATION_MS = 30000;
 const DEFAULT_SHUFFLE_AUDIO_SRC = process.env.REACT_APP_SHUFFLE_AUDIO || '/media/shuffle-theme.mp3';
@@ -222,9 +224,6 @@ const formatDuration = (seconds) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
-const getQueueAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
-
 const QueueOverlay = () => {
   const { channelName } = useParams();
   const {
@@ -286,7 +285,6 @@ const QueueOverlay = () => {
 
   // removed: derivedCupId/activeCupId logic used only for predictions
 
-  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const shuffleAudioSrc = useMemo(() => {
     const raw = settings?.shuffle_audio_url;
     const base = (SERVER_BASE || '').replace(/\/$/, '');
@@ -296,7 +294,7 @@ const QueueOverlay = () => {
       return val;
     }
     return DEFAULT_SHUFFLE_AUDIO_SRC;
-  }, [settings?.shuffle_audio_url, SERVER_BASE]);
+  }, [settings?.shuffle_audio_url]);
 
   useEffect(() => {
     if (typeof Audio === 'undefined') {
@@ -611,7 +609,7 @@ const QueueOverlay = () => {
     };
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
-  }, [addChannelListener, removeChannelListener, channelConnected, SERVER_BASE]);
+  }, [addChannelListener, removeChannelListener, channelConnected]);
 
   // Cleanup all active soundboard audio on unmount
   useEffect(() => () => {

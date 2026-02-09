@@ -61,6 +61,11 @@ import { MenuItem } from '@mui/material';
 import { useSocket } from '../contexts/SocketContext';
 import ChannelQueue from './ChannelQueue';
 import CupAdmin from './CupAdmin';
+import {
+  formatDateTimestamp as formatTimestamp,
+  formatSubmitterLabel
+} from '../utils/format';
+import { SERVER_BASE } from '../utils/api';
 
 const DEFAULT_CHANNEL_SETTINGS = {
   queue_enabled: 'false',
@@ -89,27 +94,6 @@ const normalizeSettings = (raw = {}) => {
   return normalized;
 };
 
-const formatTimestamp = (value) => {
-  if (!value) {
-    return 'Just now';
-  }
-  try {
-    const date = new Date(value);
-    return date.toLocaleString(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      month: 'short',
-      day: 'numeric'
-    });
-  } catch (error) {
-    return value;
-  }
-};
-
-const getSubmitterUsername = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
-
-const formatSubmitterLabel = (item) => getSubmitterUsername(item);
 
 const StatCard = ({ icon, title, value, color = 'primary' }) => {
   const theme = useTheme();
@@ -416,7 +400,6 @@ const Dashboard = () => {
   const [sbName, setSbName] = useState('');
   const [sbBusyId, setSbBusyId] = useState(null);
   const [sbToast, setSbToast] = useState(null);
-  const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const [sbExpanded, setSbExpanded] = useState(false);
   const WARNING_NOTE_LIMIT = 280;
   const saveTimeoutRef = useRef(null);
@@ -841,14 +824,14 @@ const Dashboard = () => {
     } finally {
       setSbBusyId(null);
     }
-  }, [channel?.id, soundboardItems, SERVER_BASE]);
+  }, [channel?.id, soundboardItems]);
 
   const resolveItemUrl = useCallback((item) => {
     const base = (SERVER_BASE || '').replace(/\/$/, '');
     const rel = item?.url || item?.absoluteUrl || '';
     if (!rel) return '';
     return rel.startsWith('/') ? `${base}${rel}` : rel;
-  }, [SERVER_BASE]);
+  }, []);
 
   // Build a review URL for a submission's underlying video
   const getModerationItemUrl = useCallback((item) => {
@@ -864,7 +847,7 @@ const Dashboard = () => {
       return `https://www.youtube.com/watch?v=${item.videoId}`;
     }
     return raw;
-  }, [SERVER_BASE]);
+  }, []);
 
   const handleCopyUrl = useCallback(async (item) => {
     try {

@@ -155,8 +155,8 @@ class AdEventService {
     this._pendingReconnects = [];
     // Close all per-broadcaster EventSub sessions
     for (const sess of this.sessions.values()) {
-      try { if (sess.keepaliveTimeout) clearTimeout(sess.keepaliveTimeout); } catch (_) {}
-      try { if (sess.ws) sess.ws.close(); } catch (_) {}
+      try { if (sess.keepaliveTimeout) clearTimeout(sess.keepaliveTimeout); } catch (err) { logger.warn('AdEventService: failed to clear keepalive timeout during shutdown', { error: err?.message }); }
+      try { if (sess.ws) sess.ws.close(); } catch (err) { logger.warn('AdEventService: failed to close WebSocket during shutdown', { error: err?.message }); }
     }
     this.sessions.clear();
     for (const t of this.pollIntervals.values()) clearInterval(t);
@@ -238,7 +238,7 @@ class AdEventService {
               const reconnectUrl = msg?.payload?.session?.reconnect_url;
               s.reconnectUrl = reconnectUrl;
               logger.info('AdEventService: reconnect requested', { broadcasterId, reconnectUrl });
-              try { if (s.ws) s.ws.close(); } catch (_) {}
+              try { if (s.ws) s.ws.close(); } catch (err) { logger.warn('AdEventService: failed to close old WebSocket during reconnect', { error: err?.message, broadcasterId }); }
               s.ws = new WebSocket(reconnectUrl);
               bindHandlers(); // re-bind to the new socket
               
@@ -305,7 +305,7 @@ class AdEventService {
     const ms = (timeoutSec + 5) * 1000; // Add buffer
     session.keepaliveTimeout = setTimeout(() => {
       logger.warn('AdEventService: keepalive timeout, reconnecting', { broadcasterId: session.broadcasterId });
-      try { if (session.ws) session.ws.close(); } catch (_) {}
+      try { if (session.ws) session.ws.close(); } catch (err) { logger.warn('AdEventService: failed to close WebSocket on keepalive timeout', { error: err?.message, broadcasterId: session.broadcasterId }); }
     }, ms);
   }
 
@@ -323,7 +323,8 @@ class AdEventService {
         }
       }
       return true;
-    } catch (_) {
+    } catch (err) {
+      logger.warn('AdEventService: failed to process message dedup check', { error: err?.message });
       return true;
     }
   }
@@ -436,7 +437,7 @@ class AdEventService {
         const prisma = this.channelManager.prisma;
         const chan = await prisma.channel.findFirst({ where: { twitchUserId: broadcasterId } });
         channelId = chan?.id || null;
-      } catch (_) {}
+      } catch (err) { logger.warn('AdEventService: failed to look up channel for ad break event', { error: err?.message, broadcasterId }); }
 
       if (!channelId) {
         logger.warn('AdEventService: unknown broadcaster for ad event', { broadcasterId });
@@ -519,7 +520,7 @@ class AdEventService {
               this._schedulePreWarn(broadcasterId, msUntil);
             }
           }
-        } catch (_) {}
+        } catch (err) { logger.warn('AdEventService: ad schedule poll failed', { error: err?.message, broadcasterId }); }
       };
       poll();
       this.pollIntervals.set(broadcasterId, setInterval(poll, 60000));
@@ -538,7 +539,8 @@ class AdEventService {
       const live = (resp?.data?.data?.length || 0) > 0;
       this.liveCache.set(broadcasterId, { live, ts: Date.now() });
       return live;
-    } catch (_) {
+    } catch (err) {
+      logger.warn('AdEventService: failed to check live status', { error: err?.message, broadcasterId });
       return false;
     }
   }
@@ -555,7 +557,7 @@ class AdEventService {
       if (data?.next_ad_at) {
         return { nextAdAt: new Date(data.next_ad_at).getTime() };
       }
-    } catch (_) {}
+    } catch (err) { logger.warn('AdEventService: failed to fetch ad schedule', { error: err?.message, broadcasterId }); }
     return null;
   }
 

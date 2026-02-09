@@ -33,10 +33,6 @@ const VOTING_STAGES = {
   CANCELLED: 'cancelled'
 };
 
-// removed unused: createSeededRandom
-
-// removed unused: MAX_ALIAS_ATTEMPTS, shuffleWithSeed
-
 // Cryptographically-strong Fisher–Yates shuffle for unbiased selection/order
 const _cryptoRandomInt = (maxExclusive) => {
   if (typeof crypto.randomInt === 'function') {
@@ -745,6 +741,7 @@ class QueueService {
 
     this._broadcastVotingState('cancelled');
     this.votingHistory.push(snapshot);
+    if (this.votingHistory.length > 100) this.votingHistory.shift();
     this.votingState = null;
     this._broadcastVotingEnded(reason);
 
@@ -1113,6 +1110,7 @@ class QueueService {
 
     const snapshot = this.getVotingState();
     this.votingHistory.push(snapshot);
+    if (this.votingHistory.length > 100) this.votingHistory.shift();
 
     this._broadcastVotingState('completed');
     return snapshot;
@@ -1554,13 +1552,6 @@ class QueueService {
 
       // Emit to all clients
       this.io.emit('queue:video_removed', { id: itemId });
-
-      // Remove from VIP list if present
-      try {
-        await this._removeVipEntry(itemId);
-      } catch (err) {
-        logger.warn('Failed to remove VIP entry during markAsPlayed', { channelId: this.channelId, itemId, error: err });
-      }
 
       logger.info(`Video removed from queue: ${item.title} by ${removedBy}`);
       return true;
@@ -2205,14 +2196,6 @@ class QueueService {
               .filter((entry) => Number.isInteger(entry.id) && !vipSet.has(entry.id))
           : [];
 
-        // Reorder based on provided order (VIPs intentionally excluded)
-        for (let i = 0; i < filteredOrder.length; i += 1) {
-          await this.db.queueItem.update({
-            where: { id: filteredOrder[i].id },
-            data: { position: i + 1 }
-          });
-        }
-
         // Append any remaining orderable (non-VIP) items that weren't included in newOrder
         const remaining = await this.db.queueItem.findMany({
           where: {
@@ -2226,31 +2209,39 @@ class QueueService {
           select: { id: true }
         });
 
+        const playingItems = await this.db.queueItem.findMany({
+          where: { channelId: this.channelId, status: 'PLAYING' },
+          select: { id: true }
+        });
+
+        // Build all position updates and execute in a single transaction
+        const updates = [];
+        for (let i = 0; i < filteredOrder.length; i += 1) {
+          updates.push(this.db.queueItem.update({
+            where: { id: filteredOrder[i].id },
+            data: { position: i + 1 }
+          }));
+        }
+
         let pos = filteredOrder.length + 1;
         for (const item of remaining) {
-          // Skip VIPs just in case
           if (vipSet.has(Number(item.id))) continue;
-          await this.db.queueItem.update({ where: { id: item.id }, data: { position: pos } });
+          updates.push(this.db.queueItem.update({ where: { id: item.id }, data: { position: pos } }));
           pos += 1;
         }
 
-        // Ensure PLAYING items don't collide with head positions; push them to position 0
-        try {
-          const playingItems = await this.db.queueItem.findMany({
-            where: { channelId: this.channelId, status: 'PLAYING' },
-            select: { id: true }
-          });
-          for (const it of playingItems) {
-            await this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } });
-          }
-        } catch (err) {
-          logger.warn('Failed to normalize PLAYING positions during reorder', { channelId: this.channelId, error: err });
+        for (const it of playingItems) {
+          updates.push(this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } }));
+        }
+
+        if (updates.length > 0) {
+          await this.db.$transaction(updates);
         }
       } else {
         // Auto-reorder remaining items excluding VIPs
         const vipList = await this._getVipList();
         const pendingItems = await this.db.queueItem.findMany({
-          where: { 
+          where: {
             channelId: this.channelId,
             status: { in: ORDERABLE_QUEUE_STATUSES },
             id: vipList.length ? { notIn: vipList } : undefined
@@ -2258,24 +2249,24 @@ class QueueService {
           orderBy: { position: 'asc' }
         });
 
+        const playingItems = await this.db.queueItem.findMany({
+          where: { channelId: this.channelId, status: 'PLAYING' },
+          select: { id: true }
+        });
+
+        // Build all position updates and execute in a single transaction
+        const updates = [];
         for (let i = 0; i < pendingItems.length; i += 1) {
-          await this.db.queueItem.update({
+          updates.push(this.db.queueItem.update({
             where: { id: pendingItems[i].id },
             data: { position: i + 1 }
-          });
+          }));
         }
-
-        // Ensure PLAYING items have position 0 so they sort ahead but don't collide
-        try {
-          const playingItems = await this.db.queueItem.findMany({
-            where: { channelId: this.channelId, status: 'PLAYING' },
-            select: { id: true }
-          });
-          for (const it of playingItems) {
-            await this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } });
-          }
-        } catch (err) {
-          logger.warn('Failed to normalize PLAYING positions during auto-reorder', { channelId: this.channelId, error: err });
+        for (const it of playingItems) {
+          updates.push(this.db.queueItem.update({ where: { id: it.id }, data: { position: 0 } }));
+        }
+        if (updates.length > 0) {
+          await this.db.$transaction(updates);
         }
       }
 
@@ -2750,9 +2741,14 @@ class QueueService {
     let suffix = 1;
     let uniqueAlias = `${baseName}${suffix}`;
 
-    while (usedAliasSet.has(uniqueAlias)) {
+    while (usedAliasSet.has(uniqueAlias) && suffix <= 10000) {
       suffix++;
       uniqueAlias = `${baseName}${suffix}`;
+    }
+
+    // Fallback to random suffix if iteration cap reached
+    if (usedAliasSet.has(uniqueAlias)) {
+      uniqueAlias = `${baseName}_${Math.random().toString(36).substring(2, 8)}`;
     }
 
     return uniqueAlias;

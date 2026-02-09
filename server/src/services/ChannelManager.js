@@ -1,7 +1,8 @@
-const { PrismaClient, Prisma } = require('@prisma/client');
+const { Prisma } = require('@prisma/client');
 const QueueService = require('./QueueService');
 const JudgeService = require('./JudgeService');
 const logger = require('../utils/logger');
+const { getDatabase } = require('../database/connection');
 
 const SERIES_POINTS_TABLE = [15, 12, 10, 8, 6, 5, 4, 2];
 const SERIES_PARTICIPATION_POINTS = 1; // participation point for anyone outside the Top 8
@@ -134,7 +135,7 @@ const buildCupScoreData = (queueItems) => {
 
 class ChannelManager {
   constructor(io) {
-    this.prisma = new PrismaClient();
+    this.prisma = getDatabase();
     this.io = io;
     this.channels = new Map(); // channelId -> { queueService, judgeService, settings, isActive }
     this.activeChannels = new Set(); // Set of active channel IDs
@@ -1038,6 +1039,19 @@ class ChannelManager {
         uptime: process.uptime(),
         timestamp: Date.now()
       };
+    }
+  }
+
+  setAdBreak(channelId, isActive) {
+    const channelInstance = this.channels.get(channelId);
+    if (!channelInstance) {
+      logger.warn('setAdBreak called for unknown channel', { channelId });
+      return;
+    }
+    channelInstance.adBreakActive = isActive;
+    const namespace = channelInstance.namespace;
+    if (namespace) {
+      namespace.emit('ad:break_status', { channelId, active: isActive });
     }
   }
 

@@ -41,10 +41,7 @@ import {
   Replay as ReplayIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
-
-// Helper to get the real submitter username for admin display
-const getSubmitterUsername = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || 'Unknown';
+import { getSubmitterUsername } from '../utils/format';
 
 const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const params = useParams();

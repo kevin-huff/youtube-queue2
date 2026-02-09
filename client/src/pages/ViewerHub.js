@@ -25,10 +25,8 @@ import {
   OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon
 } from '@mui/icons-material';
-
-// Derive API base similar to other pages to avoid mixed content and CSP issues
-const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-const API_URL = `${SERVER_BASE}/api`;
+import { formatName, formatPoints, formatOrdinal } from '../utils/format';
+import { API_URL } from '../utils/api';
 
 function ViewerHub() {
   const { channelName } = useParams();
@@ -56,11 +54,6 @@ function ViewerHub() {
       ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
-
-  const formatName = useCallback((username) => {
-    const u = (username || '').toString().trim();
-    return u || 'Anonymous';
-  }, []);
 
   const fetchData = useCallback(async () => {
       try {
@@ -180,27 +173,6 @@ function ViewerHub() {
     }
   };
 
-  const formatPoints = (value) => {
-    const numeric = Number(value ?? 0);
-    if (Number.isNaN(numeric)) {
-      return '0';
-    }
-    if (Number.isInteger(numeric)) {
-      return numeric.toString();
-    }
-    return numeric.toFixed(1);
-  };
-
-  const formatOrdinal = (value) => {
-    const numeric = parseInt(value, 10);
-    if (Number.isNaN(numeric) || numeric <= 0) {
-      return '#?';
-    }
-    const suffixes = ['th', 'st', 'nd', 'rd'];
-    const v = numeric % 100;
-    const suffix = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
-    return `${numeric}${suffix}`;
-  };
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';

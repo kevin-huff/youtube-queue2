@@ -39,7 +39,7 @@ class JudgeService {
               isTokenJudge = false;
             }
           }
-        } catch (_) {}
+        } catch (err) { logger.warn('JudgeService: failed to resolve session ID during token regeneration', { error: err?.message, judgeIdentifier: resolvedIdentifier, cupId }); }
       }
 
       // If token judge, try to lookup existing session to preserve judgeName
@@ -204,7 +204,7 @@ class JudgeService {
             resolved = sess.judgeTokenId || sess.judgeAccountId || resolved;
             isTokenJudge = typeof resolved === 'string' && resolved.startsWith('judge_');
           }
-        } catch (_) {}
+        } catch (err) { logger.warn('JudgeService: failed to resolve session ID during endSession', { error: err?.message, judgeIdentifier: resolved, cupId }); }
       }
 
       let session;

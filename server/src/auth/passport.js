@@ -1,11 +1,11 @@
 const passport = require('passport');
 const TwitchStrategy = require('passport-twitch-new').Strategy;
-const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
 const logger = require('../utils/logger');
 const TokenStore = require('../services/TokenStore');
+const { getDatabase } = require('../database/connection');
 
-const prisma = new PrismaClient();
+const prisma = getDatabase();
 
 const buildUserPayload = async (accountId) => {
   const account = await prisma.account.findUnique({
@@ -147,9 +147,7 @@ const hasTwitchOAuth = Boolean(
 );
 
 if (!hasTwitchOAuth) {
-  try {
-    logger.warn('Twitch OAuth credentials not configured; skipping TwitchStrategy registration');
-  } catch (_) {}
+  logger.warn('Twitch OAuth credentials not configured; skipping TwitchStrategy registration');
 } else {
   passport.use(new TwitchStrategy({
     clientID: process.env.TWITCH_CLIENT_ID,
@@ -166,21 +164,16 @@ if (!hasTwitchOAuth) {
     const profileImageUrl = profile.profile_image_url;
     const email = profile.email;
 
-    // Upsert account information
-    let account = await prisma.account.findFirst({
-      where: {
-        OR: [
-          { twitchId: twitchUserId },
-          { username }
-        ]
-      }
+    // Upsert account information — lookup by stable twitchId first
+    let account = await prisma.account.findUnique({
+      where: { twitchId: twitchUserId }
     });
 
     if (account) {
+      // Existing account — update profile fields
       account = await prisma.account.update({
         where: { id: account.id },
         data: {
-          twitchId: twitchUserId,
           username,
           displayName,
           profileImageUrl,
@@ -188,6 +181,22 @@ if (!hasTwitchOAuth) {
         }
       });
     } else {
+      // No account with this twitchId — check for username conflict
+      const existingByUsername = await prisma.account.findFirst({
+        where: { username }
+      });
+
+      if (existingByUsername) {
+        // Username already belongs to a different twitchId — don't overwrite
+        logger.warn('Username collision: Twitch user tried to claim existing username', {
+          twitchId: twitchUserId,
+          username,
+          existingAccountId: existingByUsername.id,
+          existingTwitchId: existingByUsername.twitchId
+        });
+        return done(new Error('Username already associated with a different Twitch account'), null);
+      }
+
       account = await prisma.account.create({
         data: {
           twitchId: twitchUserId,
@@ -208,7 +217,7 @@ if (!hasTwitchOAuth) {
         refreshToken,
         scopes: Array.isArray(profile?.scope) ? profile.scope : []
       });
-    } catch (_) {}
+    } catch (err) { logger.warn('Failed to store OAuth token in memory', { error: err?.message }); }
 
     // Persist tokens to DB with expiry and scopes (for restart survival)
     try {
@@ -301,7 +310,7 @@ if (!hasTwitchOAuth) {
               role: invite.role,
               cupId: invite.cupId || null
             });
-          } catch (_) {}
+          } catch (err) { logger.warn('Failed to log accepted role invite', { error: err?.message }); }
         } catch (inviteErr) {
           logger.warn('Failed to accept role invite on login', { error: inviteErr?.message, inviteId: invite.id });
         }

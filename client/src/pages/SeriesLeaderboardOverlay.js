@@ -9,9 +9,8 @@ import {
 } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import { useSocket } from '../contexts/SocketContext';
-
-const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-const API_URL = `${SERVER_BASE}/api`;
+import { formatName, formatPoints, formatOrdinal } from '../utils/format';
+import { API_URL } from '../utils/api';
 
 const scrollLoop = keyframes`
   0% { transform: translateY(0); }
@@ -29,43 +28,6 @@ const pulseLine = keyframes`
   50% { opacity: 0.6; transform: scaleX(1); }
   100% { opacity: 0.2; transform: scaleX(0); }
 `;
-
-const formatName = (username) => {
-  const u = (username || '').toString().trim();
-  return u || 'Anonymous';
-};
-
-const formatPoints = (value) => {
-  const numeric = Number(value ?? 0);
-  if (Number.isNaN(numeric)) {
-    return '0';
-  }
-  if (Number.isInteger(numeric)) {
-    return numeric.toString();
-  }
-  return numeric.toFixed(1);
-};
-
-const formatOrdinal = (value) => {
-  const numeric = parseInt(value, 10);
-  if (Number.isNaN(numeric) || numeric <= 0) {
-    return '#?';
-  }
-  const v = numeric % 100;
-  if (v >= 11 && v <= 13) {
-    return `${numeric}th`;
-  }
-  switch (numeric % 10) {
-    case 1:
-      return `${numeric}st`;
-    case 2:
-      return `${numeric}nd`;
-    case 3:
-      return `${numeric}rd`;
-    default:
-      return `${numeric}th`;
-  }
-};
 
 const getSeriesStatusColor = (status) => {
   switch (status) {

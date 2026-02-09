@@ -71,53 +71,12 @@ import {
   GONG_OWNER_ID,
   GONG_IMAGE_URL
 } from '../constants/gongs';
-
-const formatDuration = (seconds) => {
-  if (!seconds && seconds !== 0) {
-    return 'N/A';
-  }
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-};
-
-const formatTimestamp = (seconds) => {
-  if (typeof seconds !== 'number' || Number.isNaN(seconds) || seconds < 0) {
-    return '0:00';
-  }
-
-  const totalSeconds = Math.floor(seconds);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const secs = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-};
-
-const formatModerationTimestamp = (value) => {
-  if (!value) {
-    return 'Just now';
-  }
-
-  try {
-    const date = new Date(value);
-    return date.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (error) {
-    return value;
-  }
-};
-
-const getQueueAlias = (item) =>
-  item?.submitterAlias || item?.submitter?.alias || 'Anonymous';
+import {
+  formatDuration,
+  formatTimestamp,
+  formatDateTimestamp as formatModerationTimestamp,
+  getQueueAlias
+} from '../utils/format';
 
 const QueueItem = ({
   video,

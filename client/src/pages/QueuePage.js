@@ -35,16 +35,7 @@ import {
   QueueMusic as QueueIcon,
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
-
-const getQueueDisplayName = (item) =>
-  item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
-
-const formatDuration = (seconds) => {
-  if (!seconds) return 'Unknown';
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-};
+import { formatDuration, getSubmitterUsername as getQueueDisplayName } from '../utils/format';
 
 const getPlatformIcon = (platform) => {
   switch (platform) {

@@ -25,9 +25,7 @@ import {
   Assessment as AssessmentIcon,
   OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
-
-const SERVER_BASE = process.env.REACT_APP_SERVER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-const API_URL = `${SERVER_BASE}/api`;
+import { API_URL } from '../utils/api';
 
 function formatDate(dateString) {
   if (!dateString) return 'N/A';

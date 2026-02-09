@@ -57,6 +57,11 @@ COPY --from=builder /app/package*.json ./
 # Make entrypoint executable and set ownership
 RUN chmod +x ./start-production-container.sh
 
+# Run as non-root user
+RUN addgroup --system app && adduser --system --ingroup app app
+RUN chown -R app:app /app
+USER app
+
 # Expose server port (app also serves static client)
 EXPOSE 5000
 
