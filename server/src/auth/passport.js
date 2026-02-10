@@ -5,9 +5,11 @@ const logger = require('../utils/logger');
 const TokenStore = require('../services/TokenStore');
 const { getDatabase } = require('../database/connection');
 
-const prisma = getDatabase();
+// Resolve lazily — this module is required before initializeDatabase() runs
+const getPrisma = () => getDatabase();
 
 const buildUserPayload = async (accountId) => {
+  const prisma = getPrisma();
   const account = await prisma.account.findUnique({
     where: { id: accountId },
     include: {
@@ -156,8 +158,9 @@ if (!hasTwitchOAuth) {
     scope: ['user:read:email']
   }, async (accessToken, refreshToken, profile, done) => {
   try {
+    const prisma = getPrisma();
     logger.info(`Twitch OAuth callback for user: ${profile.login}`);
-    
+
     const twitchUserId = profile.id;
     const username = profile.login.toLowerCase();
     const displayName = profile.display_name;
