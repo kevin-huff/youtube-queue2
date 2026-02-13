@@ -84,6 +84,7 @@ export const useSyncedYouTubePlayer = ({
       lastKnownTimeRef.current = startOffset;
       previousReportedTimeRef.current = startOffset;
       setCurrentTime(startOffset);
+      suppressUntilRef.current = Date.now() + 1500;
     } else {
       const time = player.getCurrentTime?.();
       if (typeof time === 'number' && !Number.isNaN(time)) {
@@ -148,10 +149,14 @@ export const useSyncedYouTubePlayer = ({
     if (typeof time === 'number' && !Number.isNaN(time)) {
       current = time;
       lastKnownTimeRef.current = time;
-      setCurrentTime((prev) => (typeof prev === 'number' && Math.abs(prev - time) < 0.05 ? prev : time));
     }
 
     const suppressed = suppressUntilRef.current && suppressUntilRef.current > now;
+
+    // Only update displayed time when not suppressed (avoids stale 0s during video load)
+    if (!suppressed && typeof time === 'number' && !Number.isNaN(time)) {
+      setCurrentTime((prev) => (typeof prev === 'number' && Math.abs(prev - time) < 0.05 ? prev : time));
+    }
     const pageHidden = isHiddenRef.current === true;
     const playerState = event.data;
     const previous = previousReportedTimeRef.current;
@@ -288,6 +293,7 @@ export const useSyncedYouTubePlayer = ({
         setCurrentTime(startAt);
         lastKnownTimeRef.current = startAt;
         previousReportedTimeRef.current = startAt;
+        suppressUntilRef.current = Date.now() + 1500;
       }
       ensurePlayerSize();
       return;
@@ -308,6 +314,9 @@ export const useSyncedYouTubePlayer = ({
       setCurrentTime(loadStart);
       lastKnownTimeRef.current = loadStart;
       previousReportedTimeRef.current = loadStart;
+      if (loadStart > 0) {
+        suppressUntilRef.current = Date.now() + 1500;
+      }
     } else {
       const player = playerRef.current;
       if (autoPlayOnReady && player && typeof player.playVideo === 'function') {
@@ -473,9 +482,12 @@ export const useSyncedYouTubePlayer = ({
 
       const time = player.getCurrentTime?.();
       const dur = player.getDuration?.();
+      const isSuppressed = suppressUntilRef.current && suppressUntilRef.current > Date.now();
 
       if (typeof time === 'number' && !Number.isNaN(time)) {
-        setCurrentTime(time);
+        if (!isSuppressed) {
+          setCurrentTime(time);
+        }
         lastKnownTimeRef.current = time;
       }
 
