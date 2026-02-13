@@ -359,17 +359,23 @@ const JudgePage = () => {
     emitToChannel('player:state_request');
   }, [currentlyPlaying?.videoId, channelConnected, emitToChannel, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
 
-  // Auto-sync player state on initial page load if video is already playing
+  // Auto-sync player state on initial page load if video is already playing (once per video)
+  const initialSyncDoneRef = useRef(null);
   useEffect(() => {
     if (!channelConnected || !currentlyPlaying?.videoId || forceReloadKey !== 0 || !hasVideo) {
       return;
     }
-    
+    // Only auto-sync once per videoId
+    if (initialSyncDoneRef.current === currentlyPlaying.videoId) {
+      return;
+    }
+
     // Wait for player to be ready, then request sync
     const timeout = setTimeout(() => {
+      initialSyncDoneRef.current = currentlyPlaying.videoId;
       handleResyncVideo();
     }, 2500);
-    
+
     return () => clearTimeout(timeout);
   }, [channelConnected, currentlyPlaying?.videoId, forceReloadKey, hasVideo, handleResyncVideo]);
 
