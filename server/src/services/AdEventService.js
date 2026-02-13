@@ -505,6 +505,33 @@ class AdEventService {
   }
 
   // ---- Schedule Polling (fallback for 30s pre-warn) ----
+  async getNextAdForChannel(channelId) {
+    try {
+      const prisma = this.channelManager?.prisma;
+      if (!prisma) return { live: null, nextAdAt: null, duration: null };
+
+      const channel = await prisma.channel.findUnique({
+        where: { id: channelId },
+        select: { twitchUserId: true }
+      });
+      if (!channel?.twitchUserId) return { live: null, nextAdAt: null, duration: null };
+
+      const broadcasterId = channel.twitchUserId;
+      const live = await this._isLive(broadcasterId);
+      if (!live) return { live: false, nextAdAt: null, duration: null };
+
+      const schedule = await this._fetchAdSchedule(broadcasterId);
+      return {
+        live: true,
+        nextAdAt: schedule?.nextAdAt || null,
+        duration: schedule?.duration || null
+      };
+    } catch (err) {
+      logger.warn('AdEventService: getNextAdForChannel failed', { channelId, error: err?.message });
+      return { live: null, nextAdAt: null, duration: null };
+    }
+  }
+
   _startSchedulePolling() {
     const entries = this._getAllCredentials();
     for (const [broadcasterId] of entries) {
