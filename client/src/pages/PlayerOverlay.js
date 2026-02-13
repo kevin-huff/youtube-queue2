@@ -320,6 +320,7 @@ const PlayerOverlay = () => {
     hasVideo
   } = useSyncedYouTubePlayer({
     videoId: currentlyPlaying?.videoId,
+    startSeconds: currentlyPlaying?.startTime || 0,
     channelConnected,
     addChannelListener,
     removeChannelListener,

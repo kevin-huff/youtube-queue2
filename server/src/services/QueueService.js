@@ -1463,6 +1463,7 @@ class QueueService {
           title: videoData.title,
           thumbnailUrl: videoData.thumbnail,
           duration: videoData.duration,
+          startTime: videoData.startTime || 0,
           submitterUsername: submitter,
           submitterAlias: randomAlias,
           position: nextPosition,
@@ -1732,14 +1733,17 @@ class QueueService {
     try {
       const items = await this.db.queueItem.findMany({
         where: { channelId: this.channelId, status: 'PLAYING' },
-        select: { id: true, duration: true, playedAt: true }
+        select: { id: true, duration: true, startTime: true, playedAt: true }
       });
       if (!items || items.length === 0) return;
 
       const now = Date.now();
       for (const it of items) {
         if (this.currentlyPlaying && this.currentlyPlaying.id === it.id) continue;
-        const durationMs = Math.max(0, Number(it.duration || 0)) * 1000;
+        const totalDuration = Math.max(0, Number(it.duration || 0));
+        const startOffset = Math.max(0, Number(it.startTime || 0));
+        const effectiveDuration = startOffset > 0 && totalDuration > startOffset ? totalDuration - startOffset : totalDuration;
+        const durationMs = effectiveDuration * 1000;
         const playedAtMs = it.playedAt ? new Date(it.playedAt).getTime() : 0;
         if (!playedAtMs || durationMs === 0) continue;
         if (this.isVotingActiveForItem(it.id)) continue;

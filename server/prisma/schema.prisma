@@ -106,6 +106,7 @@ model QueueItem {
   title             String?
   thumbnailUrl      String?     @map("thumbnail_url")
   duration          Int? // Duration in seconds
+  startTime         Int?        @default(0) @map("start_time")
   submitterUsername String      @map("submitter_username")
   submitterAlias    String?     @map("submitter_alias")
   status            QueueStatus @default(PENDING)

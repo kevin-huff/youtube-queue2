@@ -112,6 +112,7 @@ const JudgePage = () => {
     hasVideo
   } = useSyncedYouTubePlayer({
     videoId: forceReloadKey === 0 ? currentlyPlaying?.videoId : null,
+    startSeconds: forceReloadKey === 0 ? (currentlyPlaying?.startTime || 0) : 0,
     channelConnected,
     addChannelListener,
     removeChannelListener,

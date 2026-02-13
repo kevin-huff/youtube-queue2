@@ -35,7 +35,8 @@ class VideoService {
         return {
           platform: 'YOUTUBE',
           videoId: match[1],
-          url: url
+          url: url,
+          startTime: this.parseTimestamp(url)
         };
       }
     }
@@ -91,7 +92,7 @@ class VideoService {
       let metadata;
       switch (videoInfo.platform) {
         case 'YOUTUBE':
-          metadata = await this.getYouTubeMetadata(videoInfo.videoId, options);
+          metadata = await this.getYouTubeMetadata(videoInfo.videoId, { ...options, startTime: videoInfo.startTime || 0 });
           break;
         case 'TIKTOK':
           metadata = await this.getTikTokMetadata(videoInfo.url);
@@ -107,6 +108,7 @@ class VideoService {
       metadata.platform = videoInfo.platform;
       metadata.videoId = videoInfo.videoId;
       metadata.url = videoInfo.url;
+      metadata.startTime = videoInfo.startTime || 0;
 
       // Cache the result
       this.cache.set(cacheKey, {
@@ -156,8 +158,14 @@ class VideoService {
       const maxDuration = Number.isFinite(parsedRequested) && parsedRequested > 0
         ? parsedRequested
         : (Number.isFinite(envMaxDuration) && envMaxDuration > 0 ? envMaxDuration : 600);
-      if (duration > maxDuration) {
-        throw new Error(`Video too long (${Math.floor(duration / 60)}m ${duration % 60}s). Max allowed: ${Math.floor(maxDuration / 60)}m ${maxDuration % 60}s`);
+
+      const startTime = options?.startTime || 0;
+      if (startTime > 0 && duration && startTime >= duration) {
+        throw new Error(`Timestamp (${startTime}s) is past the end of the video (${Math.floor(duration / 60)}m ${duration % 60}s)`);
+      }
+      const effectiveDuration = startTime > 0 && duration ? duration - startTime : duration;
+      if (effectiveDuration > maxDuration) {
+        throw new Error(`Video too long (${Math.floor(effectiveDuration / 60)}m ${effectiveDuration % 60}s from timestamp). Max allowed: ${Math.floor(maxDuration / 60)}m ${maxDuration % 60}s`);
       }
 
       return {
@@ -229,6 +237,34 @@ class VideoService {
 
     const total = hours * 3600 + minutes * 60 + seconds;
     return total === 0 ? null : total;
+  }
+
+  // Parse YouTube timestamp from URL (?t=120, &t=2m30s, &t=1h2m30s)
+  parseTimestamp(url) {
+    try {
+      const urlObj = new URL(url);
+      const tParam = urlObj.searchParams.get('t');
+      if (!tParam) return 0;
+
+      // Pure numeric seconds: "120" or "120s"
+      const numericMatch = tParam.match(/^(\d+)s?$/);
+      if (numericMatch) {
+        return parseInt(numericMatch[1], 10);
+      }
+
+      // HMS format: "1h2m30s", "2m30s", "1h30s", "1h2m"
+      const hmsMatch = tParam.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+      if (hmsMatch && (hmsMatch[1] || hmsMatch[2] || hmsMatch[3])) {
+        const hours = parseInt(hmsMatch[1], 10) || 0;
+        const minutes = parseInt(hmsMatch[2], 10) || 0;
+        const seconds = parseInt(hmsMatch[3], 10) || 0;
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+
+      return 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   // Validate video URL

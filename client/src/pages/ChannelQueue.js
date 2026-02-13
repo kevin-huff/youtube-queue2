@@ -448,6 +448,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     hasVideo
   } = useSyncedYouTubePlayer({
     videoId: currentlyPlaying?.videoId,
+    startSeconds: currentlyPlaying?.startTime || 0,
     channelConnected,
     addChannelListener,
     removeChannelListener,

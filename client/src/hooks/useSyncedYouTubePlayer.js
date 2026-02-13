@@ -12,6 +12,7 @@ const clampVolume = (value) => {
 
 export const useSyncedYouTubePlayer = ({
   videoId,
+  startSeconds,
   channelConnected,
   addChannelListener,
   removeChannelListener,
@@ -251,6 +252,7 @@ export const useSyncedYouTubePlayer = ({
         return; // wait until we have an actual video before creating the player
       }
 
+      const startAt = startSeconds || 0;
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId,
         playerVars: {
@@ -260,7 +262,8 @@ export const useSyncedYouTubePlayer = ({
           modestbranding: 1,
           disablekb: 1,
           fs: 1,
-          playsinline: 1
+          playsinline: 1,
+          start: startAt
         },
         events: {
           onReady: handlePlayerReady,
@@ -281,10 +284,11 @@ export const useSyncedYouTubePlayer = ({
 
     const currentVideo = playerRef.current.getVideoData()?.video_id;
     if (currentVideo !== videoId) {
-      playerRef.current.loadVideoById(videoId);
-      setCurrentTime(0);
-      lastKnownTimeRef.current = 0;
-      previousReportedTimeRef.current = 0;
+      const loadStart = startSeconds || 0;
+      playerRef.current.loadVideoById({ videoId, startSeconds: loadStart });
+      setCurrentTime(loadStart);
+      lastKnownTimeRef.current = loadStart;
+      previousReportedTimeRef.current = loadStart;
     } else {
       const player = playerRef.current;
       if (autoPlayOnReady && player && typeof player.playVideo === 'function') {
@@ -292,7 +296,7 @@ export const useSyncedYouTubePlayer = ({
       }
     }
     ensurePlayerSize();
-  }, [apiReady, videoId, handlePlayerReady, handlePlayerStateChange, ensurePlayerSize, autoPlayOnReady]);
+  }, [apiReady, videoId, startSeconds, handlePlayerReady, handlePlayerStateChange, ensurePlayerSize, autoPlayOnReady]);
 
   useEffect(() => {
     return () => {
