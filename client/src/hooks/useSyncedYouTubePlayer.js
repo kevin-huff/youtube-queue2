@@ -39,7 +39,12 @@ export const useSyncedYouTubePlayer = ({
   const lastNonZeroVolumeRef = useRef(
     initialVolumeState && initialVolumeState > 0 ? initialVolumeState : 50
   );
+  const startSecondsRef = useRef(startSeconds || 0);
   const isHiddenRef = useRef(typeof document !== 'undefined' ? document.hidden : false);
+
+  useEffect(() => {
+    startSecondsRef.current = startSeconds || 0;
+  }, [startSeconds]);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -72,11 +77,20 @@ export const useSyncedYouTubePlayer = ({
       setDuration(dur);
     }
 
-    const time = player.getCurrentTime?.();
-    if (typeof time === 'number' && !Number.isNaN(time)) {
-      lastKnownTimeRef.current = time;
-      previousReportedTimeRef.current = time;
-      setCurrentTime(time);
+    // If a start offset was requested, seek to it and use that as the initial time
+    const startOffset = startSecondsRef.current || 0;
+    if (startOffset > 0 && typeof player.seekTo === 'function') {
+      player.seekTo(startOffset, true);
+      lastKnownTimeRef.current = startOffset;
+      previousReportedTimeRef.current = startOffset;
+      setCurrentTime(startOffset);
+    } else {
+      const time = player.getCurrentTime?.();
+      if (typeof time === 'number' && !Number.isNaN(time)) {
+        lastKnownTimeRef.current = time;
+        previousReportedTimeRef.current = time;
+        setCurrentTime(time);
+      }
     }
 
     // Start playback when ready only if allowed
@@ -270,6 +284,11 @@ export const useSyncedYouTubePlayer = ({
           onStateChange: handlePlayerStateChange
         }
       });
+      if (startAt > 0) {
+        setCurrentTime(startAt);
+        lastKnownTimeRef.current = startAt;
+        previousReportedTimeRef.current = startAt;
+      }
       ensurePlayerSize();
       return;
     }
