@@ -40,6 +40,8 @@ export const useSyncedYouTubePlayer = ({
     initialVolumeState && initialVolumeState > 0 ? initialVolumeState : 50
   );
   const startSecondsRef = useRef(startSeconds || 0);
+  // Guards against stale 0-time readings while the player seeks to a start offset
+  const pendingStartRef = useRef(0);
   const isHiddenRef = useRef(typeof document !== 'undefined' ? document.hidden : false);
 
   useEffect(() => {
@@ -84,7 +86,7 @@ export const useSyncedYouTubePlayer = ({
       lastKnownTimeRef.current = startOffset;
       previousReportedTimeRef.current = startOffset;
       setCurrentTime(startOffset);
-      suppressUntilRef.current = Date.now() + 1500;
+      pendingStartRef.current = startOffset;
     } else {
       const time = player.getCurrentTime?.();
       if (typeof time === 'number' && !Number.isNaN(time)) {
@@ -149,14 +151,18 @@ export const useSyncedYouTubePlayer = ({
     if (typeof time === 'number' && !Number.isNaN(time)) {
       current = time;
       lastKnownTimeRef.current = time;
+
+      // Guard: if waiting for player to reach a start offset, ignore stale pre-seek readings
+      const pending = pendingStartRef.current;
+      if (pending > 0 && time < pending - 2) {
+        // Player hasn't reached the start offset yet — don't update displayed time
+      } else {
+        if (pending > 0) pendingStartRef.current = 0;
+        setCurrentTime((prev) => (typeof prev === 'number' && Math.abs(prev - time) < 0.05 ? prev : time));
+      }
     }
 
     const suppressed = suppressUntilRef.current && suppressUntilRef.current > now;
-
-    // Only update displayed time when not suppressed (avoids stale 0s during video load)
-    if (!suppressed && typeof time === 'number' && !Number.isNaN(time)) {
-      setCurrentTime((prev) => (typeof prev === 'number' && Math.abs(prev - time) < 0.05 ? prev : time));
-    }
     const pageHidden = isHiddenRef.current === true;
     const playerState = event.data;
     const previous = previousReportedTimeRef.current;
@@ -293,7 +299,7 @@ export const useSyncedYouTubePlayer = ({
         setCurrentTime(startAt);
         lastKnownTimeRef.current = startAt;
         previousReportedTimeRef.current = startAt;
-        suppressUntilRef.current = Date.now() + 1500;
+        pendingStartRef.current = startAt;
       }
       ensurePlayerSize();
       return;
@@ -314,9 +320,7 @@ export const useSyncedYouTubePlayer = ({
       setCurrentTime(loadStart);
       lastKnownTimeRef.current = loadStart;
       previousReportedTimeRef.current = loadStart;
-      if (loadStart > 0) {
-        suppressUntilRef.current = Date.now() + 1500;
-      }
+      pendingStartRef.current = loadStart;
     } else {
       const player = playerRef.current;
       if (autoPlayOnReady && player && typeof player.playVideo === 'function') {
@@ -482,10 +486,13 @@ export const useSyncedYouTubePlayer = ({
 
       const time = player.getCurrentTime?.();
       const dur = player.getDuration?.();
-      const isSuppressed = suppressUntilRef.current && suppressUntilRef.current > Date.now();
 
       if (typeof time === 'number' && !Number.isNaN(time)) {
-        if (!isSuppressed) {
+        const pending = pendingStartRef.current;
+        if (pending > 0 && time < pending - 2) {
+          // Player hasn't reached the start offset yet — don't update displayed time
+        } else {
+          if (pending > 0) pendingStartRef.current = 0;
           setCurrentTime(time);
         }
         lastKnownTimeRef.current = time;
