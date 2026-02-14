@@ -342,12 +342,17 @@ const JudgePage = () => {
         // Apply the received state after player reloads
         setTimeout(() => {
           if (state && typeof state.time === 'number') {
-            seekLocal(state.time, { source: 'remote' });
-            
+            // If the server hasn't tracked a position yet (time=0, not playing),
+            // fall back to the video's startTime so URL timestamps aren't overridden.
+            const hasServerState = state.time > 0 || state.playing;
+            const seekTime = hasServerState ? state.time : (currentlyPlaying?.startTime || 0);
+
+            seekLocal(seekTime, { source: 'remote' });
+
             if (state.playing) {
-              playLocal(state.time, { source: 'remote' });
+              playLocal(seekTime, { source: 'remote' });
             } else {
-              pauseLocal(state.time, { source: 'remote' });
+              pauseLocal(seekTime, { source: 'remote' });
             }
           }
           
@@ -361,7 +366,7 @@ const JudgePage = () => {
     
     // Emit the state request via the existing channel socket
     emitToChannel('player:state_request');
-  }, [currentlyPlaying?.videoId, channelConnected, emitToChannel, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
+  }, [currentlyPlaying?.videoId, currentlyPlaying?.startTime, channelConnected, emitToChannel, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
 
   // Auto-sync player state on initial page load if video is already playing (once per video)
   const initialSyncDoneRef = useRef(null);

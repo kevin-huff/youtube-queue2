@@ -60,6 +60,7 @@ export const SocketProvider = ({ children }) => {
   const [queueEnabled, setQueueEnabled] = useState(false);
   const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [scoresByItem, setScoresByItem] = useState({});
   const [cupStandings, setCupStandings] = useState({});
   const [cupVideoSummaries, setCupVideoSummaries] = useState({});
@@ -126,6 +127,7 @@ export const SocketProvider = ({ children }) => {
     setQueueEnabled(false);
     setCurrentlyPlaying(null);
     setSettings(null);
+    setSettingsLoaded(false);
     setScoresByItem({});
     setCupStandings({});
     setCupVideoSummaries({});
@@ -435,19 +437,23 @@ export const SocketProvider = ({ children }) => {
         // Silently fail for auth errors (judges don't have access to settings)
         if (response.status === 401 || response.status === 403) {
           setSettings(null);
+          setSettingsLoaded(true);
           return;
         }
         console.warn('Failed to load channel settings:', response.status);
         setSettings(null);
+        setSettingsLoaded(true);
         return;
       }
 
       const data = await response.json();
       setSettings(data.settings || null);
+      setSettingsLoaded(true);
     } catch (error) {
       // Only log non-auth errors
       console.warn('Failed to load channel settings:', error);
       setSettings(null);
+      setSettingsLoaded(true);
     }
   }, []);
 
@@ -915,6 +921,7 @@ export const SocketProvider = ({ children }) => {
     queueEnabled,
     currentlyPlaying,
     settings,
+    settingsLoaded,
     scoresByItem,
     cupStandings,
     cupVideoSummaries,
@@ -972,6 +979,7 @@ export const SocketProvider = ({ children }) => {
     queueEnabled,
     currentlyPlaying,
     settings,
+    settingsLoaded,
     scoresByItem,
     cupStandings,
     cupVideoSummaries,

@@ -371,6 +371,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     removeChannelListener,
     triggerShuffle,
     settings,
+    settingsLoaded,
     cupStandings,
     cupMetadata,
     refreshCupStandings,
@@ -1467,6 +1468,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
         return;
       }
 
+      // Wait for the full settings to load from the REST API before generating a new token.
+      // Without this gate, the partial settings from queue:initial_state would cause a
+      // cache miss and generate a duplicate judge token on every page refresh.
+      if (!settingsLoaded) return;
+
       // 2) No shared token yet — generate one and persist to channel settings
       const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/judges/${user.id}/regenerate`, {
         method: 'POST',
@@ -1495,7 +1501,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       setHostJudgeToken(null);
       clearCachedHostToken();
     }
-  }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings, readCachedHostToken, writeCachedHostToken, clearCachedHostToken]);
+  }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings, settingsLoaded, readCachedHostToken, writeCachedHostToken, clearCachedHostToken]);
 
   const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER']);
 
