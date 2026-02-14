@@ -555,14 +555,21 @@ export const SocketProvider = ({ children }) => {
       explicitConnectRef.current = true;
     }
 
-    const namespace = io(`${DEFAULT_SERVER_URL}/channel/${normalizedChannelId}`, {
+    const socketOptions = {
       // Allow polling fallback and ensure path consistency
       path: '/socket.io',
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
       withCredentials: true
-    });
+    };
+
+    // Pass auth tokens (e.g. judge token) via handshake
+    if (options.auth) {
+      socketOptions.auth = options.auth;
+    }
+
+    const namespace = io(`${DEFAULT_SERVER_URL}/channel/${normalizedChannelId}`, socketOptions);
 
     channelSocketRef.current = namespace;
     setActiveChannelId(normalizedChannelId);

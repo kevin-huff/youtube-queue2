@@ -136,15 +136,19 @@ const JudgePage = () => {
     return DEFAULT_SHUFFLE_AUDIO_SRC;
   }, [settings?.shuffle_audio_url]);
 
-  // Connect to channel socket
+  // Connect to channel socket with judge token auth
   useEffect(() => {
     if (channelName) {
-      connectToChannel(channelName, { explicit: true });
+      const opts = { explicit: true };
+      if (judgeToken) {
+        opts.auth = { judgeToken };
+      }
+      connectToChannel(channelName, opts);
       return () => {
         disconnectFromChannel();
       };
     }
-  }, [channelName, connectToChannel, disconnectFromChannel]);
+  }, [channelName, judgeToken, connectToChannel, disconnectFromChannel]);
 
   // Soundboard playback listener
   useEffect(() => {

@@ -1,12 +1,17 @@
 const logger = require('../utils/logger');
+const { verifyJudgeToken } = require('../auth/judgeToken');
 
 // Admin socket events that require an authenticated user with channel access
 const ADMIN_EVENTS = new Set([
   'queue:remove', 'queue:reorder', 'queue:play_next', 'queue:skip',
   'queue:mark_played', 'queue:clear', 'settings:update', 'volume:change',
   'admin:enable_queue', 'admin:disable_queue',
-  'player:play', 'player:pause', 'player:seek',
   'overlay:show_player', 'overlay:hide_player'
+]);
+
+// Player control events — allowed for both authenticated users and verified judges
+const PLAYER_EVENTS = new Set([
+  'player:play', 'player:pause', 'player:seek'
 ]);
 
 function getSocketUser(socket) {
@@ -36,12 +41,30 @@ function socketHandler(io, channelManager) {
       // Attach user info from session (may be null for anonymous overlay clients)
       socket.data.user = getSocketUser(socket);
 
+      // Check for judge token in handshake auth
+      const judgeToken = socket.handshake?.auth?.judgeToken;
+      if (!socket.data.user && judgeToken) {
+        const decoded = verifyJudgeToken(judgeToken);
+        if (decoded && decoded.channelId === channelId) {
+          socket.data.judgeAuth = decoded;
+        }
+      }
+
       // Gate admin events behind authentication
       const originalOn = socket.on.bind(socket);
       socket.on = function(event, handler) {
         if (ADMIN_EVENTS.has(event)) {
           return originalOn(event, async (...args) => {
             if (!socket.data.user) {
+              socket.emit('error', { message: 'Authentication required for this action' });
+              return;
+            }
+            return handler(...args);
+          });
+        }
+        if (PLAYER_EVENTS.has(event)) {
+          return originalOn(event, async (...args) => {
+            if (!socket.data.user && !socket.data.judgeAuth) {
               socket.emit('error', { message: 'Authentication required for this action' });
               return;
             }
