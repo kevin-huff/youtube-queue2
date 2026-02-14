@@ -27,6 +27,7 @@ module.exports = (router, { helpers }) => {
             title: req.body.title,
             slug: req.body.slug,
             theme: req.body.theme || null,
+            description: req.body.description || null,
             status: req.body.status || 'DRAFT',
             seriesId: req.body.seriesId || null,
             metadata: req.body.metadata || {}
@@ -472,7 +473,7 @@ module.exports = (router, { helpers }) => {
         const channelManager = getChannelManager(req);
         const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
 
-        const allowedUpdates = ['title', 'theme', 'status', 'startsAt', 'endsAt', 'metadata', 'seriesId'];
+        const allowedUpdates = ['title', 'theme', 'description', 'status', 'startsAt', 'endsAt', 'metadata', 'seriesId'];
         const updates = {};
 
         for (const field of allowedUpdates) {

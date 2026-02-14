@@ -192,8 +192,9 @@ model Cup {
   seriesId  String?   @map("series_id")
   title     String
   slug      String
-  theme     String?
-  status    CupStatus @default(DRAFT)
+  theme       String?
+  description String?
+  status      CupStatus @default(DRAFT)
   isActive  Boolean   @default(false) @map("is_active")
   startsAt  DateTime? @map("starts_at")
   endsAt    DateTime? @map("ends_at")

@@ -38,6 +38,7 @@ import {
   Link as LinkIcon,
   People as PeopleIcon,
   Refresh as RefreshIcon,
+  Edit as EditIcon,
   Replay as ReplayIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
@@ -69,8 +70,10 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const [cupTitle, setCupTitle] = useState('');
   const [cupSlug, setCupSlug] = useState('');
   const [cupTheme, setCupTheme] = useState('');
+  const [cupDescription, setCupDescription] = useState('');
   const [cupStatus, setCupStatus] = useState('LIVE');
   const [cupSeriesId, setCupSeriesId] = useState('');
+  const [editingCup, setEditingCup] = useState(null);
 
   // Series management
   const [seriesList, setSeriesList] = useState([]);
@@ -428,42 +431,51 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     }
   };
 
-  const handleCreateCup = async () => {
-    if (!cupTitle.trim() || !cupSlug.trim()) {
+  const handleSaveCup = async () => {
+    if (!cupTitle.trim() || (!editingCup && !cupSlug.trim())) {
       setError('Title and slug are required');
       return;
     }
 
     try {
       setLoading(true);
-      const response = await fetch(`/api/channels/${channelName}/cups`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          title: cupTitle.trim(),
-          slug: cupSlug.trim(),
-          theme: cupTheme.trim() || null,
-          status: cupStatus,
-          seriesId: cupSeriesId || null,
-        }),
-      });
+
+      let response;
+      if (editingCup) {
+        response = await fetch(`/api/channels/${channelName}/cups/${editingCup.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            title: cupTitle.trim(),
+            theme: cupTheme.trim() || null,
+            description: cupDescription.trim() || null,
+          }),
+        });
+      } else {
+        response = await fetch(`/api/channels/${channelName}/cups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            title: cupTitle.trim(),
+            slug: cupSlug.trim(),
+            theme: cupTheme.trim() || null,
+            description: cupDescription.trim() || null,
+            status: cupStatus,
+            seriesId: cupSeriesId || null,
+          }),
+        });
+      }
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create cup');
+        throw new Error(errorData.error || (editingCup ? 'Failed to update cup' : 'Failed to create cup'));
       }
 
-      setSnackbarMessage('Cup created successfully!');
+      setSnackbarMessage(editingCup ? 'Cup updated successfully!' : 'Cup created successfully!');
       setSnackbarOpen(true);
-      setCreateDialogOpen(false);
-      setCupTitle('');
-      setCupSlug('');
-      setCupTheme('');
-      setCupStatus('LIVE');
-      setCupSeriesId('');
+      handleCloseCreateDialog();
       fetchCups();
     } catch (err) {
       setError(err.message);
@@ -474,11 +486,24 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
 
   const handleCloseCreateDialog = () => {
     setCreateDialogOpen(false);
+    setEditingCup(null);
     setCupTitle('');
     setCupSlug('');
     setCupTheme('');
+    setCupDescription('');
     setCupStatus('LIVE');
     setCupSeriesId('');
+  };
+
+  const openEditCupDialog = (cup) => {
+    setEditingCup(cup);
+    setCupTitle(cup.title || '');
+    setCupSlug(cup.slug || '');
+    setCupTheme(cup.theme || '');
+    setCupDescription(cup.description || '');
+    setCupStatus(cup.status || 'LIVE');
+    setCupSeriesId(cup.seriesId || '');
+    setCreateDialogOpen(true);
   };
 
   const openCreateSeriesDialog = () => {
@@ -1268,6 +1293,11 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                     <Typography variant="body2" color="text.secondary" gutterBottom>
                       {cup.theme || 'No theme'}
                     </Typography>
+                    {cup.description && (
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        {cup.description}
+                      </Typography>
+                    )}
                     <Typography variant="body2" color="text.secondary">
                       {cup.series
                         ? `Series: ${cup.series.title} (${cup.series.status})`
@@ -1300,6 +1330,13 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                     </Stack>
                   </Box>
                   <Stack direction="row" spacing={1}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<EditIcon />}
+                      onClick={() => openEditCupDialog(cup)}
+                    >
+                      Edit
+                    </Button>
                     <Button
                       variant="outlined"
                       onClick={() => handleViewVideos(cup)}
@@ -1605,14 +1642,14 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
         </DialogActions>
       </Dialog>
 
-      {/* Create Cup Dialog */}
+      {/* Create/Edit Cup Dialog */}
       <Dialog
         open={createDialogOpen}
         onClose={handleCloseCreateDialog}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>Create New Cup</DialogTitle>
+        <DialogTitle>{editingCup ? 'Edit Cup' : 'Create New Cup'}</DialogTitle>
         <DialogContent>
           <Stack spacing={3} mt={2}>
             <TextField
@@ -1625,15 +1662,17 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
               autoFocus
               required
             />
-            <TextField
-              label="Slug"
-              value={cupSlug}
-              onChange={(e) => setCupSlug(e.target.value)}
-              fullWidth
-              placeholder="e.g., spring-2025-tournament"
-              helperText="URL-friendly identifier (auto-generated from title)"
-              required
-            />
+            {!editingCup && (
+              <TextField
+                label="Slug"
+                value={cupSlug}
+                onChange={(e) => setCupSlug(e.target.value)}
+                fullWidth
+                placeholder="e.g., spring-2025-tournament"
+                helperText="URL-friendly identifier (auto-generated from title)"
+                required
+              />
+            )}
             <TextField
               label="Theme (Optional)"
               value={cupTheme}
@@ -1643,43 +1682,57 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
               helperText="Optional theme or category for this cup"
             />
             <TextField
-              label="Status"
-              value={cupStatus}
-              onChange={(e) => setCupStatus(e.target.value)}
+              label="Description (Optional)"
+              value={cupDescription}
+              onChange={(e) => setCupDescription(e.target.value)}
               fullWidth
-              select
-              SelectProps={{ native: true }}
-              helperText="Cup status - LIVE allows judge links"
-            >
-              <option value="LIVE">Live (Active Show)</option>
-              <option value="COMPLETED">Completed (Archived)</option>
-            </TextField>
-            <TextField
-              label="Series"
-              value={cupSeriesId}
-              onChange={(e) => setCupSeriesId(e.target.value)}
-              fullWidth
-              select
-              SelectProps={{ native: true }}
-              helperText={seriesList.length ? 'Select the series this cup belongs to' : 'Create a series to organize cups'}
-            >
-              <option value="">No Series</option>
-              {seriesList.map((series) => (
-                <option key={series.id} value={series.id}>
-                  {series.title} {series.status === 'ACTIVE' ? '(Active)' : ''}
-                </option>
-              ))}
-            </TextField>
+              multiline
+              minRows={2}
+              placeholder="e.g., A tournament to find the best speedrun clips"
+              helperText="Optional description for this cup"
+            />
+            {!editingCup && (
+              <>
+                <TextField
+                  label="Status"
+                  value={cupStatus}
+                  onChange={(e) => setCupStatus(e.target.value)}
+                  fullWidth
+                  select
+                  SelectProps={{ native: true }}
+                  helperText="Cup status - LIVE allows judge links"
+                >
+                  <option value="LIVE">Live (Active Show)</option>
+                  <option value="COMPLETED">Completed (Archived)</option>
+                </TextField>
+                <TextField
+                  label="Series"
+                  value={cupSeriesId}
+                  onChange={(e) => setCupSeriesId(e.target.value)}
+                  fullWidth
+                  select
+                  SelectProps={{ native: true }}
+                  helperText={seriesList.length ? 'Select the series this cup belongs to' : 'Create a series to organize cups'}
+                >
+                  <option value="">No Series</option>
+                  {seriesList.map((series) => (
+                    <option key={series.id} value={series.id}>
+                      {series.title} {series.status === 'ACTIVE' ? '(Active)' : ''}
+                    </option>
+                  ))}
+                </TextField>
+              </>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseCreateDialog}>Cancel</Button>
           <Button
-            onClick={handleCreateCup}
+            onClick={handleSaveCup}
             variant="contained"
-            disabled={loading || !cupTitle.trim() || !cupSlug.trim()}
+            disabled={loading || !cupTitle.trim() || (!editingCup && !cupSlug.trim())}
           >
-            Create Cup
+            {editingCup ? 'Save' : 'Create Cup'}
           </Button>
         </DialogActions>
       </Dialog>
