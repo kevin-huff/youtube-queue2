@@ -1944,6 +1944,107 @@ class QueueService {
     }
   }
 
+  async replayPrevious(initiatedBy = 'system') {
+    try {
+      // Find the most recently played terminal item
+      const previousItem = await this.db.queueItem.findFirst({
+        where: {
+          channelId: this.channelId,
+          status: { in: ['PLAYED', 'SKIPPED', 'SCORED'] }
+        },
+        orderBy: { playedAt: 'desc' }
+      });
+
+      if (!previousItem) {
+        throw new Error('No previous video to replay');
+      }
+
+      // Finalize current video if one is playing
+      if (this.currentlyPlaying?.id) {
+        const currentId = this.currentlyPlaying.id;
+        try {
+          const existing = await this.db.queueItem.findUnique({
+            where: { id: currentId },
+            select: { status: true, playedAt: true }
+          });
+
+          if (existing && !TERMINAL_QUEUE_STATUSES.includes(existing.status)) {
+            if (this.votingState?.queueItemId === currentId) {
+              this.cancelVoting({
+                reason: 'replay_previous',
+                initiatedBy
+              });
+            }
+
+            await this.db.queueItem.update({
+              where: { id: currentId },
+              data: {
+                status: 'PLAYED',
+                playedAt: existing.playedAt || new Date()
+              }
+            });
+
+            this.io.emit('queue:video_removed', { id: currentId });
+          }
+        } catch (finalizeError) {
+          logger.error('Failed to finalize current video before replay:', finalizeError);
+        } finally {
+          this.currentlyPlaying = null;
+          this._resetGongs(null);
+        }
+      }
+
+      // Fetch the previous item with full includes
+      const baseInclude = {
+        submitter: {
+          select: SUBMITTER_SELECT
+        }
+      };
+
+      let fullItem;
+      try {
+        fullItem = await this.db.queueItem.findUnique({
+          where: { id: previousItem.id },
+          include: this._withCupInclude(baseInclude)
+        });
+      } catch (err) {
+        if (this._handleCupIncludeFailure(err)) {
+          fullItem = await this.db.queueItem.findUnique({
+            where: { id: previousItem.id },
+            include: baseInclude
+          });
+        } else {
+          throw err;
+        }
+      }
+
+      // Set back to PLAYING
+      await this.db.queueItem.update({
+        where: { id: fullItem.id },
+        data: {
+          status: 'PLAYING',
+          playedAt: new Date()
+        }
+      });
+
+      const hydrated = await this._hydrateQueueItem(fullItem);
+      this.currentlyPlaying = hydrated;
+      this._resetGongs(hydrated.id);
+      this.io.emit('queue:now_playing', hydrated);
+
+      await this.logSubmission(initiatedBy, 'REPLAY_PREVIOUS', {
+        videoId: hydrated.videoId,
+        title: hydrated.title
+      });
+
+      logger.info(`Replaying previous video: ${hydrated.title} by ${initiatedBy}`);
+      return hydrated;
+    } catch (error) {
+      logger.error('Failed to replay previous video:', error);
+      throw error;
+    }
+  }
+
   async markAsPlayed(itemId) {
     try {
       await this.db.queueItem.update({

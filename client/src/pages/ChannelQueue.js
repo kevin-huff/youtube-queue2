@@ -363,6 +363,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     topEight,
     lastShuffle,
     playNext,
+    replayPrevious,
     skipCurrent,
     playOverlay,
     pauseOverlay,
@@ -1449,6 +1450,11 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     playNext();
   };
 
+  const handleReplayPrevious = () => {
+    if (!canOperatePlayback) return;
+    replayPrevious();
+  };
+
   // Host/Producer judge token + actions
   const ensureHostJudgeToken = useCallback(async () => {
     if (!normalizedChannelId || !currentCupId || !user?.id) return;
@@ -1503,7 +1509,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [normalizedChannelId, currentCupId, user?.id, hostTokenKey, settings, settingsLoaded, readCachedHostToken, writeCachedHostToken, clearCachedHostToken]);
 
-  const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER']);
+  const canHostJudge = hasChannelRole(normalizedChannelId, ['OWNER', 'HOST']);
 
   useEffect(() => { if (!canHostJudge) return; void ensureHostJudgeToken(); }, [ensureHostJudgeToken, canHostJudge]);
 
@@ -1895,11 +1901,13 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                   seekDisabled={sliderDisabled}
                   onPlay={handlePlay}
                   onPause={handlePause}
+                  onReplayPrevious={handleReplayPrevious}
                   onSkip={handleSkip}
                   onVote={handleStartVoting}
                   onShowOverlay={showOverlayPlayer}
                   onHideOverlay={hideOverlayPlayer}
                   onPlayNext={handlePlayNext}
+                  replayPreviousDisabled={!canOperatePlayback}
                   playDisabled={playDisabled}
                   pauseDisabled={pauseDisabled}
                   skipDisabled={!canOperatePlayback || !currentlyPlaying}

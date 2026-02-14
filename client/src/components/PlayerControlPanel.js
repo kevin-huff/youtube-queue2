@@ -13,6 +13,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import {
   SkipNext as SkipNextIcon,
+  Replay as ReplayIcon,
   QueueMusic as QueueIcon,
   VolumeOff as VolumeOffIcon,
   VolumeUp as VolumeUpIcon,
@@ -66,6 +67,7 @@ export const PlayerControlPanel = ({
   onSeekChange = noop,
   onSeekCommit = noop,
   seekDisabled = false,
+  onReplayPrevious,
   onPlayNext,
   onPlay,
   onPause,
@@ -73,6 +75,7 @@ export const PlayerControlPanel = ({
   onVote,
   onShowOverlay,
   onHideOverlay,
+  replayPreviousDisabled = false,
   playNextDisabled = false,
   skipDisabled = false,
   voteDisabled = false,
@@ -222,6 +225,15 @@ export const PlayerControlPanel = ({
                 icon={<PauseIcon />}
                 onClick={onPause}
                 disabled={pauseDisabled}
+                color="secondary"
+              />
+            )}
+            {onReplayPrevious && (
+              <IconAction
+                title="Replay previous video"
+                icon={<ReplayIcon />}
+                onClick={onReplayPrevious}
+                disabled={replayPreviousDisabled}
                 color="secondary"
               />
             )}

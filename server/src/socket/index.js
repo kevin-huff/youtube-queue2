@@ -195,6 +195,17 @@ function socketHandler(io, channelManager) {
         }
       });
 
+      socket.on('queue:replay_previous', async (data) => {
+        try {
+          data = data || {};
+          const { initiatedBy = 'admin' } = data;
+          await queueService.replayPrevious(initiatedBy);
+        } catch (error) {
+          logger.error('Error replaying previous video:', error);
+          socket.emit('error', { message: error.message });
+        }
+      });
+
       socket.on('queue:mark_played', async (data) => {
         try {
           data = data || {};

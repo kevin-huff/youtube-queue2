@@ -879,6 +879,7 @@ export const SocketProvider = ({ children }) => {
   ), [callVotingEndpoint]);
 
   const playNext = useCallback(() => emitToChannel('queue:play_next'), [emitToChannel]);
+  const replayPrevious = useCallback(() => emitToChannel('queue:replay_previous'), [emitToChannel]);
   const skipCurrent = useCallback(() => emitToChannel('queue:skip'), [emitToChannel]);
   const markAsPlayed = useCallback((itemId) => emitToChannel('queue:mark_played', { itemId }), [emitToChannel]);
   const clearQueue = useCallback(() => emitToChannel('queue:clear', { clearedBy: 'admin' }), [emitToChannel]);
@@ -940,6 +941,7 @@ export const SocketProvider = ({ children }) => {
     connectToChannel,
     disconnectFromChannel: cleanupChannelSocket,
     playNext,
+    replayPrevious,
     skipCurrent,
     markAsPlayed,
     clearQueue,
@@ -994,6 +996,7 @@ export const SocketProvider = ({ children }) => {
     connectToChannel,
     cleanupChannelSocket,
     playNext,
+    replayPrevious,
     skipCurrent,
     markAsPlayed,
     clearQueue,
