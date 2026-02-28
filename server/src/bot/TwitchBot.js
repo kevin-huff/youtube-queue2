@@ -70,6 +70,7 @@ class TwitchBot {
   setupEventListeners() {
     // Connection events
     this.client.on('connected', (address, port) => {
+      this.connected = true;
       logger.info(`Connected to Twitch IRC at ${address}:${port}`);
       this.io.emit('bot:status', { connected: true });
     });
