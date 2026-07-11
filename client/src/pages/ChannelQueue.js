@@ -1701,7 +1701,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   }, [canHostJudge, hostJudgeToken, normalizedChannelId, currentCupId, hostJudgeSessionReady]);
 
   const handleOwnerGongToggle = useCallback(async () => {
-    if (!canHostJudge || !normalizedChannelId || !currentlyPlaying?.id) {
+    if (!canHostJudge || !normalizedChannelId || !currentlyPlaying?.id || currentlyPlaying?.isVip) {
       return;
     }
     try {
@@ -1718,7 +1718,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     } finally {
       setOwnerGongBusy(false);
     }
-  }, [canHostJudge, normalizedChannelId, currentlyPlaying?.id, ownerHasGong]);
+  }, [canHostJudge, normalizedChannelId, currentlyPlaying?.id, currentlyPlaying?.isVip, ownerHasGong]);
 
   const handleSkip = () => {
     if (!canOperatePlayback) {
@@ -1990,9 +1990,9 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                       variant={ownerHasGong ? 'outlined' : 'contained'}
                       color={ownerHasGong ? 'warning' : 'error'}
                       onClick={handleOwnerGongToggle}
-                      disabled={ownerGongBusy || !currentlyPlaying}
+                      disabled={ownerGongBusy || !currentlyPlaying || currentlyPlaying?.isVip}
                     >
-                      {ownerHasGong ? 'Undo Gong' : 'Owner Gong'}
+                      {currentlyPlaying?.isVip ? 'VIP — No Gong' : ownerHasGong ? 'Undo Gong' : 'Owner Gong'}
                     </Button>
                   </Stack>
                 </CardContent>

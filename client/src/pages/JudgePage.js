@@ -461,142 +461,9 @@ const JudgePage = () => {
     setGongError(null);
   }, [currentlyPlaying?.id]);
 
-  const GongControlCard = () => (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          alignItems={{ xs: 'stretch', md: 'center' }}
-          justifyContent="space-between"
-          spacing={2}
-          sx={{ flexWrap: 'wrap' }}
-        >
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Gong Control
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Smash the gong once per video. Producers can undo accidents if needed.
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            size="large"
-            color={hasGonged ? 'warning' : 'error'}
-            startIcon={hasGonged ? <UndoIcon /> : <GavelIcon />}
-            onClick={handleToggleGong}
-            disabled={gongBusy || !currentlyPlaying?.id || !judgeToken || !session}
-          >
-            {hasGonged ? 'Undo Gong' : 'Gong'}
-          </Button>
-        </Stack>
-        {gongError && (
-          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGongError(null)}>
-            {gongError}
-          </Alert>
-        )}
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Active Gongs
-          </Typography>
-          {activeGongs.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              No gongs yet. You could be the first smash.
-            </Typography>
-          ) : (
-            <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-              {activeGongs.map((entry) => (
-                <Box
-                  key={entry.id}
-                  sx={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    borderRadius: 2,
-                    border: '1px solid',
-                    borderColor: entry.id === judgeIdentifier ? 'warning.main' : 'divider',
-                    px: 1.5,
-                    py: 1,
-                    minWidth: 96,
-                    bgcolor: entry.id === judgeIdentifier ? 'rgba(255,193,7,0.08)' : 'transparent'
-                  }}
-                >
-                  <Box
-                    component="img"
-                    src={GONG_IMAGE_URL}
-                    alt="Gong"
-                    sx={{
-                      width: 56,
-                      height: 56,
-                      objectFit: 'cover',
-                      borderRadius: 1,
-                      mb: 0.75
-                    }}
-                  />
-                  <Typography variant="body2" fontWeight={600} align="center">
-                    {entry.displayName || (entry.id === GONG_OWNER_ID ? 'Host' : 'Judge')}
-                  </Typography>
-                  {entry.id === GONG_OWNER_ID && (
-                    <Typography variant="caption" color="text.secondary">
-                      Host Gong
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Stack>
-          )}
-        </Box>
-      </CardContent>
-    </Card>
-  );
-
-  const SoundboardCard = () => (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 1,
-            mb: 1.5,
-            flexWrap: 'wrap'
-          }}
-        >
-          <Typography variant="h6">Soundboard</Typography>
-          <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>
-            Refresh
-          </Button>
-        </Box>
-        {sbAudioError && (
-          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
-            Sound playback blocked by the browser. Click anywhere on the page once, then try again.
-          </Alert>
-        )}
-        {sbError && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
-            {sbError}
-          </Alert>
-        )}
-        {sbItems.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
-          </Typography>
-        ) : (
-          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-            {sbItems.map((it) => (
-              <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
-                {it.name}
-              </Button>
-            ))}
-          </Stack>
-        )}
-      </CardContent>
-    </Card>
-  );
 
   const handleToggleGong = useCallback(async () => {
-    if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken || !judgeIdentifier) {
+    if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken || !judgeIdentifier || currentlyPlaying?.isVip) {
       return;
     }
     setGongBusy(true);
@@ -622,7 +489,7 @@ const JudgePage = () => {
     } finally {
       setGongBusy(false);
     }
-  }, [channelName, cupId, currentlyPlaying?.id, judgeToken, judgeIdentifier, hasGonged]);
+  }, [channelName, cupId, currentlyPlaying?.id, currentlyPlaying?.isVip, judgeToken, judgeIdentifier, hasGonged]);
 
   const resolvedDuration = typeof duration === 'number' && duration > 0 ? duration : 0;
   const displayTime = isSeeking && typeof pendingSeek === 'number'
@@ -857,6 +724,146 @@ const JudgePage = () => {
     }
   };
 
+  const isVipVideo = Boolean(currentlyPlaying?.isVip);
+
+  // Plain JSX (not inline component definitions): defining components inside
+  // the render gives them a new identity every render, remounting their whole
+  // subtree — and this page re-renders continuously during playback.
+  const gongControlCard = (
+    <Card sx={{ height: '100%' }}>
+      <CardContent>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          alignItems={{ xs: 'stretch', md: 'center' }}
+          justifyContent="space-between"
+          spacing={2}
+          sx={{ flexWrap: 'wrap' }}
+        >
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Gong Control
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {isVipVideo
+                ? 'This video is a VIP submission — the gong is disabled for it.'
+                : 'Smash the gong once per video. Producers can undo accidents if needed.'}
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            size="large"
+            color={hasGonged ? 'warning' : 'error'}
+            startIcon={hasGonged ? <UndoIcon /> : <GavelIcon />}
+            onClick={handleToggleGong}
+            disabled={isVipVideo || gongBusy || !currentlyPlaying?.id || !judgeToken || !session}
+          >
+            {isVipVideo ? 'VIP — No Gong' : hasGonged ? 'Undo Gong' : 'Gong'}
+          </Button>
+        </Stack>
+        {gongError && (
+          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGongError(null)}>
+            {gongError}
+          </Alert>
+        )}
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Active Gongs
+          </Typography>
+          {activeGongs.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              {isVipVideo ? 'VIP videos play gong-free.' : 'No gongs yet. You could be the first smash.'}
+            </Typography>
+          ) : (
+            <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
+              {activeGongs.map((entry) => (
+                <Box
+                  key={entry.id}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: entry.id === judgeIdentifier ? 'warning.main' : 'divider',
+                    px: 1.5,
+                    py: 1,
+                    minWidth: 96,
+                    bgcolor: entry.id === judgeIdentifier ? 'rgba(255,193,7,0.08)' : 'transparent'
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src={GONG_IMAGE_URL}
+                    alt="Gong"
+                    sx={{
+                      width: 56,
+                      height: 56,
+                      objectFit: 'cover',
+                      borderRadius: 1,
+                      mb: 0.75
+                    }}
+                  />
+                  <Typography variant="body2" fontWeight={600} align="center">
+                    {entry.displayName || (entry.id === GONG_OWNER_ID ? 'Host' : 'Judge')}
+                  </Typography>
+                  {entry.id === GONG_OWNER_ID && (
+                    <Typography variant="caption" color="text.secondary">
+                      Host Gong
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            </Stack>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
+  const soundboardCard = (
+    <Card sx={{ height: '100%' }}>
+      <CardContent>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1,
+            mb: 1.5,
+            flexWrap: 'wrap'
+          }}
+        >
+          <Typography variant="h6">Soundboard</Typography>
+          <Button size="small" onClick={loadSoundboard} disabled={sbLoading}>
+            Refresh
+          </Button>
+        </Box>
+        {sbAudioError && (
+          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setSbAudioError(false)}>
+            Sound playback blocked by the browser. Click anywhere on the page once, then try again.
+          </Alert>
+        )}
+        {sbError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSbError(null)}>
+            {sbError}
+          </Alert>
+        )}
+        {sbItems.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {sbLoading ? 'Loading sounds…' : 'No sounds available yet.'}
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+            {sbItems.map((it) => (
+              <Button key={it.id} variant="outlined" size="small" onClick={() => handlePlaySb(it.id)}>
+                {it.name}
+              </Button>
+            ))}
+          </Stack>
+        )}
+      </CardContent>
+    </Card>
+  );
   if (loading && !session) {
     return (
       <Box sx={{ textAlign: 'center', py: 8 }}>
@@ -926,6 +933,9 @@ const JudgePage = () => {
               variant="outlined"
             />
           )}
+          {!channelConnected && (
+            <Chip label="Reconnecting…" color="warning" size="small" />
+          )}
           {isLocked && (
             <Chip
               icon={<LockIcon />}
@@ -971,9 +981,9 @@ const JudgePage = () => {
             </CardContent>
           </Card>
 
-          <GongControlCard />
+          {gongControlCard}
 
-          <SoundboardCard />
+          {soundboardCard}
         </Stack>
       ) : (
         <Stack spacing={3}>
@@ -984,9 +994,14 @@ const JudgePage = () => {
                 <Typography variant="h6" gutterBottom>
                   Now Judging
                 </Typography>
-                {currentlyPlaying?.hasDuplicateHistory && (
-                  <Chip label="Duplicate Submission" color="warning" size="small" />
-                )}
+                <Stack direction="row" spacing={1}>
+                  {isVipVideo && (
+                    <Chip label="VIP — gong disabled" color="secondary" size="small" />
+                  )}
+                  {currentlyPlaying?.hasDuplicateHistory && (
+                    <Chip label="Duplicate Submission" color="warning" size="small" />
+                  )}
+                </Stack>
               </Box>
               <Box
                 sx={{
@@ -1073,11 +1088,7 @@ const JudgePage = () => {
             </CardContent>
           </Card>
 
-          <GongControlCard />
-
-          <SoundboardCard />
-
-          {/* Rating Slider */}
+          {/* Rating + Lock In — the judge's primary action, kept right under the video */}
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -1091,13 +1102,7 @@ const JudgePage = () => {
                 max={5}
                 step={0.00001}
               />
-            </CardContent>
-          </Card>
-
-          {/* Actions */}
-          <Card>
-            <CardContent>
-              <Stack direction="row" spacing={2}>
+              <Stack direction="row" spacing={2} sx={{ mt: 3 }}>
                 <Button
                   variant="contained"
                   size="large"
@@ -1131,6 +1136,10 @@ const JudgePage = () => {
               </Stack>
             </CardContent>
           </Card>
+
+          {gongControlCard}
+
+          {soundboardCard}
         </Stack>
       )}
     </Box>

@@ -198,8 +198,17 @@ class QueueService {
     }
   }
 
+  _assertGongAllowed() {
+    if (this.currentlyPlaying?.isVip) {
+      const err = new Error('The gong is disabled for VIP videos');
+      err.status = 400;
+      throw err;
+    }
+  }
+
   setJudgeGong(queueItemId, judgeId, judgeName, active = true) {
     this._assertActiveGongItem(queueItemId);
+    this._assertGongAllowed();
     if (!judgeId) {
       throw new Error('Judge ID is required to gong');
     }
@@ -230,6 +239,7 @@ class QueueService {
 
   setOwnerGong(queueItemId, ownerAccountId, ownerName, active = true) {
     this._assertActiveGongItem(queueItemId);
+    this._assertGongAllowed();
     if (!this.gongEntries || typeof this.gongEntries.set !== 'function') {
       this.gongEntries = new Map();
     }
@@ -1642,7 +1652,10 @@ class QueueService {
             }
 
             if (vipItem && ORDERABLE_QUEUE_STATUSES.includes(vipItem.status)) {
-              return await this._hydrateQueueItem(vipItem);
+              // Stamp VIP here: playNext removes the vip_queue entry as the
+              // video starts playing, so this flag is the only signal that the
+              // currently playing item came through the VIP lane.
+              return { ...(await this._hydrateQueueItem(vipItem)), isVip: true };
             }
           }
         }
