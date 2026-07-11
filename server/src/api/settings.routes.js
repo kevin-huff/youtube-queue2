@@ -17,6 +17,18 @@ module.exports = (router, { helpers }) => {
     sbUpload
   } = helpers;
 
+  // Run a multer middleware and translate its errors (e.g. rejected file
+  // types) into JSON responses instead of falling through to the generic
+  // 500 error handler.
+  const runUpload = (uploadMiddleware) => (req, res, next) => {
+    uploadMiddleware(req, res, (err) => {
+      if (err) {
+        return res.status(err.status || 400).json({ error: err.message || 'Upload failed' });
+      }
+      return next();
+    });
+  };
+
   // Helpers for soundboard storage in settings
   const getSoundboardItems = async (queueService) => {
     try {
@@ -31,6 +43,41 @@ module.exports = (router, { helpers }) => {
 
   const setSoundboardItems = async (queueService, items) => {
     await queueService.updateSetting('soundboard_items', JSON.stringify(items || []));
+  };
+
+  // Only allow broadcasting URLs that are either stored soundboard items for
+  // this channel or same-origin /uploads/ paths under THIS channel's own
+  // directory (uploads are stored per-channel — see buildAudioUpload in
+  // helpers.js). Anything else (external URLs, protocol-relative URLs,
+  // traversal attempts, other channels' uploads) is rejected.
+  const isAllowedSoundboardUrl = (url, items, channelId) => {
+    if (typeof url !== 'string' || !url) return false;
+    if ((items || []).some((it) => it && typeof it.url === 'string' && it.url === url)) return true;
+    if (!channelId || !url.startsWith(`/uploads/${channelId}/`)) return false;
+    if (url.includes('..') || url.includes('\\')) return false;
+    return true;
+  };
+
+  const resolveSoundboardPayload = (req, items, channelId, { includeCallerMeta = false } = {}) => {
+    if (req.body?.itemId) {
+      const item = items.find((it) => it.id === req.body.itemId);
+      if (!item) {
+        return { error: { status: 404, message: 'Item not found' } };
+      }
+      return { payload: { id: item.id, name: item.name, url: item.url } };
+    }
+    if (req.body?.url) {
+      const url = String(req.body.url);
+      if (!isAllowedSoundboardUrl(url, items, channelId)) {
+        return { error: { status: 400, message: 'URL not allowed: must be a stored soundboard item or one of this channel\'s /uploads/ paths' } };
+      }
+      return {
+        payload: includeCallerMeta
+          ? { id: req.body.id || null, name: req.body.name || 'Sound', url }
+          : { id: null, name: 'Sound', url }
+      };
+    }
+    return { error: { status: 400, message: 'itemId or url required' } };
   };
 
   // Channel settings
@@ -145,7 +192,7 @@ module.exports = (router, { helpers }) => {
     '/channels/:channelId/uploads/shuffle-audio',
     requireAuth,
     requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
-    upload.single('file'),
+    runUpload(upload.single('file')),
     async (req, res) => {
       try {
         const channelManager = getChannelManager(req);
@@ -203,7 +250,7 @@ module.exports = (router, { helpers }) => {
   });
 
   // Upload a new soundboard item
-  router.post('/channels/:channelId/soundboard/upload', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), sbUpload.single('file'), async (req, res) => {
+  router.post('/channels/:channelId/soundboard/upload', requireAuth, requireChannelRole(['OWNER','MANAGER','PRODUCER']), runUpload(sbUpload.single('file')), async (req, res) => {
     try {
       const channelManager = getChannelManager(req);
       const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
@@ -275,15 +322,9 @@ module.exports = (router, { helpers }) => {
       const channelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
       const queueService = getQueueServiceOrThrow(channelManager, channelId);
       const items = await getSoundboardItems(queueService);
-      let payload = null;
-      if (req.body?.itemId) {
-        const item = items.find((it) => it.id === req.body.itemId);
-        if (!item) return res.status(404).json({ error: 'Item not found' });
-        payload = { id: item.id, name: item.name, url: item.url };
-      } else if (req.body?.url) {
-        payload = { id: req.body.id || null, name: req.body.name || 'Sound', url: req.body.url };
-      } else {
-        return res.status(400).json({ error: 'itemId or url required' });
+      const { payload, error: payloadError } = resolveSoundboardPayload(req, items, channelId, { includeCallerMeta: true });
+      if (payloadError) {
+        return res.status(payloadError.status).json({ error: payloadError.message });
       }
       // Broadcast via channel namespace
       try {
@@ -319,15 +360,9 @@ module.exports = (router, { helpers }) => {
       const channelManager = getChannelManager(req);
       const queueService = getQueueServiceOrThrow(channelManager, req.judgeAuth.channelId);
       const items = await getSoundboardItems(queueService);
-      let payload = null;
-      if (req.body?.itemId) {
-        const item = items.find((it) => it.id === req.body.itemId);
-        if (!item) return res.status(404).json({ error: 'Item not found' });
-        payload = { id: item.id, name: item.name, url: item.url };
-      } else if (req.body?.url) {
-        payload = { id: null, name: 'Sound', url: req.body.url };
-      } else {
-        return res.status(400).json({ error: 'itemId or url required' });
+      const { payload, error: payloadError } = resolveSoundboardPayload(req, items, req.judgeAuth.channelId);
+      if (payloadError) {
+        return res.status(payloadError.status).json({ error: payloadError.message });
       }
       try {
         const sockets = await queueService.io.fetchSockets();

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Root npm ci installs all workspaces (server + client) from the single lockfile
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: server
+
+      - name: Lint server
+        run: npm run lint:server
+
+      - name: Lint client
+        run: npm run lint:client
+
+      # Integration suites skip automatically when DATABASE_URL is not set
+      - name: Server tests
+        run: npm test
+        working-directory: server
+
+      - name: Client tests
+        run: npx react-scripts test --watchAll=false
+        working-directory: client
+        env:
+          CI: 'true'
+
+      - name: Client build
+        run: npm run build
+
+  integration-tests:
+    name: Integration tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: youtube_queue_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/youtube_queue_test
+      # apiRoutes integration tests expect this Twitch ID to have admin access
+      ADMIN_TWITCH_IDS: '77292575'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: server
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+        working-directory: server
+
+      - name: Run integration tests
+        run: npm run test:integration
+        working-directory: server

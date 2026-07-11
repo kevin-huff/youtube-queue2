@@ -1,6 +1,6 @@
 import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import JudgePage from '../JudgePage';
 
 // Mock SocketContext to avoid real sockets in tests
@@ -106,14 +106,14 @@ describe('JudgePage integration', () => {
 
     renderPage();
 
-    await waitFor(() => expect(screen.getByText(/judge panel/i)).toBeInTheDocument());
+    await screen.findByText(/judge panel/i);
     expect(screen.getByText(/judge one/i)).toBeInTheDocument();
 
     // Set score then lock in (submits + locks)
     fireEvent.click(screen.getByRole('button', { name: '4' }));
     fireEvent.click(screen.getByRole('button', { name: /lock in/i }));
 
-    await waitFor(() => expect(screen.getByText(/score locked in/i)).toBeInTheDocument());
+    await screen.findByText(/score locked in/i);
 
     fetchMock.mockRestore();
   });

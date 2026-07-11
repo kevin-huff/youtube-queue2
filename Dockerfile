@@ -4,7 +4,12 @@
 # Chromium download to drastically speed up builds on Railway.
 
 # Builder stage: install deps, build client, generate Prisma client
-FROM node:18-bullseye-slim AS builder
+FROM node:22-bookworm-slim AS builder
+
+# Prisma needs OpenSSL present to detect the correct engine target
+# (debian-openssl-3.0.x); without it, it falls back to openssl-1.1.x engines
+# that cannot load on bookworm.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -21,21 +26,28 @@ RUN npm config set fund false && npm config set audit false && npm config set pr
 
 # Install only required workspaces with production deps to reduce build time
 # - client: includes react-scripts in dependencies, sufficient for build
-# - server: prod deps only; prisma will run via npx during entrypoint
+# - server: prod deps only
 RUN npm ci --omit=dev --no-audit --no-fund --workspace server --workspace client
+
+# Install the repo-pinned Prisma CLI (matches @prisma/client in the lockfile)
+# without touching package.json. It stays in node_modules so the entrypoint can
+# run `prisma migrate deploy` at boot without downloading anything.
+RUN npm install --no-save --omit=dev --no-audit --no-fund prisma@6.16.2
 
 # Copy source and build the client
 COPY . .
 RUN cd client && npm run build
 
-# Defer Prisma client generation to runtime to avoid extra build-time installs
-
-# Remove dev dependencies to keep node_modules production-only
-# node_modules already installed with --omit=dev; no further prune required
+# Generate the Prisma client at BUILD time (outputs to node_modules/.prisma
+# and node_modules/@prisma/client, both copied into the final image below)
+RUN cd server && npx --no-install prisma generate
 
 
 ### Final image: copy only what we need for runtime
-FROM node:18-bullseye-slim AS runner
+FROM node:22-bookworm-slim AS runner
+
+# OpenSSL is required at runtime by the Prisma query/schema engines
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

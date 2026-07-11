@@ -338,7 +338,7 @@ module.exports = (router, { helpers }) => {
   );
 
   // Bot and diagnostics
-  router.get('/bot/status', async (req, res) => {
+  router.get('/bot/status', requireAuth, async (req, res) => {
     try {
       const bot = req.app.get('bot');
       if (!bot) {
@@ -352,7 +352,7 @@ module.exports = (router, { helpers }) => {
     }
   });
 
-  router.post('/video/validate', [
+  router.post('/video/validate', requireAuth, [
     body('url').isURL().withMessage('Valid URL is required')
   ], validate, async (req, res) => {
     try {

@@ -14,7 +14,7 @@
  * Format a duration in seconds as "m:ss" (e.g. "3:07").
  * Returns 'N/A' when the input is falsy (but treats 0 as valid).
  *
- * Used by: ChannelQueue, Dashboard, QueuePage, QueueOverlay
+ * Used by: ChannelQueue, Dashboard, QueueOverlay
  */
 export const formatDuration = (seconds) => {
   if (!seconds && seconds !== 0) {
@@ -51,7 +51,7 @@ export const formatTimestamp = (seconds) => {
  * Format a date value (ISO string / Date) as a short locale timestamp
  * such as "Jan 5, 02:30 PM".  Returns 'Just now' for falsy inputs.
  *
- * Used by: Dashboard, AdminPage, ChannelQueue (as formatModerationTimestamp)
+ * Used by: Dashboard, ChannelQueue (as formatModerationTimestamp)
  */
 export const formatDateTimestamp = (value) => {
   if (!value) {
@@ -88,7 +88,7 @@ export const getQueueAlias = (item) =>
  * Return the Twitch username of a queue item submitter.
  * Falls back to 'Anonymous'.
  *
- * Used by: Dashboard, AdminPage, CupAdmin, PlayerOverlay
+ * Used by: Dashboard, CupAdmin, PlayerOverlay
  */
 export const getSubmitterUsername = (item) =>
   item?.submitter?.twitchUsername || item?.submitterUsername || 'Anonymous';
@@ -96,7 +96,7 @@ export const getSubmitterUsername = (item) =>
 /**
  * Convenience wrapper kept for call-site compatibility.
  *
- * Used by: Dashboard, AdminPage
+ * Used by: Dashboard
  */
 export const formatSubmitterLabel = (item) => getSubmitterUsername(item);
 

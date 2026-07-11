@@ -1,6 +1,6 @@
 import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import axios from 'axios';
 import ChannelQueue from '../ChannelQueue';
 
@@ -163,7 +163,7 @@ describe('ChannelQueue integration (public view)', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(screen.getByText(/video a/i)).toBeInTheDocument());
+    await screen.findByText(/video a/i);
     expect(screen.getByText(/video b/i)).toBeInTheDocument();
     expect(screen.getByText(/alice/i)).toBeInTheDocument();
     expect(screen.getByText(/bob/i)).toBeInTheDocument();
@@ -179,6 +179,6 @@ describe('ChannelQueue integration (public view)', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(screen.getByText(/no videos in queue/i)).toBeInTheDocument());
+    await screen.findByText(/no videos in queue/i);
   });
 });

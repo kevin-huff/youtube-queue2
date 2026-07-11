@@ -2,8 +2,12 @@
 set -e
 
 # Minimal entrypoint for production container on Railway/containers.
-# - Runs prisma migrations if DATABASE_URL is set
+# - Runs `prisma migrate deploy` (the ONLY schema step) if DATABASE_URL is set
 # - Starts the server in production mode
+#
+# The Prisma client is generated at image build time (see Dockerfile) and the
+# prisma CLI is baked into node_modules at the repo-pinned version, so nothing
+# is downloaded from the npm registry at boot.
 
 echo "[entrypoint] Starting container entrypoint"
 
@@ -22,35 +26,37 @@ elif [ -f ".env" ]; then
   set +a
 fi
 
-# Track app directory for cd back
-APP_DIR="$(pwd)"
-
 if [ -n "${DATABASE_URL}" ]; then
-  echo "[entrypoint] DATABASE_URL detected — running prisma migrations"
-  # Try migrate deploy; if it fails (no migrations) fall back to db push
+  echo "[entrypoint] DATABASE_URL detected — running prisma migrate deploy"
   (
     cd server
-    if npx --yes prisma migrate deploy; then
+    if npx --no-install prisma migrate deploy; then
       echo "[entrypoint] Migrations deployed successfully"
-      # Also reconcile any schema drift (e.g., if DB was initialized via db push previously)
-      # This is safe for additive changes; it won't drop columns unless explicitly allowed.
-      echo "[entrypoint] Reconciling schema drift with prisma db push"
-      if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
-        npx --yes prisma db push --accept-data-loss || true
-      else
-        npx --yes prisma db push || true
-      fi
     else
-      echo "[entrypoint] migrate deploy failed, trying prisma db push"
-      if [ -n "${PRISMA_ACCEPT_DATA_LOSS}" ]; then
-        npx --yes prisma db push --accept-data-loss
+      if [ "${PRISMA_DB_PUSH_FALLBACK}" = "true" ]; then
+        echo "[entrypoint] ############################################################"
+        echo "[entrypoint] # WARNING: migrate deploy FAILED and PRISMA_DB_PUSH_FALLBACK"
+        echo "[entrypoint] # is enabled — falling back to 'prisma db push'. This is a"
+        echo "[entrypoint] # break-glass path only: it bypasses migration history and"
+        echo "[entrypoint] # can mask real migration failures. Unset it once resolved."
+        echo "[entrypoint] ############################################################"
+        npx --no-install prisma db push --skip-generate
       else
-        npx --yes prisma db push
+        echo "[entrypoint] ERROR: prisma migrate deploy failed. Refusing to start." >&2
+        echo "[entrypoint]" >&2
+        echo "[entrypoint] If this is a P3005 error (database schema is not empty, no" >&2
+        echo "[entrypoint] migration history), this database was provisioned with 'db push'" >&2
+        echo "[entrypoint] and must be baselined ONCE — mark the historical migrations as" >&2
+        echo "[entrypoint] already applied, then redeploy:" >&2
+        echo "[entrypoint]   for m in server/prisma/migrations/2*/; do" >&2
+        echo "[entrypoint]     npx prisma migrate resolve --applied \"\$(basename \"\$m\")\"" >&2
+        echo "[entrypoint]   done" >&2
+        echo "[entrypoint]" >&2
+        echo "[entrypoint] To temporarily restore the old behavior instead, set" >&2
+        echo "[entrypoint] PRISMA_DB_PUSH_FALLBACK=true (break-glass only — unset it after)." >&2
+        exit 1
       fi
     fi
-    # Ensure Prisma client is generated for runtime
-    echo "[entrypoint] Generating Prisma client"
-    npx --yes prisma generate
   )
 else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"

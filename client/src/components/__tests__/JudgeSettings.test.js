@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material/styles';
 import theme from '../../theme';
 import JudgeSettings from '../JudgeSettings';
@@ -43,7 +43,7 @@ describe('JudgeSettings', () => {
     fireEvent.change(input, { target: { value: 'New Judge' } });
     fireEvent.click(screen.getByRole('button', { name: /update/i }));
 
-    await waitFor(() => expect(screen.getByText(/name updated successfully/i)).toBeInTheDocument());
+    await screen.findByText(/name updated successfully/i);
     expect(onNameUpdate).toHaveBeenCalledWith('New Judge');
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/channels/${channelName}/cups/${cupId}/judge/name`,

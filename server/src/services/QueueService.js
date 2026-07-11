@@ -91,9 +91,7 @@ class QueueService {
     this.currentlyPlaying = null;
     this.settings = new Map();
     this.cupRelationAvailable = true;
-    this.lastTopEight = [];
     this.votingState = null;
-    this.votingHistory = [];
     this.gongQueueItemId = null;
     this.gongEntries = new Map();
     this.gongLastUpdate = null;
@@ -280,18 +278,6 @@ class QueueService {
     }
 
     return ![VOTING_STAGES.COMPLETED, VOTING_STAGES.CANCELLED].includes(this.votingState.stage);
-  }
-
-  isVotingActiveForItem(queueItemId) {
-    if (!this.votingState) {
-      return false;
-    }
-
-    if (this.votingState.queueItemId !== queueItemId) {
-      return false;
-    }
-
-    return this.isVotingActive();
   }
 
   _broadcastVotingState(reason = 'update') {
@@ -740,8 +726,6 @@ class QueueService {
     const snapshot = this.getVotingState();
 
     this._broadcastVotingState('cancelled');
-    this.votingHistory.push(snapshot);
-    if (this.votingHistory.length > 100) this.votingHistory.shift();
     this.votingState = null;
     this._broadcastVotingEnded(reason);
 
@@ -1109,8 +1093,6 @@ class QueueService {
     });
 
     const snapshot = this.getVotingState();
-    this.votingHistory.push(snapshot);
-    if (this.votingHistory.length > 100) this.votingHistory.shift();
 
     this._broadcastVotingState('completed');
     return snapshot;
@@ -1725,40 +1707,6 @@ class QueueService {
     }
   }
 
-  /**
-   * Finalize items that are stuck as PLAYING but appear to have finished.
-   */
-  async _finalizeStalePlayingItems() {
-    const graceSeconds = 30;
-    try {
-      const items = await this.db.queueItem.findMany({
-        where: { channelId: this.channelId, status: 'PLAYING' },
-        select: { id: true, duration: true, startTime: true, playedAt: true }
-      });
-      if (!items || items.length === 0) return;
-
-      const now = Date.now();
-      for (const it of items) {
-        if (this.currentlyPlaying && this.currentlyPlaying.id === it.id) continue;
-        const totalDuration = Math.max(0, Number(it.duration || 0));
-        const startOffset = Math.max(0, Number(it.startTime || 0));
-        const effectiveDuration = startOffset > 0 && totalDuration > startOffset ? totalDuration - startOffset : totalDuration;
-        const durationMs = effectiveDuration * 1000;
-        const playedAtMs = it.playedAt ? new Date(it.playedAt).getTime() : 0;
-        if (!playedAtMs || durationMs === 0) continue;
-        if (this.isVotingActiveForItem(it.id)) continue;
-        const threshold = durationMs + graceSeconds * 1000;
-        if (now - playedAtMs > threshold) {
-          await this.db.queueItem.update({ where: { id: it.id }, data: { status: 'PLAYED' } });
-          this.io.emit('queue:video_removed', { id: it.id });
-          logger.info(`Auto-finalized stuck PLAYING item as PLAYED: ${it.id}`);
-        }
-      }
-    } catch (err) {
-      logger.warn('finalizeStalePlayingItems error', { channelId: this.channelId, error: err });
-    }
-  }
-
   async playNext(options = {}) {
     try {
       const {
@@ -2267,8 +2215,6 @@ class QueueService {
         finalOrder,
         count: finalOrder.length
       };
-
-      this.lastTopEight = finalOrder;
 
       this.io.emit('queue:shuffle', payload);
       this.io.emit('queue:top_eight_updated', {

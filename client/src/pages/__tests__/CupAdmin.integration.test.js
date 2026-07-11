@@ -119,7 +119,7 @@ describe('CupAdmin integration (happy path)', () => {
     fireEvent.change(judgeNameInput, { target: { value: 'Judge Tester' } });
 
     fireEvent.click(screen.getByRole('button', { name: /^generate link$/i }));
-    await waitFor(() => expect(screen.getByText(/judge link generated successfully/i)).toBeInTheDocument());
+    await screen.findByText(/judge link generated successfully/i);
   });
 
   test('shows an error when cup creation fails', async () => {
@@ -146,6 +146,6 @@ describe('CupAdmin integration (happy path)', () => {
     const createBtn = within(dialog).getByRole('button', { name: /^create cup$/i });
     fireEvent.click(createBtn);
 
-    await waitFor(() => expect(screen.getByText(/bad request/i)).toBeInTheDocument());
+    await screen.findByText(/bad request/i);
   });
 });

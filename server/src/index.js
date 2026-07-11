@@ -460,6 +460,15 @@ class Server {
           return res.send(html);
         }
 
+        if (req.path.startsWith('/channel/') && req.path.endsWith('/cups')) {
+          const title = `${channel?.displayName || channelName} — Cup Admin`;
+          const desc = `Manage cups, assign videos, and control the live show.`;
+          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/cups.svg`;
+          const tags = metaTags({ title, desc, url: fullUrl, image: img || image });
+          const html = await renderWithMeta(() => Promise.resolve(tags));
+          return res.send(html);
+        }
+
         if (req.path.startsWith('/channel/')) {
           const title = `Submit to ${channel?.displayName || channelName}`;
           const desc = `Drop your best videos into ${channel?.displayName || channelName}'s mediashare queue.`;
@@ -501,15 +510,6 @@ class Server {
           const desc = `Score videos live for cup ${req.params.cupId}. Lock in your vote, reveal the average, and help shape the standings.`;
           const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/judge.svg`;
           const tags = metaTags({ title, desc, url: fullUrl, image: img || image, type: 'website' });
-          const html = await renderWithMeta(() => Promise.resolve(tags));
-          return res.send(html);
-        }
-
-        if (req.path.startsWith('/channel/') && req.path.endsWith('/cups')) {
-          const title = `${channel?.displayName || channelName} — Cup Admin`;
-          const desc = `Manage cups, assign videos, and control the live show.`;
-          const img = `${baseUrl}/og/channel/${encodeURIComponent(channelName)}/cups.svg`;
-          const tags = metaTags({ title, desc, url: fullUrl, image: img || image });
           const html = await renderWithMeta(() => Promise.resolve(tags));
           return res.send(html);
         }

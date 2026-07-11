@@ -19,8 +19,11 @@ require('./health.routes')(router, { helpers });
 // Global API error handler
 router.use((error, req, res, _next) => {
   logger.error('API Error:', error);
-  res.status(500).json({
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+  const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600
+    ? error.status
+    : 500;
+  res.status(status).json({
+    error: status >= 500 && process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
   });
 });
 

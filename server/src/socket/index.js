@@ -1,17 +1,57 @@
 const logger = require('../utils/logger');
 const { verifyJudgeToken } = require('../auth/judgeToken');
+const {
+  ADMIN_ROLES,
+  MODERATION_ROLES,
+  PLAYBACK_ROLES,
+  resolveChannelRoles,
+  hasAnyRole
+} = require('./channelAuth');
 
-// Admin socket events that require an authenticated user with channel access
+// Mutating socket events are gated per category, mirroring the roles the
+// REST layer grants in api/queue.routes.js (role lists live in
+// ./channelAuth.js).
+//
+// SECURITY: the event gate below is default-deny. Any handler registered for
+// an event that is not in PUBLIC_EVENTS or one of the category sets below is
+// gated as ADMIN — so newly added mutating events fail closed. When adding a
+// new event, put it in the correct category set.
+
+// ADMIN (OWNER/MANAGER/PRODUCER): destructive/config actions
 const ADMIN_EVENTS = new Set([
-  'queue:remove', 'queue:reorder', 'queue:play_next', 'queue:skip',
-  'queue:mark_played', 'queue:clear', 'settings:update', 'volume:change',
+  'queue:reorder', 'queue:clear', 'settings:update',
   'admin:enable_queue', 'admin:disable_queue',
   'overlay:show_player', 'overlay:hide_player'
 ]);
 
-// Player control events — allowed for both authenticated users and verified judges
+// MODERATION (OWNER/MANAGER/PRODUCER/MODERATOR): queue moderation
+const MODERATION_EVENTS = new Set([
+  'queue:remove'
+]);
+
+// PLAYBACK (OWNER/MANAGER/PRODUCER/HOST): show-flow/playback control
+const PLAYBACK_EVENTS = new Set([
+  'queue:skip', 'queue:play_next', 'queue:replay_previous',
+  'queue:mark_played', 'volume:change'
+]);
+
+// Player transport events — PLAYBACK roles AND verified judge-token sockets
+// (judges controlling playback via token auth is a deliberate feature).
+// Judge tokens grant ONLY these events, nothing else.
 const PLAYER_EVENTS = new Set([
   'player:play', 'player:pause', 'player:seek'
+]);
+
+// Read-only events that anonymous clients (OBS overlays, viewer pages) rely
+// on. New public events MUST be added here explicitly, otherwise they are
+// gated as admin events.
+const PUBLIC_EVENTS = new Set([
+  'queue:join', 'status:request', 'player:state_request', 'overlay:state_request'
+]);
+
+// socket.io reserved/internal events that must never be gated
+const RESERVED_EVENTS = new Set([
+  'disconnect', 'disconnecting', 'error', 'newListener', 'removeListener'
 ]);
 
 function getSocketUser(socket) {
@@ -35,43 +75,87 @@ function socketHandler(io, channelManager) {
       namespace._overlayState = { showPlayer: null, lastUpdate: Date.now() };
     }
 
-    namespace.on('connection', (socket) => {
-      logger.info(`Client connected to channel ${channelId}: ${socket.id}`);
-
-      // Attach user info from session (may be null for anonymous overlay clients)
+    // Resolve identity and the user's expanded channel role set once per
+    // connection. NOTE: the result is cached on socket.data for the lifetime
+    // of the connection — role grants/revocations take effect on reconnect.
+    namespace.use(async (socket, next) => {
       socket.data.user = getSocketUser(socket);
+      socket.data.channelRoles = new Set();
 
-      // Check for judge token in handshake auth
+      // A judge token in the handshake grants channel-scoped player control
       const judgeToken = socket.handshake?.auth?.judgeToken;
-      if (!socket.data.user && judgeToken) {
+      if (judgeToken) {
         const decoded = verifyJudgeToken(judgeToken);
         if (decoded && decoded.channelId === channelId) {
           socket.data.judgeAuth = decoded;
         }
       }
 
-      // Gate admin events behind authentication
+      if (socket.data.user) {
+        try {
+          socket.data.channelRoles = await resolveChannelRoles({
+            user: socket.data.user,
+            channelId,
+            channelManager
+          });
+        } catch (error) {
+          logger.error(`Error resolving channel authorization for ${socket.id} on channel ${channelId}:`, error);
+          socket.data.channelRoles = new Set();
+        }
+      }
+
+      return next();
+    });
+
+    namespace.on('connection', (socket) => {
+      logger.info(`Client connected to channel ${channelId}: ${socket.id}`);
+
+      // Gate events: default-deny. PUBLIC_EVENTS are open; each mutating
+      // event category requires the matching channel roles (see role lists
+      // in ./channelAuth.js); judge-token sockets get PLAYER_EVENTS only;
+      // anything uncategorized is gated as ADMIN (fail closed).
       const originalOn = socket.on.bind(socket);
-      socket.on = function(event, handler) {
-        if (ADMIN_EVENTS.has(event)) {
-          return originalOn(event, async (...args) => {
-            if (!socket.data.user) {
-              socket.emit('error', { message: 'Authentication required for this action' });
-              return;
-            }
-            return handler(...args);
-          });
-        }
+      const denyEvent = (event) => {
+        const identity = socket.data.user?.username
+          || socket.data.judgeAuth?.judgeId
+          || 'anonymous';
+        logger.warn(`Denied socket event ${event} on channel ${channelId} for ${identity} (${socket.id})`);
+        socket.emit('error', {
+          message: socket.data.user || socket.data.judgeAuth
+            ? 'You are not authorized to perform this action on this channel'
+            : 'Authentication required for this action'
+        });
+      };
+      const requirementFor = (event) => {
         if (PLAYER_EVENTS.has(event)) {
-          return originalOn(event, async (...args) => {
-            if (!socket.data.user && !socket.data.judgeAuth) {
-              socket.emit('error', { message: 'Authentication required for this action' });
-              return;
-            }
-            return handler(...args);
-          });
+          return { allowedRoles: PLAYBACK_ROLES, allowJudge: true };
         }
-        return originalOn(event, handler);
+        if (PLAYBACK_EVENTS.has(event)) {
+          return { allowedRoles: PLAYBACK_ROLES, allowJudge: false };
+        }
+        if (MODERATION_EVENTS.has(event)) {
+          return { allowedRoles: MODERATION_ROLES, allowJudge: false };
+        }
+        // ADMIN_EVENTS and any event not explicitly categorized fail closed
+        if (!ADMIN_EVENTS.has(event)) {
+          logger.warn(`Socket event "${event}" is not categorized; gating as ADMIN (fail closed). Add it to the correct event category set in socket/index.js.`);
+        }
+        return { allowedRoles: ADMIN_ROLES, allowJudge: false };
+      };
+      socket.on = function(event, handler) {
+        if (RESERVED_EVENTS.has(event) || PUBLIC_EVENTS.has(event)) {
+          return originalOn(event, handler);
+        }
+        const { allowedRoles, allowJudge } = requirementFor(event);
+        return originalOn(event, async (...args) => {
+          const authorized = hasAnyRole(socket.data.channelRoles, allowedRoles)
+            || (allowJudge && Boolean(socket.data.judgeAuth));
+          if (!authorized) {
+            denyEvent(event);
+            return;
+          }
+          return handler(...args);
+        });
       };
 
       const queueService = channelManager.getQueueService(channelId);

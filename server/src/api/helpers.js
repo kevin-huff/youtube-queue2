@@ -36,82 +36,68 @@ const ensureDir = (dir) => {
 };
 ensureDir(UPLOADS_ROOT);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const channelId = (req.params.channelId || 'default').toString().toLowerCase();
-    const channelDir = path.join(UPLOADS_ROOT, channelId);
-    ensureDir(channelDir);
-    try {
-      logger.info('Upload destination (shuffle)', {
-        channelId,
-        channelDir,
-        uploadsRoot: UPLOADS_ROOT,
-        route: req.originalUrl
-      });
-    } catch (err) { logger.warn('Failed to log shuffle upload destination', { error: err?.message }); }
-    cb(null, channelDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '') || '.mp3';
-    const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
-    const name = `shuffle-${Date.now()}${safeExt}`;
-    try {
-      logger.info('Assigned filename (shuffle)', { original: file.originalname, assigned: name, mime: file.mimetype });
-    } catch (err) { logger.warn('Failed to log shuffle filename assignment', { error: err?.message }); }
-    cb(null, name);
-  }
-});
+// Allowed audio uploads: both the client-supplied mimetype AND the original
+// filename extension must look like audio. The stored filename extension is
+// derived from originalname, so an unvalidated extension (e.g. ".html") would
+// otherwise be served back by express.static with a dangerous content type.
+const ALLOWED_AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.oga', '.wav', '.m4a', '.aac', '.flac', '.webm', '.opus', '.aif', '.aiff']);
 
-const upload = multer({
-  storage,
+const getValidatedAudioExt = (file) => {
+  const ext = path.extname(file?.originalname || '').toLowerCase();
+  return ALLOWED_AUDIO_EXTENSIONS.has(ext) ? ext : null;
+};
+
+const audioFileFilter = (req, file, cb) => {
+  const mimeOk = (file.mimetype || '').startsWith('audio/');
+  const ext = getValidatedAudioExt(file);
+  if (mimeOk && ext) return cb(null, true);
+  const err = new Error('Only audio files are allowed (.mp3, .ogg, .oga, .wav, .m4a, .aac, .flac, .webm, .opus, .aif, .aiff)');
+  err.status = 400;
+  return cb(err);
+};
+
+const buildAudioUpload = (label, makeName) => multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const channelId = (req.params.channelId || 'default').toString().toLowerCase();
+      const channelDir = path.join(UPLOADS_ROOT, channelId);
+      ensureDir(channelDir);
+      try {
+        logger.info(`Upload destination (${label})`, {
+          channelId,
+          channelDir,
+          uploadsRoot: UPLOADS_ROOT,
+          route: req.originalUrl
+        });
+      } catch (err) { logger.warn(`Failed to log ${label} upload destination`, { error: err?.message }); }
+      cb(null, channelDir);
+    },
+    filename: (req, file, cb) => {
+      const ext = getValidatedAudioExt(file);
+      if (!ext) {
+        const err = new Error('Only audio files are allowed (.mp3, .ogg, .oga, .wav, .m4a, .aac, .flac, .webm, .opus, .aif, .aiff)');
+        err.status = 400;
+        return cb(err);
+      }
+      const name = makeName(ext);
+      try {
+        logger.info(`Assigned filename (${label})`, { original: file.originalname, assigned: name, mime: file.mimetype });
+      } catch (err) { logger.warn(`Failed to log ${label} filename assignment`, { error: err?.message }); }
+      cb(null, name);
+    }
+  }),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-  fileFilter: (req, file, cb) => {
-    const ok = (file.mimetype || '').startsWith('audio/');
-    if (ok) return cb(null, true);
-    const err = new Error('Only audio files are allowed');
-    err.status = 400;
-    return cb(err);
-  }
+  fileFilter: audioFileFilter
 });
 
-// Separate storage for soundboard to distinguish filenames
-const sbStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const channelId = (req.params.channelId || 'default').toString().toLowerCase();
-    const channelDir = path.join(UPLOADS_ROOT, channelId);
-    ensureDir(channelDir);
-    try {
-      logger.info('Upload destination (soundboard)', {
-        channelId,
-        channelDir,
-        uploadsRoot: UPLOADS_ROOT,
-        route: req.originalUrl
-      });
-    } catch (err) { logger.warn('Failed to log soundboard upload destination', { error: err?.message }); }
-    cb(null, channelDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '') || '.mp3';
-    const safeExt = ext.length <= 8 ? ext.toLowerCase() : '.mp3';
-    const name = `sound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExt}`;
-    try {
-      logger.info('Assigned filename (soundboard)', { original: file.originalname, assigned: name, mime: file.mimetype });
-    } catch (err) { logger.warn('Failed to log soundboard filename assignment', { error: err?.message }); }
-    cb(null, name);
-  }
-});
+// Shuffle audio uploads
+const upload = buildAudioUpload('shuffle', (ext) => `shuffle-${Date.now()}${ext}`);
 
-const sbUpload = multer({
-  storage: sbStorage,
-  limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ok = (file.mimetype || '').startsWith('audio/');
-    if (ok) return cb(null, true);
-    const err = new Error('Only audio files are allowed');
-    err.status = 400;
-    return cb(err);
-  }
-});
+// Soundboard uploads use a distinct filename prefix
+const sbUpload = buildAudioUpload(
+  'soundboard',
+  (ext) => `sound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+);
 
 const getChannelManager = (req) => {
   const manager = req.app.get('channelManager');
@@ -122,10 +108,15 @@ const getChannelManager = (req) => {
 };
 
 // Admin utilities (gate by Twitch user id)
-const ADMIN_TWITCH_IDS = (process.env.ADMIN_TWITCH_IDS || '77292575')
+// No default fallback: if ADMIN_TWITCH_IDS is unset, there are NO admins.
+const ADMIN_TWITCH_IDS = (process.env.ADMIN_TWITCH_IDS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+if (ADMIN_TWITCH_IDS.length === 0) {
+  logger.warn('ADMIN_TWITCH_IDS is not set — admin endpoints are disabled. Set ADMIN_TWITCH_IDS to a comma-separated list of Twitch user IDs to enable admin access.');
+}
 
 const requireAdmin = async (req, res, next) => {
   try {
@@ -157,11 +148,11 @@ const requireChannelOwnership = async (channelManager, accountId, channelId) => 
   return normalizedChannelId;
 };
 
-const getQueueServiceOrThrow = (channelManager, channelId, { requireActive = true } = {}) => {
+const getQueueServiceOrThrow = (channelManager, channelId) => {
   const queueService = channelManager.getQueueService(channelId);
   if (!queueService) {
     const error = new Error('Channel not found or inactive');
-    error.status = requireActive ? 404 : 200;
+    error.status = 404;
     throw error;
   }
   return queueService;
