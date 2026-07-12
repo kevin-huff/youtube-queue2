@@ -78,6 +78,21 @@ import {
   getQueueAlias
 } from '../utils/format';
 
+// Judge tokens are JWTs with a 7-day expiry, but the shared host token is
+// persisted in channel settings indefinitely — reject tokens that are
+// expired (or expiring within the next hour, so one can't die mid-show)
+// instead of installing them and 401ing on every action.
+const isHostTokenUsable = (token) => {
+  if (!token || typeof token !== 'string') return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!payload?.exp) return true;
+    return payload.exp * 1000 > Date.now() + 60 * 60 * 1000;
+  } catch (_) {
+    return false;
+  }
+};
+
 const QueueItem = ({
   video,
   index,
@@ -420,6 +435,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
   const [hostJudgeError, setHostJudgeError] = useState(null);
   const [hostJudgeSessionReady, setHostJudgeSessionReady] = useState(false);
   const hostJudgeSessionTokenRef = useRef(null);
+  const hostJudgeSessionRetryRef = useRef(null);
 
   const normalizedChannelId = channelName?.toLowerCase();
 
@@ -1455,29 +1471,40 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     replayPrevious();
   };
 
-  // Host/Producer judge token + actions
-  const ensureHostJudgeToken = useCallback(async () => {
+  // Host/Producer judge token + actions.
+  // force=true skips the cached/shared token and mints a fresh one — required
+  // for 401 recovery, since the dead token IS the cached one and re-reading it
+  // can never heal.
+  const ensureHostJudgeToken = useCallback(async ({ force = false } = {}) => {
     if (!normalizedChannelId || !currentCupId || !user?.id) return;
     try {
       setHostJudgeError(null);
 
-      const cached = readCachedHostToken();
-      if (cached) {
-        setHostJudgeToken(cached);
-        return;
-      }
+      if (force) {
+        clearCachedHostToken();
+      } else {
+        const cached = readCachedHostToken();
+        if (isHostTokenUsable(cached)) {
+          setHostJudgeToken(cached);
+          return;
+        }
+        if (cached) clearCachedHostToken();
 
-      // 1) Prefer a shared token saved in channel settings so every producer uses the same judge
-      if (hostTokenKey && settings && typeof settings[hostTokenKey] === 'string' && settings[hostTokenKey]) {
-        setHostJudgeToken(settings[hostTokenKey]);
-        writeCachedHostToken(settings[hostTokenKey]);
-        return;
+        // 1) Prefer a shared token saved in channel settings so every producer uses the same judge
+        const shared = hostTokenKey && settings && typeof settings[hostTokenKey] === 'string'
+          ? settings[hostTokenKey]
+          : null;
+        if (isHostTokenUsable(shared)) {
+          setHostJudgeToken(shared);
+          writeCachedHostToken(shared);
+          return;
+        }
       }
 
       // Wait for the full settings to load from the REST API before generating a new token.
       // Without this gate, the partial settings from queue:initial_state would cause a
       // cache miss and generate a duplicate judge token on every page refresh.
-      if (!settingsLoaded) return;
+      if (!force && !settingsLoaded) return;
 
       // 2) No shared token yet — generate one and persist to channel settings
       const res = await fetch(`/api/channels/${normalizedChannelId}/cups/${currentCupId}/judges/${user.id}/regenerate`, {
@@ -1585,8 +1612,8 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401) {
-          // Token expired/revoked — refresh shared token
-          await ensureHostJudgeToken();
+          // Token expired/revoked — force-mint a fresh shared token
+          await ensureHostJudgeToken({ force: true });
         }
         throw new Error(payload.error || 'Failed to submit score');
       }
@@ -1612,7 +1639,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401) {
-          await ensureHostJudgeToken();
+          await ensureHostJudgeToken({ force: true });
         }
         throw new Error(payload.error || 'Failed to lock in');
       }
@@ -1637,7 +1664,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401) {
-          await ensureHostJudgeToken();
+          await ensureHostJudgeToken({ force: true });
         }
         throw new Error(payload.error || 'Failed to unlock');
       }
@@ -1679,6 +1706,16 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
         );
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}));
+          // Expired/revoked token: force-mint a fresh one, once per dead
+          // token. The new token re-runs this effect; if the fresh one also
+          // 401s, the ref match stops the loop and the error surfaces.
+          if (res.status === 401 && hostJudgeSessionRetryRef.current !== hostJudgeToken) {
+            hostJudgeSessionRetryRef.current = hostJudgeToken;
+            if (!cancelled) {
+              await ensureHostJudgeToken({ force: true });
+              return;
+            }
+          }
           throw new Error(payload.error || 'Failed to initialize judge session');
         }
         if (!cancelled) {
@@ -1698,7 +1735,7 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     return () => {
       cancelled = true;
     };
-  }, [canHostJudge, hostJudgeToken, normalizedChannelId, currentCupId, hostJudgeSessionReady]);
+  }, [canHostJudge, hostJudgeToken, normalizedChannelId, currentCupId, hostJudgeSessionReady, ensureHostJudgeToken]);
 
   const handleOwnerGongToggle = useCallback(async () => {
     if (!canHostJudge || !normalizedChannelId || !currentlyPlaying?.id || currentlyPlaying?.isVip) {
