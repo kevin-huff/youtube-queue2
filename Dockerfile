@@ -51,9 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -
 
 WORKDIR /app
 
-# Keep environment lean and production-focused
+# Keep environment lean and production-focused. HOME/NPM_CONFIG_CACHE point
+# at /tmp because the `app` system user has no home directory (/nonexistent),
+# which otherwise breaks npx's cache/log writes at boot.
 ENV NODE_ENV=production \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 \
+    HOME=/tmp \
+    NPM_CONFIG_CACHE=/tmp/.npm
 
 # Copy production node_modules and server code from builder
 COPY --from=builder /app/node_modules ./node_modules

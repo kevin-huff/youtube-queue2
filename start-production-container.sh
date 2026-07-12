@@ -62,5 +62,9 @@ else
   echo "[entrypoint] No DATABASE_URL — skipping migrations"
 fi
 
-# Start server (root package.json start:production delegates to server)
-exec npm run start:production
+# Start node directly — no npm wrapper. npm swallows SIGTERM into a spurious
+# "command failed, signal SIGTERM" error block on every graceful shutdown,
+# which reads like a crash in the deploy logs. The server handles SIGTERM
+# itself (see server/src/index.js shutdown handlers).
+cd server
+exec env NODE_ENV=production node src/index.js
