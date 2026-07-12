@@ -168,13 +168,15 @@ function socketHandler(io, channelManager) {
       // Allow clients to request the current queue state
       socket.on('queue:join', async () => {
         try {
-          const [queue, enabled, vipQueue, shuffleAudioUrl, activeCup] = await Promise.all([
+          const [queue, enabled, vipQueue, shuffleAudioUrl, tangiaOverlayUrl, activeCup] = await Promise.all([
             queueService.getCurrentQueue(),
             queueService.isQueueEnabled(),
             // Provide initial VIP list to clients
             queueService._getVipList(),
             // Provide initial shuffle audio so overlays can play without auth
             queueService.getSetting('shuffle_audio_url', ''),
+            // Tangia overlay embed for the judge page (sound alerts)
+            queueService.getSetting('tangia_overlay_url', ''),
             // Surface the currently active cup so producer UI can reflect it even with an empty queue
             queueService.db?.cup.findFirst({
               where: {
@@ -204,6 +206,7 @@ function socketHandler(io, channelManager) {
             activeCup: activeCup || null,
             settings: {
               shuffle_audio_url: shuffleAudioUrl || '',
+              tangia_overlay_url: tangiaOverlayUrl || '',
               activeCupId: activeCup?.id || null
             }
           });

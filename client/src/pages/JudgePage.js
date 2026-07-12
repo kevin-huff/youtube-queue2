@@ -12,6 +12,10 @@ import {
   CircularProgress,
   IconButton,
   Slider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Lock as LockIcon,
@@ -79,6 +83,9 @@ const JudgePage = () => {
   const [sbError, setSbError] = useState(null);
   const [gongBusy, setGongBusy] = useState(false);
   const [gongError, setGongError] = useState(null);
+  // Browsers block all audio (soundboard, gong, shuffle, Tangia) until the
+  // page receives a real user gesture — the check-in dialog manufactures it.
+  const [hasInteracted, setHasInteracted] = useState(false);
   const gongSeenRef = useRef(new Set());
   const shuffleSignatureRef = useRef(null);
   const shuffleAudioRef = useRef(null);
@@ -883,8 +890,58 @@ const JudgePage = () => {
     );
   }
 
+  // Only trust Tangia-hosted overlay URLs, and only mount after the check-in
+  // click so the iframe loads inside an audio-activated browsing context.
+  const tangiaOverlayUrl = (settings?.tangia_overlay_url || '').trim();
+  const tangiaEmbedUrl = tangiaOverlayUrl.startsWith('https://overlays.tangia.co/') ? tangiaOverlayUrl : null;
+
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+      <Dialog open={!hasInteracted} disableEscapeKeyDown onClose={() => {}}>
+        <DialogTitle>🧑‍⚖️ Judge Check-In</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            Before taking the bench, you must swear the Sacred Oath of Judgment:
+          </Typography>
+          <Typography variant="body2" color="text.secondary" component="div">
+            <em>
+              “I solemnly swear to judge fairly, gong responsibly, keep my hot takes
+              scorching, and accept that 2.99999 is a completely different score
+              than 3.”
+            </em>
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+            (Also, this click tells your browser it's allowed to play sounds. The law is weird.)
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button variant="contained" size="large" fullWidth onClick={() => setHasInteracted(true)}>
+            I so swear 🔨
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {hasInteracted && tangiaEmbedUrl && (
+        <Box
+          component="iframe"
+          src={tangiaEmbedUrl}
+          title="Tangia overlay (audio)"
+          allow="autoplay"
+          aria-hidden="true"
+          sx={{
+            position: 'fixed',
+            bottom: 0,
+            right: 0,
+            width: 320,
+            height: 180,
+            opacity: 0,
+            pointerEvents: 'none',
+            border: 0,
+            zIndex: -1
+          }}
+        />
+      )}
+
       <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600 }}>

@@ -106,12 +106,16 @@ describe('JudgePage integration', () => {
 
     renderPage();
 
+    // Dismiss the judge check-in dialog (the audio-unlock gesture)
+    fireEvent.click(await screen.findByRole('button', { name: /i so swear/i }));
+
     await screen.findByText(/judge panel/i);
     expect(screen.getByText(/judge one/i)).toBeInTheDocument();
 
-    // Set score then lock in (submits + locks)
-    fireEvent.click(screen.getByRole('button', { name: '4' }));
-    fireEvent.click(screen.getByRole('button', { name: /lock in/i }));
+    // Set score then lock in (submits + locks). findByRole waits out the
+    // check-in dialog's exit transition, which keeps the page aria-hidden.
+    fireEvent.click(await screen.findByRole('button', { name: '4' }));
+    fireEvent.click(await screen.findByRole('button', { name: /lock in/i }));
 
     await screen.findByText(/score locked in/i);
 

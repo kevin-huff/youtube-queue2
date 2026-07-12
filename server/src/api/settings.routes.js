@@ -106,6 +106,7 @@ module.exports = (router, { helpers }) => {
         max_per_user: await queueService.getSetting('max_per_user', '3'),
         chat_voting_enabled: await queueService.getSetting('chat_voting_enabled', 'false'),
         shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', ''),
+        tangia_overlay_url: await queueService.getSetting('tangia_overlay_url', ''),
         // Ad announcements
         ad_announcements_enabled: await queueService.getSetting('ad_announcements_enabled', 'true'),
         ad_warn_message: await queueService.getSetting('ad_warn_message', 'Heads up: ads will run in 30 seconds. BRB!'),

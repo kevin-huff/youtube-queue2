@@ -76,6 +76,7 @@ const DEFAULT_CHANNEL_SETTINGS = {
   max_video_duration: '300',
   max_per_user: '3',
   chat_voting_enabled: 'false',
+  tangia_overlay_url: '',
   // Ad announcements
   ad_announcements_enabled: 'true',
   ad_warn_message: 'Heads up: ads will run in 30 seconds. BRB!',
@@ -2212,6 +2213,20 @@ const Dashboard = () => {
                             />
                           }
                           label={chatVotingEnabledSetting ? 'Chat Voting Enabled' : 'Chat Voting Disabled'}
+                        />
+                      )
+                    },
+                    {
+                      label: 'Tangia Overlay',
+                      desc: 'Overlay URL from overlays.tangia.co — embedded invisibly on the judge page so judges hear Tangia sound alerts',
+                      control: (
+                        <TextField
+                          size="small"
+                          fullWidth
+                          placeholder="https://overlays.tangia.co/stream-overlay/fullscreen/…"
+                          value={settings.tangia_overlay_url || ''}
+                          onChange={(e) => handleSettingChange('tangia_overlay_url', e.target.value)}
+                          sx={{ minWidth: 320 }}
                         />
                       )
                     },
