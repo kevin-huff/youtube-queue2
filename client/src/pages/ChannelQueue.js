@@ -2339,6 +2339,17 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                         <Stack direction="row" spacing={1.5} flexWrap="wrap" alignItems="center">
                           <Chip size="small" label={`Submitted: ${votingMetrics.submitted}/${votingMetrics.totalJudges}`} sx={{ bgcolor: alpha(votingStageMeta.accent, 0.12), color: votingStageMeta.accent }} />
                           <Chip size="small" label={`Locked: ${votingMetrics.locked}/${votingMetrics.totalJudges}`} sx={{ bgcolor: alpha('#7dffb3', 0.12), color: '#3ddf94' }} />
+                          {votingState.chat?.enabled && (
+                            <Chip
+                              size="small"
+                              label={
+                                votingState.chat.locked
+                                  ? 'Chat: locked'
+                                  : `Chat: ${typeof votingState.chat.average === 'number' ? votingState.chat.average.toFixed(2) : '—'} · ${votingState.chat.count || 0} vote${(votingState.chat.count || 0) === 1 ? '' : 's'}`
+                              }
+                              sx={{ bgcolor: alpha('#5ce1ff', 0.12), color: '#39c8ef' }}
+                            />
+                          )}
                           {typeof votingState.revealedAverage === 'number' && (
                             <Chip size="small" icon={<EmojiEvents fontSize="small" />} label={`Average ${formatScoreValue(votingState.revealedAverage)}`} color="success" />
                           )}

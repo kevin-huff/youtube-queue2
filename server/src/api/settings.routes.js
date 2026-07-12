@@ -104,6 +104,7 @@ module.exports = (router, { helpers }) => {
         auto_play_next: await queueService.getSetting('auto_play_next', 'false'),
         current_volume: await queueService.getSetting('current_volume', '75'),
         max_per_user: await queueService.getSetting('max_per_user', '3'),
+        chat_voting_enabled: await queueService.getSetting('chat_voting_enabled', 'false'),
         shuffle_audio_url: await queueService.getSetting('shuffle_audio_url', ''),
         // Ad announcements
         ad_announcements_enabled: await queueService.getSetting('ad_announcements_enabled', 'true'),

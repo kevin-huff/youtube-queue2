@@ -278,6 +278,11 @@ class TwitchBot {
         }
         break;
 
+      case 'vote':
+        // Chat voting: always silent (success or failure) to avoid chat spam
+        await this.handleVoteCommand(channelId, username, args[1]);
+        break;
+
       case 'help':
         this.showHelp(channel, displayName, isModerator);
         break;
@@ -319,6 +324,26 @@ class TwitchBot {
         this.sendMessage(channel, `@${displayName} Usage: !queue on/off`);
         break;
     }
+  }
+
+  async handleVoteCommand(channelId, username, rawScore) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService || typeof queueService.isChatVotingOpen !== 'function' || !queueService.isChatVotingOpen()) {
+      return;
+    }
+
+    // Accept decimals with either separator (e.g. 3.5 or 3,5)
+    const normalized = (rawScore || '').toString().trim().replace(',', '.');
+    if (!normalized) {
+      return;
+    }
+
+    const score = Number(normalized);
+    if (!Number.isFinite(score)) {
+      return;
+    }
+
+    queueService.registerChatVote(username, score);
   }
 
   async showQueueStatus(channel, channelId) {

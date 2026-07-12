@@ -75,6 +75,7 @@ const DEFAULT_CHANNEL_SETTINGS = {
   submission_cooldown: '30',
   max_video_duration: '300',
   max_per_user: '3',
+  chat_voting_enabled: 'false',
   // Ad announcements
   ad_announcements_enabled: 'true',
   ad_warn_message: 'Heads up: ads will run in 30 seconds. BRB!',
@@ -1647,6 +1648,7 @@ const Dashboard = () => {
   const maxVideoDurationSetting = settings.max_video_duration ?? '600';
   const maxVideoDurationMinutes = Math.max(0, Math.round(Number(maxVideoDurationSetting || '0') / 60));
   const maxPerUserSetting = settings.max_per_user ?? '3';
+  const chatVotingEnabledSetting = settings.chat_voting_enabled === 'true';
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -2195,6 +2197,21 @@ const Dashboard = () => {
                             />
                           }
                           label={queueEnabledSetting ? 'Queue Enabled' : 'Queue Disabled'}
+                        />
+                      )
+                    },
+                    {
+                      label: 'Chat Voting',
+                      desc: 'Viewers vote with !vote 0-5 during judging; the chat average is revealed as a judge',
+                      control: (
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={chatVotingEnabledSetting}
+                              onChange={(e) => handleSettingChange('chat_voting_enabled', e.target.checked)}
+                            />
+                          }
+                          label={chatVotingEnabledSetting ? 'Chat Voting Enabled' : 'Chat Voting Disabled'}
                         />
                       )
                     },

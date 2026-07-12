@@ -283,7 +283,9 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
     // Build best entry per identity, hide offline
     const best = new Map();
     for (const j of votingState.judges) {
-      if (!j || j.connected === false) continue;
+      if (!j) continue;
+      // Chat pseudo-judge has no socket connection; never hide it as offline
+      if (j.connected === false && j.kind !== 'chat') continue;
       const key = (j.id && String(j.id)) || (j.name ? j.name.toString().trim().toLowerCase() : '__anon__');
       if (!best.has(key)) {
         best.set(key, j);
@@ -303,6 +305,11 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
       ? votingState.computedAverage
       : null;
   const animatedAverage = useAnimatedNumber(averageTarget, { duration: 720, precision: 5 });
+
+  const chatAverageTarget = typeof votingState?.chat?.average === 'number'
+    ? votingState.chat.average
+    : null;
+  const animatedChatAverage = useAnimatedNumber(chatAverageTarget, { duration: 480, precision: 2 });
 
   // ── After hooks, early return if invalid
   if (!votingState) {
@@ -366,6 +373,13 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
   })();
 
   const formatScore = (value) => (typeof value === 'number' ? value.toFixed(5) : '—');
+
+  const chatVoting = votingState.chat || null;
+  const showChatLive = stageKey === 'collecting' && Boolean(chatVoting?.enabled);
+  const chatVoteCount = Number.isFinite(chatVoting?.count) ? chatVoting.count : 0;
+  const chatAverageText = typeof animatedChatAverage === 'number'
+    ? animatedChatAverage.toFixed(2)
+    : '—';
 
   return (
     <Box
@@ -629,6 +643,65 @@ const VotingOverlay = ({ votingState, currentlyPlaying }) => {
               boxShadow: `0 0 30px ${alpha(stageMeta.accent, 0.5)}, inset 0 0 20px ${alpha(stageMeta.accent, 0.15)}`
             }}
           />
+
+          {showChatLive && (
+            <Stack
+              spacing={0.4}
+              sx={{
+                alignItems: { xs: 'flex-start', md: 'center' },
+                px: 2.4,
+                py: 1.4,
+                borderRadius: 3,
+                border: `1px solid ${alpha('#5ce1ff', chatVoting?.locked ? 0.5 : 0.3)}`,
+                background: `linear-gradient(150deg, ${alpha('#5ce1ff', 0.14)}, rgba(10, 16, 34, 0.85))`,
+                boxShadow: `0 0 26px ${alpha('#5ce1ff', 0.28)}, inset 0 0 18px ${alpha('#5ce1ff', 0.08)}`,
+                backdropFilter: 'blur(8px)'
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  letterSpacing: 2.5,
+                  textTransform: 'uppercase',
+                  color: alpha('#ffffff', 0.7),
+                  fontSize: { xs: 11, md: 12 },
+                  fontWeight: 700
+                }}
+              >
+                Chat Vote
+              </Typography>
+              <Typography
+                sx={{
+                  fontFamily: '"Rajdhani", "Poppins", sans-serif',
+                  fontSize: { xs: 34, md: 42 },
+                  fontWeight: 900,
+                  letterSpacing: 2,
+                  lineHeight: 1,
+                  color: typeof animatedChatAverage === 'number' ? '#bdf1ff' : alpha('#ffffff', 0.35),
+                  textShadow: typeof animatedChatAverage === 'number'
+                    ? `0 0 25px ${alpha('#5ce1ff', 0.6)}, 0 4px 15px rgba(0, 0, 0, 0.7)`
+                    : 'none',
+                  transition: 'color 240ms ease'
+                }}
+              >
+                {chatAverageText}
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: alpha('#ffffff', 0.72),
+                  letterSpacing: 1.2,
+                  fontSize: { xs: 11, md: 12 },
+                  fontWeight: 600,
+                  textTransform: 'uppercase'
+                }}
+              >
+                {chatVoting?.locked
+                  ? '🔒 Chat locked'
+                  : `${chatVoteCount} vote${chatVoteCount === 1 ? '' : 's'}`}
+              </Typography>
+            </Stack>
+          )}
         </Stack>
 
         {projectedRank && (

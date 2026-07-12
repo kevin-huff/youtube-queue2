@@ -76,7 +76,7 @@ module.exports = (router, { helpers }) => {
           return res.status(400).json({ error: 'No active voting session for this queue item' });
         }
 
-        const votingState = queueService.advanceJudgeReveal();
+        const votingState = await queueService.advanceJudgeReveal();
         res.json({ voting: votingState });
       } catch (error) {
         logger.error('Error revealing next judge score:', error);

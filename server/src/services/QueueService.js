@@ -24,6 +24,9 @@ const SUBMITTER_SELECT = {
 const MAX_MODERATION_NOTE_LENGTH = 280;
 const DEFAULT_SOCIAL_MIN_VOTES = 3;
 const DEFAULT_SOCIAL_GLOBAL_MEAN = 3.4;
+const CHAT_VOTE_BROADCAST_INTERVAL_MS = 750;
+const CHAT_JUDGE_ID = 'chat';
+const CHAT_JUDGE_NAME = 'Chat';
 const VOTING_STAGES = {
   COLLECTING: 'collecting',
   REVEALING: 'revealing',
@@ -92,6 +95,9 @@ class QueueService {
     this.settings = new Map();
     this.cupRelationAvailable = true;
     this.votingState = null;
+    this.chatVotes = new Map();
+    this.chatVoteBroadcastTimer = null;
+    this.chatVoteLastBroadcastAt = 0;
     this.gongQueueItemId = null;
     this.gongEntries = new Map();
     this.gongLastUpdate = null;
@@ -521,6 +527,192 @@ class QueueService {
     this.votingState.computedSocial = Number(weighted.toFixed(5));
   }
 
+  _resetChatVotes() {
+    if (!(this.chatVotes instanceof Map)) {
+      this.chatVotes = new Map();
+    }
+    this.chatVotes.clear();
+    this._clearChatVoteBroadcastTimer();
+    this.chatVoteLastBroadcastAt = 0;
+  }
+
+  _clearChatVoteBroadcastTimer() {
+    if (this.chatVoteBroadcastTimer) {
+      clearTimeout(this.chatVoteBroadcastTimer);
+      this.chatVoteBroadcastTimer = null;
+    }
+  }
+
+  _recalculateChatVoteAggregates() {
+    const chat = this.votingState?.chat;
+    if (!chat) {
+      return;
+    }
+
+    const votes = Array.from(this.chatVotes.values());
+    chat.count = votes.length;
+    chat.average = votes.length > 0
+      ? Number((votes.reduce((sum, value) => sum + value, 0) / votes.length).toFixed(5))
+      : null;
+  }
+
+  // Chat can spam votes, so voting-state broadcasts are throttled to one per
+  // CHAT_VOTE_BROADCAST_INTERVAL_MS with a trailing edge so the final vote
+  // always goes out.
+  _scheduleChatVoteBroadcast() {
+    const now = Date.now();
+    const elapsed = now - (this.chatVoteLastBroadcastAt || 0);
+
+    if (elapsed >= CHAT_VOTE_BROADCAST_INTERVAL_MS) {
+      this.chatVoteLastBroadcastAt = now;
+      this._broadcastVotingState('chat-vote');
+      return;
+    }
+
+    if (this.chatVoteBroadcastTimer) {
+      return;
+    }
+
+    this.chatVoteBroadcastTimer = setTimeout(() => {
+      this.chatVoteBroadcastTimer = null;
+      this.chatVoteLastBroadcastAt = Date.now();
+      this._broadcastVotingState('chat-vote');
+    }, CHAT_VOTE_BROADCAST_INTERVAL_MS - elapsed);
+
+    if (typeof this.chatVoteBroadcastTimer.unref === 'function') {
+      this.chatVoteBroadcastTimer.unref();
+    }
+  }
+
+  isChatVotingOpen() {
+    return Boolean(
+      this.isVotingActive() &&
+      this.votingState?.stage === VOTING_STAGES.COLLECTING &&
+      this.votingState?.chat?.enabled &&
+      !this.votingState?.chat?.locked
+    );
+  }
+
+  registerChatVote(username, score) {
+    if (!this.isChatVotingOpen()) {
+      return null;
+    }
+
+    if (!username || typeof username !== 'string') {
+      return null;
+    }
+
+    const numeric = Number(score);
+    if (!Number.isFinite(numeric) || numeric < 0 || numeric > 5) {
+      return null;
+    }
+
+    if (!(this.chatVotes instanceof Map)) {
+      this.chatVotes = new Map();
+    }
+
+    // Last vote per user wins
+    this.chatVotes.set(username.toLowerCase(), numeric);
+    this._recalculateChatVoteAggregates();
+    this._scheduleChatVoteBroadcast();
+
+    return {
+      count: this.votingState.chat.count,
+      average: this.votingState.chat.average
+    };
+  }
+
+  async _lockChatVotesForReveal() {
+    const chat = this.votingState?.chat;
+    if (!chat || !chat.enabled || chat.locked) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    chat.locked = true;
+    chat.lockedAt = timestamp;
+    this._clearChatVoteBroadcastTimer();
+
+    if (!chat.count || typeof chat.average !== 'number') {
+      // No chat votes this round: just close the window. If a previous run
+      // seeded a locked 'chat' judge entry, its old score stands as-is.
+      this._touchVotingState('chat-locked', { count: 0 });
+      this._broadcastVotingState('chat-locked');
+      return;
+    }
+
+    // Append (or update, when re-seeded from a previous run) the aggregate
+    // chat judge. Fresh entries are appended after existing judges so chat
+    // reveals last.
+    const entry = this._ensureJudgeEntry(CHAT_JUDGE_ID, {
+      name: CHAT_JUDGE_NAME,
+      shortName: this._deriveJudgeShortName(CHAT_JUDGE_NAME),
+      kind: 'chat',
+      score: chat.average,
+      locked: true,
+      lockType: 'MANUAL',
+      lockedAt: timestamp,
+      status: 'locked'
+    });
+
+    // _ensureJudgeEntry applies defaults only on create — when the entry was
+    // re-seeded from a previous run's row (replayed video), overwrite it with
+    // this round's average so memory matches the upserted row.
+    if (entry) {
+      entry.score = chat.average;
+      entry.locked = true;
+      entry.lockType = 'MANUAL';
+      entry.lockedAt = timestamp;
+      entry.status = 'locked';
+    }
+
+    this._recalculateVotingAggregates();
+    this._touchVotingState('chat-locked', { count: chat.count, average: chat.average });
+
+    try {
+      const row = await this.db.judgeScore.upsert({
+        where: {
+          cupId_queueItemId_judgeTokenId: {
+            cupId: this.votingState.cupId,
+            queueItemId: this.votingState.queueItemId,
+            judgeTokenId: CHAT_JUDGE_ID
+          }
+        },
+        update: {
+          judgeName: CHAT_JUDGE_NAME,
+          score: chat.average,
+          isLocked: true,
+          lockType: 'MANUAL',
+          lockedAt: new Date(timestamp)
+        },
+        create: {
+          cupId: this.votingState.cupId,
+          queueItemId: this.votingState.queueItemId,
+          judgeTokenId: CHAT_JUDGE_ID,
+          judgeName: CHAT_JUDGE_NAME,
+          score: chat.average,
+          isLocked: true,
+          lockType: 'MANUAL',
+          lockedAt: new Date(timestamp)
+        }
+      });
+
+      if (entry && row?.id) {
+        entry.scoreId = row.id;
+      }
+    } catch (error) {
+      // Don't block the reveal; the in-memory chat judge entry stays in play.
+      logger.warn('Failed to persist chat vote score', {
+        channelId: this.channelId,
+        cupId: this.votingState.cupId,
+        queueItemId: this.votingState.queueItemId,
+        error
+      });
+    }
+
+    this._broadcastVotingState('chat-locked');
+  }
+
   async startVoting(queueItemId, options = {}) {
     if (this.isVotingActive() && this.votingState?.queueItemId !== queueItemId) {
       throw new Error('Another voting session is already in progress');
@@ -588,6 +780,7 @@ class QueueService {
     ]);
 
     const startedAt = new Date().toISOString();
+    const chatVotingEnabled = (await this.getSetting('chat_voting_enabled', 'false')) === 'true';
 
     // Determine duplicate baseline (from DB history only; file has no score)
     let duplicateAverageToBeat = null;
@@ -654,8 +847,19 @@ class QueueService {
         hasHistory: duplicateHasHistory,
         averageToBeat: duplicateAverageToBeat,
         judgeCount: duplicateJudgeCount
+      },
+      // Aggregate chat vote state. Raw per-user votes live in this.chatVotes
+      // (kept outside the serialized state so usernames aren't broadcast).
+      chat: {
+        enabled: chatVotingEnabled,
+        count: 0,
+        average: null,
+        locked: false,
+        lockedAt: null
       }
     };
+
+    this._resetChatVotes();
 
     // Seed judges based on active sessions
     sessions.forEach((session) => {
@@ -675,21 +879,27 @@ class QueueService {
       });
     });
 
-    // Merge existing scores (if any) so that reconnection picks up progress
+    // Merge existing scores (if any) so that reconnection picks up progress.
+    // A row with judgeTokenId 'chat' is the aggregate chat judge from a
+    // previous run of this video. It is re-seeded as a locked 'chat' entry,
+    // but votingState.chat.locked deliberately starts false so a fresh round
+    // of chat votes can still be collected; the lock at first reveal upserts
+    // the new average over the old row.
     scores.forEach((score) => {
       const judgeId = score.judgeAccountId || score.judgeTokenId;
       if (!judgeId) {
         return;
       }
 
-      const name = this._deriveJudgeName({ score });
+      const isChatJudge = !score.judgeAccountId && score.judgeTokenId === CHAT_JUDGE_ID;
+      const name = isChatJudge ? CHAT_JUDGE_NAME : this._deriveJudgeName({ score });
       const locked = Boolean(score.isLocked);
       const status = locked ? 'locked' : 'scored';
 
       const entry = this._ensureJudgeEntry(judgeId, {
         name,
         shortName: this._deriveJudgeShortName(name),
-        kind: score.judgeAccountId ? 'account' : 'token',
+        kind: score.judgeAccountId ? 'account' : (isChatJudge ? 'chat' : 'token'),
         score: Number(score.score),
         scoreId: score.id,
         locked,
@@ -737,15 +947,20 @@ class QueueService {
 
     this._broadcastVotingState('cancelled');
     this.votingState = null;
+    this._resetChatVotes();
     this._broadcastVotingEnded(reason);
 
     return snapshot;
   }
 
-  advanceJudgeReveal() {
+  async advanceJudgeReveal() {
     if (!this.votingState) {
       throw new Error('No voting session in progress');
     }
+
+    // Chat voting closes at the first reveal; a non-empty chat average joins
+    // the judge lineup (revealed last) before any judge is picked.
+    await this._lockChatVotesForReveal();
 
     const judges = Array.isArray(this.votingState.judges) ? this.votingState.judges : [];
     const findNextIndex = () =>
@@ -1105,6 +1320,7 @@ class QueueService {
     const snapshot = this.getVotingState();
 
     this._broadcastVotingState('completed');
+    this._resetChatVotes();
     return snapshot;
   }
 
