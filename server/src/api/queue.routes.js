@@ -337,6 +337,35 @@ module.exports = (router, { helpers }) => {
     }
   );
 
+  // Restore a terminal (skipped/played/scored) video back into the live queue
+  router.post('/channels/:channelId/queue/:itemId/restore',
+    requireAuth,
+    requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER', 'HOST']),
+    [
+      param('itemId').isInt().withMessage('Valid item ID is required'),
+      body('asVip').optional().isBoolean().withMessage('asVip must be a boolean')
+    ],
+    validate,
+    async (req, res) => {
+      try {
+        const channelManager = getChannelManager(req);
+        const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+        const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+
+        const item = await queueService.restoreQueueItem(
+          parseInt(req.params.itemId, 10),
+          req.user.username,
+          { asVip: req.body?.asVip === true }
+        );
+
+        res.json({ success: true, item });
+      } catch (error) {
+        logger.error('Error restoring queue item:', error);
+        res.status(error.status || 400).json({ error: error.message || 'Failed to restore video' });
+      }
+    }
+  );
+
   // Bot and diagnostics
   router.get('/bot/status', requireAuth, async (req, res) => {
     try {

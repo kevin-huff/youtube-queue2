@@ -3094,6 +3094,67 @@ class QueueService {
     }
   }
 
+  // Bring a terminal (SKIPPED/PLAYED/SCORED/etc.) item back into the live
+  // queue as APPROVED. Clears playedAt so it won't be mistaken for the most
+  // recent play by replayPrevious, and resets any prior score's scored state.
+  async restoreQueueItem(queueItemId, actor = 'system', { asVip = false } = {}) {
+    const id = Number(queueItemId);
+    if (!Number.isInteger(id)) {
+      const err = new Error('Invalid queue item id');
+      err.status = 400;
+      throw err;
+    }
+
+    const existing = await this.db.queueItem.findUnique({
+      where: { id },
+      select: { id: true, channelId: true, status: true, title: true, videoId: true }
+    });
+    if (!existing || existing.channelId !== this.channelId) {
+      const err = new Error('Queue item not found for this channel');
+      err.status = 404;
+      throw err;
+    }
+    if (existing.id === this.currentlyPlaying?.id) {
+      const err = new Error('That video is currently playing');
+      err.status = 400;
+      throw err;
+    }
+    if (!TERMINAL_QUEUE_STATUSES.includes(existing.status)) {
+      const err = new Error('Only ended videos can be restored to the queue');
+      err.status = 400;
+      throw err;
+    }
+
+    await this.db.queueItem.update({
+      where: { id },
+      data: {
+        status: 'APPROVED',
+        moderationStatus: 'APPROVED',
+        playedAt: null
+      }
+    });
+
+    await this.logSubmission(actor, 'RESTORE_VIDEO', {
+      videoId: existing.videoId,
+      title: existing.title,
+      previousStatus: existing.status,
+      asVip: Boolean(asVip)
+    });
+
+    if (asVip) {
+      // addVipForItem requires an orderable status, which the update above set.
+      await this.addVipForItem(id);
+    }
+
+    await this.reorderQueue();
+
+    const restored = await this.db.queueItem.findUnique({
+      where: { id },
+      include: { submitter: { select: SUBMITTER_SELECT } }
+    });
+    return this._hydrateQueueItem(restored);
+  }
+
   async addVipForItem(queueItemId) {
     try {
       const id = Number(queueItemId);

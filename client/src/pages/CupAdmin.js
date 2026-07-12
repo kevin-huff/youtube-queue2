@@ -39,7 +39,8 @@ import {
   People as PeopleIcon,
   Refresh as RefreshIcon,
   Edit as EditIcon,
-  Replay as ReplayIcon
+  Replay as ReplayIcon,
+  Star as StarIcon
 } from '@mui/icons-material';
 import { useSocket } from '../contexts/SocketContext';
 import { getSubmitterUsername } from '../utils/format';
@@ -98,6 +99,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const [standingsLoading, setStandingsLoading] = useState(false);
   const [standingsError, setStandingsError] = useState(null);
   const [finalizingItemId, setFinalizingItemId] = useState(null);
+  const [restoringItemId, setRestoringItemId] = useState(null);
   const [expandedItemId, setExpandedItemId] = useState(null);
   const [scoreLoadingId, setScoreLoadingId] = useState(null);
   const [scoreError, setScoreError] = useState(null);
@@ -861,6 +863,39 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     }
   };
 
+  const handleRestoreVideo = async (video, { asVip = false } = {}) => {
+    if (!video?.queueItemId) {
+      return;
+    }
+    try {
+      setStandingsError(null);
+      setRestoringItemId(video.queueItemId);
+      const response = await fetch(
+        `/api/channels/${channelName}/queue/${video.queueItemId}/restore`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asVip })
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to restore video');
+      }
+      setSnackbarMessage(asVip ? 'Video restored to the queue as VIP (plays next)' : 'Video restored to the queue');
+      setSnackbarOpen(true);
+      if (selectedCup?.id) {
+        await refreshCupStandings(selectedCup.id);
+      }
+    } catch (err) {
+      console.error('Failed to restore video:', err);
+      setStandingsError(err.message || 'Failed to restore video');
+    } finally {
+      setRestoringItemId(null);
+    }
+  };
+
   const handleRefreshStandings = async () => {
     if (!selectedCup?.id) {
       return;
@@ -1053,6 +1088,8 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                     const averageSummary = scoreEntry?.average || null;
                     const isExpanded = expandedItemId === video.queueItemId;
                     const isFinalizing = finalizingItemId === video.queueItemId;
+                    const isRestoring = restoringItemId === video.queueItemId;
+                    const canRestore = ['SKIPPED', 'PLAYED', 'SCORED', 'REMOVED', 'ELIMINATED'].includes(video.status);
                     const isLoadingScores = scoreLoadingId === video.queueItemId;
                     const averageDisplay = video.averageScore !== null
                       ? formatScore(video.averageScore)
@@ -1108,6 +1145,31 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
                                 >
                                   {isFinalizing ? 'Finalizing...' : 'Finalize'}
                                 </Button>
+                              )}
+                              {canRestore && (
+                                <>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="secondary"
+                                    startIcon={<ReplayIcon />}
+                                    onClick={() => handleRestoreVideo(video)}
+                                    disabled={isRestoring}
+                                  >
+                                    {isRestoring ? 'Restoring…' : 'Restore'}
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="secondary"
+                                    startIcon={<StarIcon />}
+                                    onClick={() => handleRestoreVideo(video, { asVip: true })}
+                                    disabled={isRestoring}
+                                    title="Restore and play next"
+                                  >
+                                    Restore VIP
+                                  </Button>
+                                </>
                               )}
                             </Stack>
                           </TableCell>
