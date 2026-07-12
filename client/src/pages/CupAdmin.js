@@ -69,6 +69,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [cupTitle, setCupTitle] = useState('');
   const [cupSlug, setCupSlug] = useState('');
+  const [cupSlugTouched, setCupSlugTouched] = useState(false);
   const [cupTheme, setCupTheme] = useState('');
   const [cupDescription, setCupDescription] = useState('');
   const [cupStatus, setCupStatus] = useState('LIVE');
@@ -82,6 +83,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const [seriesDialogOpen, setSeriesDialogOpen] = useState(false);
   const [seriesTitle, setSeriesTitle] = useState('');
   const [seriesSlug, setSeriesSlug] = useState('');
+  const [seriesSlugTouched, setSeriesSlugTouched] = useState(false);
   const [seriesDescription, setSeriesDescription] = useState('');
   const [seriesStatus, setSeriesStatus] = useState('PLANNED');
   const [seriesStartsAt, setSeriesStartsAt] = useState('');
@@ -489,6 +491,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     setEditingCup(null);
     setCupTitle('');
     setCupSlug('');
+    setCupSlugTouched(false);
     setCupTheme('');
     setCupDescription('');
     setCupStatus('LIVE');
@@ -511,6 +514,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     setEditingSeries(null);
     setSeriesTitle('');
     setSeriesSlug('');
+    setSeriesSlugTouched(false);
     setSeriesDescription('');
     setSeriesStatus('PLANNED');
     setSeriesStartsAt('');
@@ -533,6 +537,7 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
     setEditingSeries(null);
     setSeriesTitle('');
     setSeriesSlug('');
+    setSeriesSlugTouched(false);
     setSeriesDescription('');
     setSeriesStatus('PLANNED');
     setSeriesStartsAt('');
@@ -701,8 +706,11 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
   const handleTitleChange = (e) => {
     const title = e.target.value;
     setCupTitle(title);
-    // Auto-generate slug from title if slug is empty
-    if (!cupSlug) {
+    // Keep the slug in sync with the full title until the user edits the slug
+    // themselves. (Regenerating only "if empty" locked the slug to the first
+    // typed character — every hand-typed cup got a one-letter slug, colliding
+    // with any earlier cup whose title started with the same letter.)
+    if (!editingCup && !cupSlugTouched) {
       const autoSlug = title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
@@ -1666,7 +1674,10 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
               <TextField
                 label="Slug"
                 value={cupSlug}
-                onChange={(e) => setCupSlug(e.target.value)}
+                onChange={(e) => {
+                  setCupSlugTouched(true);
+                  setCupSlug(e.target.value);
+                }}
                 fullWidth
                 placeholder="e.g., spring-2025-tournament"
                 helperText="URL-friendly identifier (auto-generated from title)"
@@ -1750,14 +1761,28 @@ const CupAdmin = ({ channelName: channelNameProp, embedded = false }) => {
             <TextField
               label="Series Name"
               value={seriesTitle}
-              onChange={(e) => setSeriesTitle(e.target.value)}
+              onChange={(e) => {
+                const title = e.target.value;
+                setSeriesTitle(title);
+                if (!editingSeries && !seriesSlugTouched) {
+                  setSeriesSlug(
+                    title
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, '-')
+                      .replace(/^-|-$/g, '')
+                  );
+                }
+              }}
               fullWidth
               required
             />
             <TextField
               label="Slug"
               value={seriesSlug}
-              onChange={(e) => setSeriesSlug(e.target.value)}
+              onChange={(e) => {
+                setSeriesSlugTouched(true);
+                setSeriesSlug(e.target.value);
+              }}
               fullWidth
               required
             />

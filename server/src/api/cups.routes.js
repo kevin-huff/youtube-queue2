@@ -7,6 +7,28 @@ module.exports = (router, { helpers }) => {
   const { getChannelManager, requireChannelOwnership, validate, SUBMITTER_FIELDS } = helpers;
 
   // Cup management routes
+  // Cups and series are unique per (channelId, slug), but titles recur across
+  // shows ("Friday Cup" every week) and the client derives the slug from the
+  // title — so on create, uniquify the requested slug (base, base-2, base-3…)
+  // instead of surfacing a raw constraint error.
+  const uniqueSlug = async (model, channelId, requested) => {
+    const existing = await model.findMany({
+      where: { channelId, slug: { startsWith: requested } },
+      select: { slug: true }
+    });
+    const taken = new Set(existing.map((row) => row.slug));
+    if (!taken.has(requested)) return requested;
+    for (let i = 2; i <= 500; i++) {
+      const candidate = `${requested}-${i}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    const err = new Error(`Could not find a unique slug for "${requested}"`);
+    err.status = 409;
+    throw err;
+  };
+
+  const isUniqueViolation = (error) => error?.code === 'P2002';
+
   router.post('/channels/:channelId/cups',
     requireAuth,
     requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
@@ -21,11 +43,12 @@ module.exports = (router, { helpers }) => {
         await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
         const normalizedChannelId = req.params.channelId.toLowerCase();
 
+        const slug = await uniqueSlug(channelManager.prisma.cup, normalizedChannelId, req.body.slug);
         const cup = await channelManager.prisma.cup.create({
           data: {
             channelId: normalizedChannelId,
             title: req.body.title,
-            slug: req.body.slug,
+            slug,
             theme: req.body.theme || null,
             description: req.body.description || null,
             status: req.body.status || 'DRAFT',
@@ -37,6 +60,9 @@ module.exports = (router, { helpers }) => {
         logger.info(`Cup created: ${cup.title} (${cup.id})`);
         res.status(201).json({ cup });
       } catch (error) {
+        if (isUniqueViolation(error)) {
+          return res.status(409).json({ error: 'A cup with this slug already exists on this channel — try again or adjust the slug.' });
+        }
         logger.error('Error creating cup:', error);
         res.status(error.status || 500).json({ error: error.message || 'Failed to create cup' });
       }
@@ -135,7 +161,7 @@ module.exports = (router, { helpers }) => {
         const payload = {
           channelId: normalizedChannelId,
           title: req.body.title,
-          slug: req.body.slug,
+          slug: await uniqueSlug(channelManager.prisma.series, normalizedChannelId, req.body.slug),
           description: req.body.description || null,
           status: allowedStatuses.includes(requestedStatus) ? requestedStatus : 'PLANNED',
           startsAt: req.body.startsAt ? new Date(req.body.startsAt) : null,
@@ -160,6 +186,9 @@ module.exports = (router, { helpers }) => {
 
         res.status(201).json({ series });
       } catch (error) {
+        if (isUniqueViolation(error)) {
+          return res.status(409).json({ error: 'A series with this slug already exists on this channel — try again or adjust the slug.' });
+        }
         logger.error('Error creating series:', error);
         res.status(error.status || 500).json({ error: error.message || 'Failed to create series' });
       }
@@ -231,6 +260,9 @@ module.exports = (router, { helpers }) => {
 
         res.json({ series: updated });
       } catch (error) {
+        if (isUniqueViolation(error)) {
+          return res.status(409).json({ error: 'A series with this slug already exists on this channel — pick a different slug.' });
+        }
         logger.error('Error updating series:', error);
         res.status(error.status || 500).json({ error: error.message || 'Failed to update series' });
       }

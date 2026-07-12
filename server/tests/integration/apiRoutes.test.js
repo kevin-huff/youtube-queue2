@@ -215,6 +215,35 @@ describeIfDb('API integration (DB)', () => {
     expect(res.body.item.moderatedByDisplayName).toBe(user.displayName);
   });
 
+  test('duplicate cup slugs are auto-suffixed instead of failing', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-slug', accountUsername: 'ownerslug' });
+    const user = {
+      id: seed.account.id,
+      username: seed.account.username,
+      displayName: seed.account.displayName,
+      channels: [{ id: seed.channel.id, roles: ['OWNER'], ownershipRole: 'OWNER' }]
+    };
+    const { app } = buildTestApp({ prisma, user, queueChannelId: seed.channel.id });
+
+    const first = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Friday Cup', slug: 'friday-cup' });
+    expect(first.status).toBe(201);
+    expect(first.body.cup.slug).toBe('friday-cup');
+
+    const second = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Friday Cup', slug: 'friday-cup' });
+    expect(second.status).toBe(201);
+    expect(second.body.cup.slug).toBe('friday-cup-2');
+
+    const third = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Friday Cup', slug: 'friday-cup' });
+    expect(third.status).toBe(201);
+    expect(third.body.cup.slug).toBe('friday-cup-3');
+  });
+
   test('VIP review action adds and removes VIP entry', async () => {
     const seed = await seedBasicCup(prisma, { accountId: 'acct-vip', accountUsername: 'ownervip' });
     const queueService = new QueueService({ emit: jest.fn() }, seed.channel.id);
