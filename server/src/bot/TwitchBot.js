@@ -692,7 +692,7 @@ class TwitchBot {
   }
 
   isConnected() {
-    return this.connected && this.client;
+    return Boolean(this.connected && this.client);
   }
 
   async disconnect() {
