@@ -89,9 +89,8 @@ model User {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  channel        Channel         @relation(fields: [channelId], references: [id])
-  queueItems     QueueItem[]
-  submissionLogs SubmissionLog[]
+  channel    Channel     @relation(fields: [channelId], references: [id])
+  queueItems QueueItem[]
 
   @@unique([twitchUsername, channelId])
   @@map("users")
@@ -156,8 +155,9 @@ model SubmissionLog {
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
+  // No user relation on purpose: the audit log records actors (producers,
+  // 'admin', 'system') that never exist in the per-channel users table.
   channel Channel @relation(fields: [channelId], references: [id])
-  user    User    @relation(fields: [username, channelId], references: [twitchUsername, channelId])
 
   @@index([channelId])
   @@index([username, channelId])
