@@ -61,6 +61,9 @@ const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   transports,
+  // Winston's exception/rejection handlers call process.exit(1) by default;
+  // log and keep serving instead of restarting the whole show
+  exitOnError: false,
   // Handle uncaught exceptions
   exceptionHandlers: [
     // Mirror exceptions to console for visibility in PaaS logs

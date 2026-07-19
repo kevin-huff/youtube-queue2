@@ -576,7 +576,11 @@ class QueueService {
     this.chatVoteBroadcastTimer = setTimeout(() => {
       this.chatVoteBroadcastTimer = null;
       this.chatVoteLastBroadcastAt = Date.now();
-      this._broadcastVotingState('chat-vote');
+      try {
+        this._broadcastVotingState('chat-vote');
+      } catch (error) {
+        logger.warn('Failed to broadcast throttled chat vote state', { channelId: this.channelId, error });
+      }
     }, CHAT_VOTE_BROADCAST_INTERVAL_MS - elapsed);
 
     if (typeof this.chatVoteBroadcastTimer.unref === 'function') {

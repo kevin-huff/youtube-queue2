@@ -274,7 +274,9 @@ function socketHandler(io, channelManager) {
       socket.on('queue:skip', async (data) => {
         try {
           data = data || {};
-          const { skippedBy = 'admin' } = data;
+          const skippedBy = typeof data.skippedBy === 'string' && data.skippedBy.trim().length
+            ? data.skippedBy.trim()
+            : (socket.data.user?.username || 'admin');
           await queueService.skipCurrent(skippedBy);
         } catch (error) {
           logger.error('Error skipping video:', error);

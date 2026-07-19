@@ -449,7 +449,11 @@ class AdEventService {
 
       if (this.endTimers.has(channelId)) clearTimeout(this.endTimers.get(channelId));
       this.endTimers.set(channelId, setTimeout(() => {
-        this.channelManager.setAdBreak(channelId, false);
+        try {
+          this.channelManager.setAdBreak(channelId, false);
+        } catch (err) {
+          logger.warn('AdEventService: failed to clear ad break state', { error: err?.message, channelId });
+        }
         this.endTimers.delete(channelId);
         logger.info('AdEventService: ad break ended', { channelId });
       }, durationSec * 1000));

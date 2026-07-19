@@ -129,8 +129,8 @@ class Server {
           // Permit WebSocket and HTTPS connections (API + Socket.io)
           connectSrc: ["'self'", 'https:', 'wss:'],
 
-          // Allow embedding YouTube iframes
-          frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.youtube-nocookie.com']
+          // Allow embedding YouTube iframes and the Tangia overlay (judge page audio)
+          frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.youtube-nocookie.com', 'https://overlays.tangia.co']
         },
       },
     }));

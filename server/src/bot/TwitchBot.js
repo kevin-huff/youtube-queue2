@@ -672,7 +672,10 @@ class TwitchBot {
 
   sendMessage(channel, message) {
     if (this.client && this.connected) {
-      this.client.say(channel, message);
+      // say() rejects on timeout/rate-limit; unhandled rejections kill the process
+      this.client.say(channel, message).catch((err) => {
+        logger.warn('Failed to send chat message', { channel, error: err?.message || err });
+      });
     }
   }
 
