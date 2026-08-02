@@ -102,3 +102,6 @@ jspm_packages/
 
 # Serverless directories
 .serverless
+
+# Local security review notes — do not publish
+CODE_REVIEW.md
