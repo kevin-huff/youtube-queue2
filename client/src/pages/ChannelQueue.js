@@ -52,6 +52,7 @@ import {
   CheckCircle,
   Cancel,
   Lock as LockIcon,
+  Casino,
   Timeline as TimelineIcon,
   Delete as DeleteIcon,
   WarningAmber,
@@ -790,6 +791,38 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     }
   }, [votingState, revealNextJudge]);
 
+  const handleRevealRandom = useCallback(async () => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction('reveal-random');
+      await revealNextJudge(votingState.queueItemId, votingState.cupId, { random: true });
+    } catch (error) {
+      setVotingError(error.message || 'Failed to reveal judge');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, revealNextJudge]);
+
+  const handleRevealJudge = useCallback(async (judgeId) => {
+    if (!votingState) {
+      return;
+    }
+
+    try {
+      setVotingError(null);
+      setVotingAction(`reveal-judge:${judgeId}`);
+      await revealNextJudge(votingState.queueItemId, votingState.cupId, { judgeId });
+    } catch (error) {
+      setVotingError(error.message || 'Failed to reveal judge');
+    } finally {
+      setVotingAction(null);
+    }
+  }, [votingState, revealNextJudge]);
+
   const handleRevealAverage = useCallback(async () => {
     if (!votingState) {
       return;
@@ -1189,6 +1222,10 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
     || !isVotingActive;
 
   const revealNextDisabled = votingAction === 'reveal-next'
+    || !canOperatePlayback
+    || !revealReadyJudge;
+
+  const revealRandomDisabled = votingAction === 'reveal-random'
     || !canOperatePlayback
     || !revealReadyJudge;
 
@@ -2286,6 +2323,21 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                           Reveal Next{nextJudgeName ? ` (${nextJudgeName})` : ''}
                         </Button>
                         <Button
+                          variant="outlined"
+                          color="secondary"
+                          size="medium"
+                          startIcon={
+                            votingAction === 'reveal-random'
+                              ? <CircularProgress size={16} color="inherit" />
+                              : <Casino fontSize="small" />
+                          }
+                          disabled={revealRandomDisabled}
+                          onClick={handleRevealRandom}
+                          sx={{ pointerEvents: 'auto', ...actionBtnSx }}
+                        >
+                          Reveal Random
+                        </Button>
+                        <Button
                           variant="contained"
                           color="success"
                           size="medium"
@@ -2442,6 +2494,26 @@ const ChannelQueue = ({ channelName: channelNameProp, embedded = false }) => {
                                     <Typography variant="caption" color="text.secondary">{detail}</Typography>
                                   </Box>
                                   <Stack direction="row" spacing={1} alignItems="center">
+                                    {canOperatePlayback
+                                      && isVotingActive
+                                      && !['revealed', 'skipped'].includes(judge.revealStatus)
+                                      && judge.locked
+                                      && typeof judge.score === 'number' && (
+                                      <Tooltip title={`Reveal ${judge.name || 'judge'}`}>
+                                        <span>
+                                          <IconButton
+                                            size="small"
+                                            color="secondary"
+                                            onClick={() => handleRevealJudge(judge.id)}
+                                            disabled={Boolean(votingAction)}
+                                          >
+                                            {votingAction === `reveal-judge:${judge.id}`
+                                              ? <CircularProgress size={16} color="inherit" />
+                                              : <Visibility fontSize="small" />}
+                                          </IconButton>
+                                        </span>
+                                      </Tooltip>
+                                    )}
                                     {judgeGongEntry ? (
                                       <Stack direction="row" spacing={0.5} alignItems="center">
                                         <Box
