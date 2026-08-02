@@ -76,7 +76,10 @@ module.exports = (router, { helpers }) => {
           return res.status(400).json({ error: 'No active voting session for this queue item' });
         }
 
-        const votingState = await queueService.advanceJudgeReveal();
+        const votingState = await queueService.advanceJudgeReveal({
+          judgeId: req.body?.judgeId ?? undefined,
+          random: Boolean(req.body?.random)
+        });
         res.json({ voting: votingState });
       } catch (error) {
         logger.error('Error revealing next judge score:', error);
@@ -161,6 +164,25 @@ module.exports = (router, { helpers }) => {
       } catch (error) {
         logger.error('Error completing voting session:', error);
         res.status(error.status || 500).json({ error: error.message || 'Failed to complete voting session' });
+      }
+    }
+  );
+
+  // Reset golden buzzer availability for all judges (e.g. new stream, misfire)
+  router.post('/channels/:channelId/golden-buzzer/reset',
+    requireAuth,
+    requireChannelRole(['HOST', 'PRODUCER']),
+    async (req, res) => {
+      try {
+        const channelManager = getChannelManager(req);
+        const normalizedChannelId = await requireChannelOwnership(channelManager, req.user.id, req.params.channelId);
+        const queueService = getQueueServiceOrThrow(channelManager, normalizedChannelId);
+
+        const goldenBuzzerState = queueService.resetGoldenBuzzers(req.user.username || String(req.user.id));
+        res.json({ goldenBuzzerState });
+      } catch (error) {
+        logger.error('Error resetting golden buzzers:', error);
+        res.status(error.status || 500).json({ error: error.message || 'Failed to reset golden buzzers' });
       }
     }
   );

@@ -203,6 +203,7 @@ function socketHandler(io, channelManager) {
             overlayState: namespace._overlayState || { showPlayer: null },
             vipQueue,
             gongState: queueService.getGongState(),
+            goldenBuzzerState: queueService.getGoldenBuzzerState(),
             activeCup: activeCup || null,
             settings: {
               shuffle_audio_url: shuffleAudioUrl || '',
@@ -419,7 +420,13 @@ function socketHandler(io, channelManager) {
       socket.on('player:state_request', () => {
         logger.info(`player:state_request from socket ${socket.id} for channel ${channelId}`);
         const state = namespace._playerState || { playing: false, time: 0 };
-        socket.emit('player:state_response', state);
+        const response = { ...state };
+        // Stored time is a snapshot from the last play/pause/seek event; while
+        // playing, extrapolate so clients sync to the live position.
+        if (response.playing && typeof response.time === 'number' && typeof response.lastUpdate === 'number') {
+          response.time += (Date.now() - response.lastUpdate) / 1000;
+        }
+        socket.emit('player:state_response', response);
       });
 
       // Overlay player visibility controls

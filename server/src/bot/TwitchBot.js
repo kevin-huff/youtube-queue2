@@ -1,6 +1,7 @@
 const tmi = require('tmi.js');
 const logger = require('../utils/logger');
 const VideoService = require('../services/VideoService');
+const LLMService = require('../services/LLMService');
 
 // Base URL for public web app links (strip trailing slashes)
 const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '');
@@ -11,6 +12,7 @@ class TwitchBot {
     this.io = io;
     this.client = null;
     this.videoService = new VideoService();
+    this.llmService = new LLMService();
     this.connected = false;
     this.rateLimiter = new Map(); // Track user rate limits per channel
     this.channelModerators = new Map(); // channelId -> Set of moderators
@@ -147,7 +149,10 @@ class TwitchBot {
       await this.checkForVideoUrls(channel, channelId, username, message);
     } catch (error) {
       logger.error('Error handling message:', error);
-      this.sendMessage(channel, `@${displayName} Sorry, there was an error processing your request.`);
+      await this.sendPersonalityMessage(channel, `@${displayName} Sorry, there was an error processing your request.`, {
+        intent: "Something broke internally while handling this viewer's request. Apologize briefly without technical detail.",
+        mustInclude: [`@${displayName}`]
+      });
     }
   }
 
@@ -189,14 +194,22 @@ class TwitchBot {
             // Mark as VIP so it is played next (FIFO among VIPs) and excluded from shuffles
             await queueService.addVipForItem(added.id);
 
-            this.sendMessage(channel, `@${username} Thank you for the ${bits} bits! Your video has been added as a VIP and will play next: ${metadata.title}`);
+            await this.sendPersonalityMessage(channel, `@${username} Thank you for the ${bits} bits! Your video has been added as a VIP and will play next: ${metadata.title}`, {
+              intent: 'A viewer cheered bits, which bought their video a VIP slot — it jumps the queue and plays next. Thank them with flair.',
+              facts: { bits, videoTitle: metadata.title },
+              mustInclude: [`@${username}`, metadata.title]
+            });
             this.applyRateLimit(`${channelId}:${username}`);
             break; // only process first valid URL
           }
         } catch (err) {
           logger.warn('Failed to process VIP cheer URL', { channelId, username, error: err });
           // notify user of failure
-          this.sendMessage(channel, `@${username} Failed to add VIP video: ${err.message}`);
+          await this.sendPersonalityMessage(channel, `@${username} Failed to add VIP video: ${err.message}`, {
+            intent: 'A viewer cheered bits for a VIP video but adding it failed. Break the bad news and relay the reason.',
+            facts: { reason: err.message },
+            mustInclude: [`@${username}`]
+          });
           break;
         }
       }
@@ -219,7 +232,11 @@ class TwitchBot {
         const rawTarget = (args[1] || username).toString();
         const cleanTarget = rawTarget.replace(/^@/, '').toLowerCase();
         const url = `${CLIENT_URL}/u/${encodeURIComponent(cleanTarget)}`;
-        this.sendMessage(channel, `@${displayName} Profile link for ${cleanTarget}: ${url}`);
+        await this.sendPersonalityMessage(channel, `@${displayName} Profile link for ${cleanTarget}: ${url}`, {
+          intent: 'A viewer asked for a profile/score page link. Hand it over.',
+          facts: { profileUser: cleanTarget },
+          mustInclude: [`@${displayName}`, url]
+        });
         break;
       }
       case 'queue':
@@ -234,7 +251,10 @@ class TwitchBot {
         if (isModerator) {
           await this.handleSkipCommand(channel, channelId, username);
         } else {
-          this.sendMessage(channel, `@${displayName} Only moderators can skip videos.`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can skip videos.`, {
+            intent: 'A non-moderator tried to skip the current video. Shut it down — mods only.',
+            mustInclude: [`@${displayName}`]
+          });
         }
         break;
 
@@ -242,7 +262,10 @@ class TwitchBot {
         if (isModerator) {
           await this.handleClearCommand(channel, channelId, username);
         } else {
-          this.sendMessage(channel, `@${displayName} Only moderators can clear the queue.`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can clear the queue.`, {
+            intent: 'A non-moderator tried to clear the entire queue. Shut it down — mods only.',
+            mustInclude: [`@${displayName}`]
+          });
         }
         break;
 
@@ -250,9 +273,15 @@ class TwitchBot {
         if (isModerator && args[1]) {
           await this.handleVolumeCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
-          this.sendMessage(channel, `@${displayName} Only moderators can change volume.`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can change volume.`, {
+            intent: 'A non-moderator tried to change the playback volume. Shut it down — mods only.',
+            mustInclude: [`@${displayName}`]
+          });
         } else {
-          this.sendMessage(channel, `@${displayName} Usage: !volume <0-100>`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Usage: !volume <0-100>`, {
+            intent: 'A moderator used !volume without a value. Tell them the correct usage.',
+            mustInclude: [`@${displayName}`, '!volume <0-100>']
+          });
         }
         break;
 
@@ -262,9 +291,15 @@ class TwitchBot {
         if (isModerator && args[1]) {
           await this.handleBanCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
-          this.sendMessage(channel, `@${displayName} Only moderators can ban users.`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can ban users.`, {
+            intent: 'A non-moderator tried to ban someone from submissions. Shut it down — mods only.',
+            mustInclude: [`@${displayName}`]
+          });
         } else {
-          this.sendMessage(channel, `@${displayName} Usage: !ban @username`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Usage: !ban @username`, {
+            intent: 'A moderator used !ban without naming a user. Tell them the correct usage.',
+            mustInclude: [`@${displayName}`, '!ban @username']
+          });
         }
         break;
 
@@ -272,9 +307,15 @@ class TwitchBot {
         if (isModerator && args[1]) {
           await this.handleUnbanCommand(channel, channelId, args[1]);
         } else if (!isModerator) {
-          this.sendMessage(channel, `@${displayName} Only moderators can unban users.`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can unban users.`, {
+            intent: 'A non-moderator tried to unban someone. Shut it down — mods only.',
+            mustInclude: [`@${displayName}`]
+          });
         } else {
-          this.sendMessage(channel, `@${displayName} Usage: !unban @username`);
+          await this.sendPersonalityMessage(channel, `@${displayName} Usage: !unban @username`, {
+            intent: 'A moderator used !unban without naming a user. Tell them the correct usage.',
+            mustInclude: [`@${displayName}`, '!unban @username']
+          });
         }
         break;
 
@@ -283,8 +324,12 @@ class TwitchBot {
         await this.handleVoteCommand(channelId, username, args[1]);
         break;
 
+      case 'abort':
+        await this.handleAbortCommand(channel, channelId, username, displayName);
+        break;
+
       case 'help':
-        this.showHelp(channel, displayName, isModerator);
+        await this.showHelp(channel, displayName);
         break;
 
       default:
@@ -297,13 +342,16 @@ class TwitchBot {
     const displayName = userstate['display-name'] || userstate.username;
 
     if (!isModerator) {
-      this.sendMessage(channel, `@${displayName} Only moderators can control the queue.`);
+      await this.sendPersonalityMessage(channel, `@${displayName} Only moderators can control the queue.`, {
+        intent: 'A non-moderator tried to turn the queue on or off. Shut it down — mods only.',
+        mustInclude: [`@${displayName}`]
+      });
       return;
     }
 
     const queueService = this.channelManager.getQueueService(channelId);
     if (!queueService) {
-      this.sendMessage(channel, 'Queue service not available for this channel.');
+      await this.sendServiceUnavailable(channel);
       return;
     }
 
@@ -311,17 +359,24 @@ class TwitchBot {
       case 'on':
       case 'enable':
         await queueService.enableQueue(true);
-        this.sendMessage(channel, 'Queue is now enabled! Drop your video links in chat!');
+        await this.sendPersonalityMessage(channel, 'Queue is now enabled! Drop your video links in chat!', {
+          intent: 'The queue just opened. Hype chat up to submit their YouTube links.'
+        });
         break;
 
       case 'off':
       case 'disable':
         await queueService.enableQueue(false);
-        this.sendMessage(channel, 'Queue is now disabled.');
+        await this.sendPersonalityMessage(channel, 'Queue is now disabled.', {
+          intent: 'The queue just closed. Announce that submissions are shut for now.'
+        });
         break;
 
       default:
-        this.sendMessage(channel, `@${displayName} Usage: !queue on/off`);
+        await this.sendPersonalityMessage(channel, `@${displayName} Usage: !queue on/off`, {
+          intent: 'A moderator used !queue with an unknown option. Tell them the correct usage.',
+          mustInclude: [`@${displayName}`, '!queue on/off']
+        });
         break;
     }
   }
@@ -349,7 +404,7 @@ class TwitchBot {
   async showQueueStatus(channel, channelId) {
     const queueService = this.channelManager.getQueueService(channelId);
     if (!queueService) {
-      this.sendMessage(channel, 'Queue service not available for this channel.');
+      await this.sendServiceUnavailable(channel);
       return;
     }
 
@@ -358,61 +413,126 @@ class TwitchBot {
     const maxSize = await queueService.getSetting('max_queue_size', '50');
     
     const status = isEnabled ? 'enabled' : 'disabled';
-    this.sendMessage(channel, `Queue is ${status} (${queueSize}/${maxSize} videos)`);
+    await this.sendPersonalityMessage(channel, `Queue is ${status} (${queueSize}/${maxSize} videos)`, {
+      intent: `A viewer asked for the queue status. The queue is currently ${status} with ${queueSize} of ${maxSize} slots filled.`,
+      mustInclude: [`${queueSize}/${maxSize}`]
+    });
   }
 
   async handleSkipCommand(channel, channelId, username) {
     const queueService = this.channelManager.getQueueService(channelId);
     if (!queueService) {
-      this.sendMessage(channel, 'Queue service not available for this channel.');
+      await this.sendServiceUnavailable(channel);
       return;
     }
 
     try {
       const nextVideo = await queueService.skipCurrent(username);
       if (nextVideo) {
-        this.sendMessage(channel, `Skipped! Now playing: ${nextVideo.title}`);
+        await this.sendPersonalityMessage(channel, `Skipped! Now playing: ${nextVideo.title}`, {
+          intent: 'A moderator skipped the current video and a new one is starting. Announce what is playing now.',
+          facts: { nowPlaying: nextVideo.title },
+          mustInclude: [nextVideo.title]
+        });
       } else {
-        this.sendMessage(channel, 'Skipped! Queue is empty.');
+        await this.sendPersonalityMessage(channel, 'Skipped! Queue is empty.', {
+          intent: 'A moderator skipped the current video and nothing is left in the queue.'
+        });
       }
     } catch (error) {
-      this.sendMessage(channel, `Error: ${error.message}`);
+      await this.sendPersonalityMessage(channel, `Error: ${error.message}`, {
+        intent: 'Skipping the current video failed. Relay the reason honestly.',
+        facts: { reason: error.message }
+      });
     }
   }
 
   async handleClearCommand(channel, channelId, username) {
     const queueService = this.channelManager.getQueueService(channelId);
     if (!queueService) {
-      this.sendMessage(channel, 'Queue service not available for this channel.');
+      await this.sendServiceUnavailable(channel);
       return;
     }
 
     try {
       await queueService.clearQueue(username);
-      this.sendMessage(channel, 'Queue cleared!');
+      await this.sendPersonalityMessage(channel, 'Queue cleared!', {
+        intent: 'A moderator wiped the entire queue. Announce the purge.'
+      });
     } catch (error) {
-      this.sendMessage(channel, `Error: ${error.message}`);
+      await this.sendPersonalityMessage(channel, `Error: ${error.message}`, {
+        intent: 'Clearing the queue failed. Relay the reason honestly.',
+        facts: { reason: error.message }
+      });
+    }
+  }
+
+  async handleAbortCommand(channel, channelId, username, displayName) {
+    const queueService = this.channelManager.getQueueService(channelId);
+    if (!queueService) {
+      await this.sendServiceUnavailable(channel);
+      return;
+    }
+
+    try {
+      const { removed } = await queueService.abortUserSubmissions(username);
+
+      if (!removed) {
+        await this.sendPersonalityMessage(channel, `@${displayName} Abort what, exactly? You have nothing in the queue. Bold move pulling videos you never submitted.`, {
+          intent: 'A viewer used !abort to pull all their submissions, but they have nothing in the queue. Roast them for aborting nothing.',
+          mustInclude: [`@${displayName}`]
+        });
+        return;
+      }
+
+      const videoCount = `${removed} video${removed === 1 ? '' : 's'}`;
+      const snarkyFallbacks = [
+        `@${displayName} yanked ${videoCount} out of the queue. The meta shifted and they folded like a lawn chair.`,
+        `@${displayName} just rage-quit the queue and took ${videoCount} with them. Vibes: officially rattled.`,
+        `@${displayName} aborted ${videoCount}. Nothing says confidence like pulling your own submissions.`,
+        `@${displayName} withdrew ${videoCount}. Reading the room and bailing — self-awareness we love to see.`
+      ];
+      await this.sendPersonalityMessage(channel, snarkyFallbacks[Math.floor(Math.random() * snarkyFallbacks.length)], {
+        intent: `A viewer used !abort and pulled all ${videoCount} of theirs out of the queue because the stream's vibe or meta changed. Send them off with fresh snark.`,
+        facts: { videosRemoved: removed },
+        mustInclude: [`@${displayName}`]
+      });
+    } catch (error) {
+      await this.sendPersonalityMessage(channel, `@${displayName} Error aborting your submissions: ${error.message}`, {
+        intent: "Removing the viewer's submissions failed. Relay the reason honestly.",
+        facts: { reason: error.message },
+        mustInclude: [`@${displayName}`]
+      });
     }
   }
 
   async handleVolumeCommand(channel, channelId, volumeStr) {
     const queueService = this.channelManager.getQueueService(channelId);
     if (!queueService) {
-      this.sendMessage(channel, 'Queue service not available for this channel.');
+      await this.sendServiceUnavailable(channel);
       return;
     }
 
     const volume = parseInt(volumeStr);
     if (isNaN(volume) || volume < 0 || volume > 100) {
-      this.sendMessage(channel, 'Volume must be a number between 0 and 100.');
+      await this.sendPersonalityMessage(channel, 'Volume must be a number between 0 and 100.', {
+        intent: 'A moderator gave an invalid volume value. Volume must be a number between 0 and 100 — say so clearly.',
+        mustInclude: ['100']
+      });
       return;
     }
 
     try {
       await queueService.updateSetting('current_volume', volume);
-      this.sendMessage(channel, `Volume set to ${volume}%`);
+      await this.sendPersonalityMessage(channel, `Volume set to ${volume}%`, {
+        intent: 'A moderator changed the playback volume. Confirm the new level.',
+        mustInclude: [`${volume}%`]
+      });
     } catch (error) {
-      this.sendMessage(channel, `Error setting volume: ${error.message}`);
+      await this.sendPersonalityMessage(channel, `Error setting volume: ${error.message}`, {
+        intent: 'Changing the volume failed. Relay the reason honestly.',
+        facts: { reason: error.message }
+      });
     }
   }
 
@@ -425,7 +545,11 @@ class TwitchBot {
     }
     
     channelBannedUsers.add(username);
-    this.sendMessage(channel, `${username} has been banned from submitting videos.`);
+    await this.sendPersonalityMessage(channel, `${username} has been banned from submitting videos.`, {
+      intent: 'A moderator banned this user from submitting videos. Announce the ban.',
+      facts: { bannedUser: username },
+      mustInclude: [username]
+    });
     
     // Log the ban
     const queueService = this.channelManager.getQueueService(channelId);
@@ -441,7 +565,11 @@ class TwitchBot {
       channelBannedUsers.delete(username);
     }
     
-    this.sendMessage(channel, `${username} has been unbanned and can now submit videos.`);
+    await this.sendPersonalityMessage(channel, `${username} has been unbanned and can now submit videos.`, {
+      intent: 'A moderator unbanned this user; they can submit videos again. Announce their return.',
+      facts: { unbannedUser: username },
+      mustInclude: [username]
+    });
     
     // Log the unban
     const queueService = this.channelManager.getQueueService(channelId);
@@ -452,26 +580,24 @@ class TwitchBot {
 
   // ads command removed; announcements handled via Twitch API
 
-  showHelp(channel, displayName, isModerator) {
+  async showHelp(channel, displayName) {
+    const channelId = channel.substring(1).toLowerCase();
+    const viewerHubUrl = `${CLIENT_URL}/viewer/${channelId}`;
+    const queuePageUrl = `${CLIENT_URL}/channel/${channelId}`;
+
+    // Intro line gets personality; the command/link lines stay verbatim so
+    // syntax and URLs can't get mangled by the LLM.
+    await this.sendPersonalityMessage(channel, `@${displayName} Here's how to get in on the show:`, {
+      intent: 'A viewer asked for help. Introduce the how-to-play rundown that follows in the next messages.',
+      mustInclude: [`@${displayName}`]
+    });
+
     const helpMessages = [
-      `@${displayName} Available commands:`
+      'Submit: drop a YouTube link in chat while the queue is open',
+      '!queue - check queue status • !vote <0-5> - score the current video when voting is open',
+      '!abort - pull all your unplayed videos • !profile - your score history',
+      `Viewer Hub: ${viewerHubUrl} • Live queue: ${queuePageUrl}`
     ];
-
-    if (isModerator) {
-      helpMessages.push(
-        '!profile or !myscore [@user] - Get profile link',
-        '!queue on/off - Enable/disable queue',
-        '!skip - Skip current video',
-        '!clear - Clear entire queue',
-        '!volume <0-100> - Set volume',
-        '!ban @user - Ban user from submissions',
-        '!unban @user - Unban user'
-      );
-    } else {
-      helpMessages.push('!profile or !myscore - Get your profile link');
-      helpMessages.push('Just drop YouTube/TikTok/Instagram links in chat when the queue is open!');
-    }
-
     helpMessages.forEach(msg => this.sendMessage(channel, msg));
   }
 
@@ -530,7 +656,10 @@ class TwitchBot {
               videoId: metadata.videoId,
               expiresAt: now + this.duplicateConfirmTtlMs
             });
-            this.sendMessage(channel, `@${username} This video has already been rated before. To confirm, submit the same link again within 2 minutes. You must beat your previous run to keep your score.`);
+            await this.sendPersonalityMessage(channel, `@${username} This video has already been rated before. To confirm, submit the same link again within 2 minutes. You must beat your previous run to keep your score.`, {
+              intent: 'A viewer submitted a video that has been rated before. To confirm they really want this, they must submit the same link again within 2 minutes, and they must beat the previous score to keep it. State both rules clearly.',
+              mustInclude: [`@${username}`, '2 minutes']
+            });
             break; // don't add on first attempt
           }
         }
@@ -544,15 +673,21 @@ class TwitchBot {
         }
 
         // Do not reveal previous scores; just acknowledge
-        const responseMessage = `@${username} Added to queue: ${metadata.title}`;
-        this.sendMessage(channel, responseMessage);
+        await this.sendPersonalityMessage(channel, `@${username} Added to queue: ${metadata.title}`, {
+          intent: "A viewer's video was accepted into the queue. Confirm it landed.",
+          facts: { videoTitle: metadata.title },
+          mustInclude: [`@${username}`, metadata.title]
+        });
 
         if (Array.isArray(result?.warnings)) {
-          result.warnings.forEach((warning) => {
+          for (const warning of result.warnings) {
             if (warning?.message) {
-              this.sendMessage(channel, `⚠️ ${warning.message}`);
+              await this.sendPersonalityMessage(channel, `⚠️ ${warning.message}`, {
+                intent: 'Relay this warning about the submission to chat without losing its meaning.',
+                mustInclude: [warning.message]
+              });
             }
-          });
+          }
         }
         
         // Apply rate limiting
@@ -562,7 +697,11 @@ class TwitchBot {
         break;
       } catch (error) {
         logger.warn(`Failed to process video URL ${url} from ${username}:`, error);
-        this.sendMessage(channel, `@${username} ${error.message}`);
+        await this.sendPersonalityMessage(channel, `@${username} ${error.message}`, {
+          intent: "A viewer's video submission was rejected. Explain why using the reason given.",
+          facts: { reason: error.message },
+          mustInclude: [`@${username}`]
+        });
         break;
       }
     }
@@ -668,6 +807,19 @@ class TwitchBot {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+  }
+
+  // Route a chat response through the LLM for personality. The static
+  // fallback is always sent verbatim when the LLM is disabled or fails.
+  async sendPersonalityMessage(channel, fallback, prompt = {}) {
+    const message = await this.llmService.rewrite({ ...prompt, fallback });
+    this.sendMessage(channel, message);
+  }
+
+  async sendServiceUnavailable(channel) {
+    await this.sendPersonalityMessage(channel, 'Queue service not available for this channel.', {
+      intent: 'The queue backend for this channel is not running, so the request cannot be handled right now.'
+    });
   }
 
   sendMessage(channel, message) {

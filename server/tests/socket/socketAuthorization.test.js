@@ -67,6 +67,7 @@ describe('socket authorization gate', () => {
     getSetting: jest.fn(async (_key, fallback) => fallback),
     getVotingState: jest.fn(() => null),
     getGongState: jest.fn(() => null),
+    getGoldenBuzzerState: jest.fn(() => ({ usedBy: [], active: null })),
     getQueueSize: jest.fn(async () => 0),
     currentlyPlaying: null,
     db: { cup: { findFirst: jest.fn(async () => null) } },

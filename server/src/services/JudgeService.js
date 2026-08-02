@@ -2,6 +2,8 @@ const { getDatabase } = require('../database/connection');
 const logger = require('../utils/logger');
 const { generateJudgeToken, verifyJudgeToken } = require('../auth/judgeToken');
 
+const GOLDEN_BUZZER_SCORE = 5;
+
 class JudgeService {
   constructor(io, channelId) {
     this.db = null;
@@ -314,6 +316,12 @@ class JudgeService {
         throw new Error('Score must be between 0.00000 and 5.00000');
       }
 
+      // After a golden buzzer, no score for this item can change
+      if (this.queueService?.votingState?.goldenBuzzer &&
+          this.queueService.votingState.queueItemId === queueItemId) {
+        throw new Error('The golden buzzer has locked in this video\'s scores');
+      }
+
       const isTokenJudge = typeof judgeIdentifier === 'string' && judgeIdentifier.startsWith('judge_');
       
       // Build where clause for finding existing score
@@ -556,6 +564,86 @@ class JudgeService {
       return result;
     } catch (error) {
       logger.error('Failed to unlock all forced votes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Golden buzzer: one judge overrides the entire panel with a perfect score.
+   * Every existing score row for the item is forced to the max and FORCED-locked
+   * (host can undo via unlock-all-forced), and panel judges without a row get
+   * one created. Once-per-stream enforcement lives in QueueService.
+   */
+  async activateGoldenBuzzer(cupId, queueItemId, judgeIdentifier, judgeName = null) {
+    try {
+      if (!this.queueService) {
+        throw new Error('Voting service is not available for this channel');
+      }
+
+      this.queueService.assertGoldenBuzzerAllowed(queueItemId, judgeIdentifier);
+
+      const lockedAt = new Date();
+
+      // Override every persisted score for this item (chat row included)
+      const updated = await this.db.judgeScore.updateMany({
+        where: { cupId, queueItemId },
+        data: {
+          score: GOLDEN_BUZZER_SCORE,
+          isLocked: true,
+          lockType: 'FORCED',
+          lockedAt
+        }
+      });
+
+      // Create perfect-score rows for panel judges who hadn't scored yet
+      const existingRows = await this.db.judgeScore.findMany({
+        where: { cupId, queueItemId },
+        select: { judgeAccountId: true, judgeTokenId: true }
+      });
+      const scoredIds = new Set(
+        existingRows.map((row) => String(row.judgeAccountId || row.judgeTokenId))
+      );
+
+      const panelJudges = (this.queueService.getVotingState()?.judges || [])
+        .filter((judge) => judge && judge.id && judge.kind !== 'chat');
+      if (!panelJudges.some((judge) => String(judge.id) === String(judgeIdentifier))) {
+        panelJudges.push({ id: judgeIdentifier, name: judgeName || 'Judge' });
+      }
+
+      let created = 0;
+      for (const judge of panelJudges) {
+        if (scoredIds.has(String(judge.id))) {
+          continue;
+        }
+        const isTokenJudge = typeof judge.id === 'string' && judge.id.startsWith('judge_');
+        const scoreData = isTokenJudge
+          ? { cupId, queueItemId, judgeTokenId: judge.id, judgeName: judge.name || judgeName || 'Judge' }
+          : { cupId, queueItemId, judgeAccountId: judge.id };
+
+        await this.db.judgeScore.create({
+          data: {
+            ...scoreData,
+            score: GOLDEN_BUZZER_SCORE,
+            isLocked: true,
+            lockType: 'FORCED',
+            lockedAt
+          }
+        });
+        created += 1;
+      }
+
+      // Voting-state override, once-per-stream bookkeeping, and the big
+      // golden_buzzer:activated broadcast all happen here
+      const activation = this.queueService.recordGoldenBuzzer(queueItemId, judgeIdentifier, judgeName);
+
+      logger.info(`Golden buzzer activated by ${judgeIdentifier} for item ${queueItemId}: ${updated.count} scores overridden, ${created} created`);
+      return {
+        activation,
+        overridden: updated.count,
+        created
+      };
+    } catch (error) {
+      logger.error('Failed to activate golden buzzer:', error);
       throw error;
     }
   }

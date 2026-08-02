@@ -318,6 +318,51 @@ module.exports = (router, { helpers }) => {
     }
   );
 
+  router.post('/channels/:channelId/cups/:cupId/items/:itemId/golden-buzzer',
+    authenticateJudgeToken,
+    [param('itemId').isInt().withMessage('Valid item ID is required')],
+    validate,
+    async (req, res) => {
+      try {
+        const channelManager = getChannelManager(req);
+        const judgeService = channelManager.getJudgeService(req.judgeAuth.channelId);
+
+        if (!judgeService) {
+          return res.status(500).json({ error: 'Judge service not available' });
+        }
+
+        const itemId = parseInt(req.params.itemId, 10);
+        const result = await judgeService.activateGoldenBuzzer(
+          req.judgeAuth.cupId,
+          itemId,
+          req.judgeAuth.judgeId,
+          req.judgeAuth.judgeName
+        );
+
+        // Hype it up in chat; never let the announcement fail the buzzer
+        try {
+          const bot = req.app.get('bot');
+          if (bot && bot.isConnected()) {
+            const judgeName = result.activation?.judgeName || req.judgeAuth.judgeName || 'A judge';
+            const videoTitle = result.activation?.queueItem?.title || 'this video';
+            await bot.sendPersonalityMessage(`#${req.judgeAuth.channelId}`, `🌟 GOLDEN BUZZER! ${judgeName} just saved "${videoTitle}" — all judge scores overridden with a perfect 5.0!`, {
+              intent: 'A judge just slammed their once-per-stream GOLDEN BUZZER, overriding every other judge and locking in a perfect 5.0 for this video. This is the biggest moment of the show — go absolutely over the top.',
+              facts: { judgeName, videoTitle },
+              mustInclude: [judgeName]
+            });
+          }
+        } catch (chatError) {
+          logger.warn('Failed to announce golden buzzer in chat:', chatError);
+        }
+
+        res.json({ result });
+      } catch (error) {
+        logger.error('Error activating golden buzzer:', error);
+        res.status(error.status || 500).json({ error: error.message || 'Failed to activate golden buzzer' });
+      }
+    }
+  );
+
   router.get('/channels/:channelId/cups/:cupId/items/:itemId/score',
     authenticateJudgeToken,
     [param('itemId').isInt().withMessage('Valid item ID is required')],

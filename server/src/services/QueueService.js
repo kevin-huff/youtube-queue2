@@ -27,6 +27,7 @@ const DEFAULT_SOCIAL_GLOBAL_MEAN = 3.4;
 const CHAT_VOTE_BROADCAST_INTERVAL_MS = 750;
 const CHAT_JUDGE_ID = 'chat';
 const CHAT_JUDGE_NAME = 'Chat';
+const GOLDEN_BUZZER_SCORE = 5;
 const VOTING_STAGES = {
   COLLECTING: 'collecting',
   REVEALING: 'revealing',
@@ -102,6 +103,10 @@ class QueueService {
     this.gongEntries = new Map();
     this.gongLastUpdate = null;
     this.gongPausedReason = null;
+    // judgeId -> { judgeId, judgeName, at, queueItemId, queueItemTitle }.
+    // In-memory on purpose: "once per stream" resets with the server, and
+    // producers can reset it explicitly mid-stream.
+    this.goldenBuzzerUsage = new Map();
   }
 
   async initialize() {
@@ -286,6 +291,101 @@ class QueueService {
     this._evaluateGongAutoPause();
     this._emitGongUpdate('cleared');
     return this.getGongState();
+  }
+
+  getGoldenBuzzerState() {
+    return {
+      usedBy: Array.from(this.goldenBuzzerUsage.values()),
+      active: this.votingState?.goldenBuzzer || null
+    };
+  }
+
+  _emitGoldenBuzzerState(reason = 'update') {
+    if (!this.io) {
+      return;
+    }
+    this.io.emit('golden_buzzer:state', {
+      ...this.getGoldenBuzzerState(),
+      reason
+    });
+  }
+
+  assertGoldenBuzzerAllowed(queueItemId, judgeId) {
+    const fail = (message) => {
+      const err = new Error(message);
+      err.status = 400;
+      throw err;
+    };
+
+    if (!judgeId) {
+      fail('Judge ID is required for the golden buzzer');
+    }
+    if (!this.votingState || !this.isVotingActive()) {
+      fail('The golden buzzer can only be hit during an active voting session');
+    }
+    if (Number(this.votingState.queueItemId) !== Number(queueItemId)) {
+      fail('The golden buzzer only applies to the video currently being judged');
+    }
+    if (this.votingState.goldenBuzzer) {
+      fail('The golden buzzer has already been hit for this video');
+    }
+    if (this.goldenBuzzerUsage.has(String(judgeId))) {
+      fail('You already used your golden buzzer this stream');
+    }
+  }
+
+  recordGoldenBuzzer(queueItemId, judgeId, judgeName = null) {
+    this.assertGoldenBuzzerAllowed(queueItemId, judgeId);
+
+    const at = new Date().toISOString();
+    const normalizedId = String(judgeId);
+    const name = this.votingState?.judges?.find((j) => j.id === normalizedId)?.name || judgeName || 'Judge';
+
+    // Override every judge on the panel (chat judge included) with a perfect
+    // score and a forced lock. Hosts can still undo via unlock-all-forced.
+    this.votingState.judges.forEach((judge) => {
+      judge.score = GOLDEN_BUZZER_SCORE;
+      judge.locked = true;
+      judge.lockType = 'FORCED';
+      judge.status = 'locked';
+      judge.lockedAt = at;
+    });
+
+    this.votingState.goldenBuzzer = { judgeId: normalizedId, judgeName: name, at };
+    this.goldenBuzzerUsage.set(normalizedId, {
+      judgeId: normalizedId,
+      judgeName: name,
+      at,
+      queueItemId: this.votingState.queueItemId,
+      queueItemTitle: this.votingState.queueItem?.title || null
+    });
+
+    this._recalculateVotingAggregates();
+    this._touchVotingState('golden-buzzer', { judgeId: normalizedId, judgeName: name });
+    this._broadcastVotingState('golden-buzzer');
+
+    const payload = {
+      channelId: this.channelId,
+      judgeId: normalizedId,
+      judgeName: name,
+      queueItem: this.votingState.queueItem || null,
+      score: GOLDEN_BUZZER_SCORE,
+      at
+    };
+    this.io.emit('golden_buzzer:activated', payload);
+    this._emitGoldenBuzzerState('activated');
+
+    logger.info(`Golden buzzer hit by ${name} (${normalizedId}) for item ${this.votingState.queueItemId}`, {
+      channelId: this.channelId
+    });
+    return payload;
+  }
+
+  resetGoldenBuzzers(initiatedBy = 'system') {
+    this.goldenBuzzerUsage.clear();
+    this._emitGoldenBuzzerState('reset');
+    logger.info(`Golden buzzers reset by ${initiatedBy}`, { channelId: this.channelId });
+    return this.getGoldenBuzzerState();
   }
 
   isVotingActive() {
@@ -645,6 +745,10 @@ class QueueService {
       return;
     }
 
+    // A golden buzzer overrides chat like everyone else: lock chat in at the
+    // perfect score instead of its real average.
+    const effectiveChatScore = this.votingState.goldenBuzzer ? GOLDEN_BUZZER_SCORE : chat.average;
+
     // Append (or update, when re-seeded from a previous run) the aggregate
     // chat judge. Fresh entries are appended after existing judges so chat
     // reveals last.
@@ -652,7 +756,7 @@ class QueueService {
       name: CHAT_JUDGE_NAME,
       shortName: this._deriveJudgeShortName(CHAT_JUDGE_NAME),
       kind: 'chat',
-      score: chat.average,
+      score: effectiveChatScore,
       locked: true,
       lockType: 'MANUAL',
       lockedAt: timestamp,
@@ -663,7 +767,7 @@ class QueueService {
     // re-seeded from a previous run's row (replayed video), overwrite it with
     // this round's average so memory matches the upserted row.
     if (entry) {
-      entry.score = chat.average;
+      entry.score = effectiveChatScore;
       entry.locked = true;
       entry.lockType = 'MANUAL';
       entry.lockedAt = timestamp;
@@ -684,7 +788,7 @@ class QueueService {
         },
         update: {
           judgeName: CHAT_JUDGE_NAME,
-          score: chat.average,
+          score: effectiveChatScore,
           isLocked: true,
           lockType: 'MANUAL',
           lockedAt: new Date(timestamp)
@@ -694,7 +798,7 @@ class QueueService {
           queueItemId: this.votingState.queueItemId,
           judgeTokenId: CHAT_JUDGE_ID,
           judgeName: CHAT_JUDGE_NAME,
-          score: chat.average,
+          score: effectiveChatScore,
           isLocked: true,
           lockType: 'MANUAL',
           lockedAt: new Date(timestamp)
@@ -827,6 +931,7 @@ class QueueService {
       },
       stage: VOTING_STAGES.COLLECTING,
       revealIndex: -1,
+      goldenBuzzer: null,
       initiatedBy: options.initiatedBy || 'producer',
       startedAt,
       updatedAt: startedAt,
@@ -957,7 +1062,7 @@ class QueueService {
     return snapshot;
   }
 
-  async advanceJudgeReveal() {
+  async advanceJudgeReveal(options = {}) {
     if (!this.votingState) {
       throw new Error('No voting session in progress');
     }
@@ -969,6 +1074,56 @@ class QueueService {
     const judges = Array.isArray(this.votingState.judges) ? this.votingState.judges : [];
     const findNextIndex = () =>
       judges.findIndex((entry) => !['revealed', 'skipped'].includes(entry.revealStatus));
+
+    const revealJudgeAtIndex = (index) => {
+      const judge = judges[index];
+      judge.revealStatus = 'revealed';
+      judge.revealAt = new Date().toISOString();
+      judge.status = 'revealed';
+      this.votingState.revealIndex = index;
+      this.votingState.stage = VOTING_STAGES.REVEALING;
+
+      this._touchVotingState('reveal-judge', { judgeId: judge.id, order: judge.order });
+      this._broadcastVotingState('reveal-judge');
+
+      return this.getVotingState();
+    };
+
+    const isRevealable = (entry) =>
+      !['revealed', 'skipped'].includes(entry.revealStatus)
+      && typeof entry.score === 'number'
+      && Boolean(entry.locked);
+
+    // Producer picked a specific judge. Unlike the sequential walk this never
+    // skips/excludes anyone — it only reveals the requested judge.
+    if (options.judgeId !== undefined && options.judgeId !== null) {
+      const index = judges.findIndex((entry) => entry.id === options.judgeId);
+      if (index === -1) {
+        throw new Error('Judge not found in this voting session');
+      }
+      const judge = judges[index];
+      if (['revealed', 'skipped'].includes(judge.revealStatus)) {
+        throw new Error('Judge has already been revealed');
+      }
+      if (!isRevealable(judge)) {
+        throw new Error('Judge does not have a locked score to reveal');
+      }
+      return revealJudgeAtIndex(index);
+    }
+
+    // Random reveal among locked, unrevealed judges. Chat stays last (its
+    // usual slot) unless it is the only candidate left.
+    if (options.random) {
+      const candidates = judges
+        .map((entry, index) => (isRevealable(entry) ? index : -1))
+        .filter((index) => index !== -1);
+      if (candidates.length === 0) {
+        throw new Error('No judges available to reveal');
+      }
+      const nonChat = candidates.filter((index) => judges[index].kind !== 'chat');
+      const pool = nonChat.length > 0 ? nonChat : candidates;
+      return revealJudgeAtIndex(pool[Math.floor(Math.random() * pool.length)]);
+    }
 
     let nextIndex = findNextIndex();
     if (nextIndex === -1) {
@@ -982,17 +1137,7 @@ class QueueService {
       const isLocked = Boolean(judge.locked);
 
       if (hasScore && isLocked) {
-        const revealAt = new Date().toISOString();
-        judge.revealStatus = 'revealed';
-        judge.revealAt = revealAt;
-        judge.status = 'revealed';
-        this.votingState.revealIndex = nextIndex;
-        this.votingState.stage = VOTING_STAGES.REVEALING;
-
-        this._touchVotingState('reveal-judge', { judgeId: judge.id, order: judge.order });
-        this._broadcastVotingState('reveal-judge');
-
-        return this.getVotingState();
+        return revealJudgeAtIndex(nextIndex);
       }
 
       const skipReason = hasScore ? 'not_locked' : 'no_score';
@@ -1047,10 +1192,11 @@ class QueueService {
 
     let average = this.votingState.computedAverage;
 
-    // If duplicate with a known baseline, show 0 unless strictly greater
+    // If duplicate with a known baseline, show 0 unless strictly greater.
+    // A golden buzzer save bypasses the duplicate penalty entirely.
     try {
       const avgToBeat = this.votingState?.duplicate?.averageToBeat;
-      if (typeof avgToBeat === 'number') {
+      if (typeof avgToBeat === 'number' && !this.votingState.goldenBuzzer) {
         if (!(average > avgToBeat)) {
           average = 0;
         }
@@ -1084,11 +1230,12 @@ class QueueService {
 
     let social = this.votingState.computedSocial;
 
-    // If duplicate with a known baseline, zero social unless average beats prior
+    // If duplicate with a known baseline, zero social unless average beats prior.
+    // A golden buzzer save bypasses the duplicate penalty entirely.
     try {
       const avgToBeat = this.votingState?.duplicate?.averageToBeat;
       const avgNow = this.votingState?.computedAverage;
-      if (typeof avgToBeat === 'number' && typeof avgNow === 'number') {
+      if (typeof avgToBeat === 'number' && typeof avgNow === 'number' && !this.votingState.goldenBuzzer) {
         if (!(avgNow > avgToBeat)) {
           social = 0;
         }
@@ -1770,6 +1917,67 @@ class QueueService {
       return true;
     } catch (error) {
       logger.error('Failed to remove video from queue:', error);
+      throw error;
+    }
+  }
+
+  async abortUserSubmissions(username) {
+    try {
+      const submitter = (username || '').toLowerCase();
+      if (!submitter) {
+        return { removed: 0 };
+      }
+
+      // Only unwatched items — leave anything PLAYING (or already terminal) alone
+      const items = await this.db.queueItem.findMany({
+        where: {
+          channelId: this.channelId,
+          submitterUsername: submitter,
+          status: { in: ['PENDING', 'APPROVED', 'TOP_EIGHT'] }
+        },
+        select: { id: true, title: true, videoId: true }
+      });
+
+      if (!items.length) {
+        return { removed: 0 };
+      }
+
+      const itemIds = items.map((item) => item.id);
+
+      await this.db.queueItem.updateMany({
+        where: { id: { in: itemIds } },
+        data: {
+          status: 'REMOVED',
+          playedAt: new Date()
+        }
+      });
+
+      // Drop any of the user's VIP entries along with their items
+      try {
+        const vipList = await this._getVipList();
+        const idSet = new Set(itemIds);
+        const filtered = vipList.filter((id) => !idSet.has(id));
+        if (filtered.length !== vipList.length) {
+          await this._setVipList(filtered);
+          this.io.emit('queue:vip_updated', { channelId: this.channelId, vipQueue: filtered });
+        }
+      } catch (err) {
+        logger.warn('Failed to update VIP queue during abortUserSubmissions', { channelId: this.channelId, submitter, error: err });
+      }
+
+      await this.reorderQueue();
+
+      await this.logSubmission(submitter, 'ABORT_SUBMISSIONS', {
+        count: itemIds.length,
+        titles: items.map((item) => item.title)
+      });
+
+      itemIds.forEach((id) => this.io.emit('queue:video_removed', { id }));
+
+      logger.info(`User aborted their submissions: ${submitter} removed ${itemIds.length} item(s)`, { channelId: this.channelId });
+      return { removed: itemIds.length };
+    } catch (error) {
+      logger.error('Failed to abort user submissions:', error);
       throw error;
     }
   }

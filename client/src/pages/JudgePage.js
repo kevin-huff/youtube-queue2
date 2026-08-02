@@ -27,10 +27,12 @@ import {
   OpenInNew as OpenInNewIcon,
   Sync as SyncIcon,
   Gavel as GavelIcon,
-  Undo as UndoIcon
+  Undo as UndoIcon,
+  Star as StarIcon
 } from '@mui/icons-material';
 import PrecisionSlider from '../components/PrecisionSlider';
 import JudgeSettings from '../components/JudgeSettings';
+import GoldenBuzzerSplash from '../components/GoldenBuzzerSplash';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import {
@@ -60,6 +62,9 @@ const JudgePage = () => {
     seekOverlay,
     emitToChannel,
     gongState,
+    votingState,
+    goldenBuzzerState,
+    goldenBuzzerEvent,
     settings,
     lastShuffle
   } = useSocket();
@@ -83,6 +88,9 @@ const JudgePage = () => {
   const [sbError, setSbError] = useState(null);
   const [gongBusy, setGongBusy] = useState(false);
   const [gongError, setGongError] = useState(null);
+  const [goldenBusy, setGoldenBusy] = useState(false);
+  const [goldenError, setGoldenError] = useState(null);
+  const [goldenConfirmOpen, setGoldenConfirmOpen] = useState(false);
   // Browsers block all audio (soundboard, gong, shuffle, Tangia) until the
   // page receives a real user gesture — the check-in dialog manufactures it.
   const [hasInteracted, setHasInteracted] = useState(false);
@@ -203,6 +211,24 @@ const JudgePage = () => {
     addChannelListener('soundboard:play', handler);
     return () => removeChannelListener('soundboard:play', handler);
   }, [addChannelListener, removeChannelListener, channelConnected]);
+
+  // Surface why the Tangia embed did or didn't mount — it's invisible, so
+  // without these logs a rejected/missing URL is indistinguishable from a
+  // Tangia-side failure.
+  useEffect(() => {
+    if (!settings) return;
+    const url = (settings.tangia_overlay_url || '').trim();
+    if (!url) {
+      // eslint-disable-next-line no-console
+      console.info('Tangia overlay: no tangia_overlay_url configured for this channel');
+    } else if (!url.startsWith('https://overlays.tangia.co/')) {
+      // eslint-disable-next-line no-console
+      console.warn('Tangia overlay: URL rejected — must start with https://overlays.tangia.co/ — got:', url);
+    } else {
+      // eslint-disable-next-line no-console
+      console.info('Tangia overlay: URL accepted, iframe mounts after judge check-in:', url);
+    }
+  }, [settings]);
 
   // Cleanup shuffle audio on unmount
   useEffect(() => () => {
@@ -331,28 +357,63 @@ const JudgePage = () => {
     setPlayerVolume(next);
   };
 
+  // Soft sync: nudge the live player to the server position without tearing
+  // down the iframe. Used for the automatic per-video sync so judges don't see
+  // playback start, stop, and restart.
+  const handleSoftSyncVideo = useCallback(() => {
+    if (!currentlyPlaying?.videoId || !channelConnected) return;
+
+    const stateHandler = (state) => {
+      removeChannelListener('player:state_response', stateHandler);
+      if (!state || typeof state.time !== 'number' || Number.isNaN(state.time)) return;
+
+      // If the server hasn't tracked a position yet (time=0, not playing),
+      // fall back to the video's startTime so URL timestamps aren't overridden.
+      const hasServerState = state.time > 0 || state.playing;
+      const seekTime = hasServerState ? state.time : (currentlyPlaying?.startTime || 0);
+
+      if (state.playing) {
+        playLocal(seekTime, { source: 'remote' });
+      } else {
+        pauseLocal(seekTime, { source: 'remote' });
+      }
+    };
+
+    addChannelListener('player:state_response', stateHandler);
+    emitToChannel('player:state_request');
+
+    // Fallback cleanup in case the response never arrives
+    setTimeout(() => removeChannelListener('player:state_response', stateHandler), 5000);
+  }, [currentlyPlaying?.videoId, currentlyPlaying?.startTime, channelConnected, emitToChannel, addChannelListener, removeChannelListener, playLocal, pauseLocal]);
+
+  // Hard resync (manual button): full player reload for genuinely broken
+  // playback, then re-apply server state compensated for the reload delay.
   const handleResyncVideo = useCallback(() => {
     if (!currentlyPlaying?.videoId || !channelConnected) return;
-    
+
     setSuccess('Resyncing video...');
-    
+
     // Request current player state from server
     const stateHandler = (state) => {
       removeChannelListener('player:state_response', stateHandler);
-      
+      const receivedAt = Date.now();
+
       // Force player reload
       setForceReloadKey(1);
-      
+
       setTimeout(() => {
         setForceReloadKey(0);
-        
+
         // Apply the received state after player reloads
         setTimeout(() => {
           if (state && typeof state.time === 'number') {
             // If the server hasn't tracked a position yet (time=0, not playing),
             // fall back to the video's startTime so URL timestamps aren't overridden.
             const hasServerState = state.time > 0 || state.playing;
-            const seekTime = hasServerState ? state.time : (currentlyPlaying?.startTime || 0);
+            // The video kept playing during the reload wait; add the elapsed
+            // time so we don't land behind the room.
+            const elapsed = state.playing ? (Date.now() - receivedAt) / 1000 : 0;
+            const seekTime = hasServerState ? state.time + elapsed : (currentlyPlaying?.startTime || 0);
 
             seekLocal(seekTime, { source: 'remote' });
 
@@ -362,15 +423,15 @@ const JudgePage = () => {
               pauseLocal(seekTime, { source: 'remote' });
             }
           }
-          
+
           setSuccess('Video resynced!');
           setTimeout(() => setSuccess(null), 2000);
         }, 1000);
       }, 500);
     };
-    
+
     addChannelListener('player:state_response', stateHandler);
-    
+
     // Emit the state request via the existing channel socket
     emitToChannel('player:state_request');
   }, [currentlyPlaying?.videoId, currentlyPlaying?.startTime, channelConnected, emitToChannel, addChannelListener, removeChannelListener, seekLocal, playLocal, pauseLocal]);
@@ -386,14 +447,16 @@ const JudgePage = () => {
       return;
     }
 
-    // Wait for player to be ready, then request sync
+    // Wait for player to be ready, then nudge it to the server position.
+    // Soft sync only — a full reload here made every video visibly start,
+    // stop, and restart for judges.
     const timeout = setTimeout(() => {
       initialSyncDoneRef.current = currentlyPlaying.videoId;
-      handleResyncVideo();
+      handleSoftSyncVideo();
     }, 2500);
 
     return () => clearTimeout(timeout);
-  }, [channelConnected, currentlyPlaying?.videoId, forceReloadKey, hasVideo, handleResyncVideo]);
+  }, [channelConnected, currentlyPlaying?.videoId, forceReloadKey, hasVideo, handleSoftSyncVideo]);
 
   useEffect(() => {
     if (!channelConnected) {
@@ -497,6 +560,48 @@ const JudgePage = () => {
       setGongBusy(false);
     }
   }, [channelName, cupId, currentlyPlaying?.id, currentlyPlaying?.isVip, judgeToken, judgeIdentifier, hasGonged]);
+
+  const hasUsedGoldenBuzzer = useMemo(
+    () => Boolean(goldenBuzzerState?.usedBy?.some((entry) => String(entry.judgeId) === String(judgeIdentifier))),
+    [goldenBuzzerState, judgeIdentifier]
+  );
+  const goldenBuzzerActiveForItem = Boolean(
+    votingState?.goldenBuzzer && votingState?.queueItemId === currentlyPlaying?.id
+  );
+  const votingOpenForItem = Boolean(
+    votingState &&
+    votingState.queueItemId === currentlyPlaying?.id &&
+    !['completed', 'cancelled'].includes(votingState.stage)
+  );
+
+  const handleGoldenBuzzer = useCallback(async () => {
+    if (!channelName || !cupId || !currentlyPlaying?.id || !judgeToken) {
+      return;
+    }
+    setGoldenBusy(true);
+    setGoldenError(null);
+    try {
+      const response = await fetch(
+        `/api/channels/${channelName}/cups/${cupId}/items/${currentlyPlaying.id}/golden-buzzer`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${judgeToken}`
+          }
+        }
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to activate the golden buzzer');
+      }
+      setGoldenConfirmOpen(false);
+    } catch (err) {
+      setGoldenError(err.message || 'Failed to activate the golden buzzer');
+    } finally {
+      setGoldenBusy(false);
+    }
+  }, [channelName, cupId, currentlyPlaying?.id, judgeToken]);
 
   const resolvedDuration = typeof duration === 'number' && duration > 0 ? duration : 0;
   const displayTime = isSeeking && typeof pendingSeek === 'number'
@@ -827,6 +932,80 @@ const JudgePage = () => {
     </Card>
   );
 
+  const goldenBuzzerCard = (
+    <Card
+      sx={{
+        height: '100%',
+        border: '1px solid',
+        borderColor: hasUsedGoldenBuzzer || goldenBuzzerActiveForItem ? 'divider' : 'rgba(255, 215, 0, 0.5)',
+        background: hasUsedGoldenBuzzer || goldenBuzzerActiveForItem
+          ? undefined
+          : 'linear-gradient(135deg, rgba(255, 215, 0, 0.08) 0%, rgba(255, 180, 0, 0.02) 60%)'
+      }}
+    >
+      <CardContent>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          alignItems={{ xs: 'stretch', md: 'center' }}
+          justifyContent="space-between"
+          spacing={2}
+          sx={{ flexWrap: 'wrap' }}
+        >
+          <Box>
+            <Typography variant="h6" gutterBottom sx={{ color: '#ffd700' }}>
+              ⭐ Golden Buzzer
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {goldenBuzzerActiveForItem
+                ? `${votingState?.goldenBuzzer?.judgeName || 'A judge'} already saved this video with the golden buzzer.`
+                : hasUsedGoldenBuzzer
+                  ? 'You already used your golden buzzer this stream. It recharges next stream.'
+                  : 'Once per stream: override every judge and lock in a perfect 5.0 for this video. Use it before the score is finalized.'}
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={<StarIcon />}
+            onClick={() => setGoldenConfirmOpen(true)}
+            disabled={
+              goldenBusy ||
+              hasUsedGoldenBuzzer ||
+              goldenBuzzerActiveForItem ||
+              !votingOpenForItem ||
+              !currentlyPlaying?.id ||
+              !judgeToken ||
+              !session
+            }
+            sx={{
+              bgcolor: '#d4a900',
+              color: '#1a1200',
+              fontWeight: 800,
+              '&:hover': { bgcolor: '#ffd700' },
+              '&.Mui-disabled': { bgcolor: 'rgba(212, 169, 0, 0.25)', color: 'rgba(255, 255, 255, 0.35)' }
+            }}
+          >
+            {goldenBuzzerActiveForItem
+              ? 'Already Saved'
+              : hasUsedGoldenBuzzer
+                ? 'Used This Stream'
+                : 'Golden Buzzer'}
+          </Button>
+        </Stack>
+        {!votingOpenForItem && !hasUsedGoldenBuzzer && !goldenBuzzerActiveForItem && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+            Available once voting starts on the current video.
+          </Typography>
+        )}
+        {goldenError && (
+          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setGoldenError(null)}>
+            {goldenError}
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   const soundboardCard = (
     <Card sx={{ height: '100%' }}>
       <CardContent>
@@ -894,6 +1073,9 @@ const JudgePage = () => {
   // click so the iframe loads inside an audio-activated browsing context.
   const tangiaOverlayUrl = (settings?.tangia_overlay_url || '').trim();
   const tangiaEmbedUrl = tangiaOverlayUrl.startsWith('https://overlays.tangia.co/') ? tangiaOverlayUrl : null;
+  // ?tangia_debug=1 makes the embed visible (scaled down) so Tangia's own
+  // status/warning UI can be inspected instead of guessing blind.
+  const tangiaDebug = searchParams.get('tangia_debug') === '1';
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
@@ -927,17 +1109,26 @@ const JudgePage = () => {
           src={tangiaEmbedUrl}
           title="Tangia overlay (audio)"
           allow="autoplay"
-          aria-hidden="true"
+          aria-hidden={tangiaDebug ? undefined : 'true'}
+          onLoad={() => {
+            // eslint-disable-next-line no-console
+            console.info('Tangia overlay: iframe loaded', tangiaEmbedUrl);
+          }}
           sx={{
+            // Tangia's overlay app expects a 1920x1080 browser source — at
+            // smaller viewports it shows a size warning and positions alert
+            // popups at coordinates that fall outside the frame.
             position: 'fixed',
             bottom: 0,
             right: 0,
-            width: 320,
-            height: 180,
-            opacity: 0,
+            width: 1920,
+            height: 1080,
+            transformOrigin: 'bottom right',
+            transform: tangiaDebug ? 'scale(0.25)' : 'none',
+            opacity: tangiaDebug ? 1 : 0,
             pointerEvents: 'none',
-            border: 0,
-            zIndex: -1
+            border: tangiaDebug ? '2px solid red' : 0,
+            zIndex: tangiaDebug ? 2000 : -1
           }}
         />
       )}
@@ -1039,6 +1230,8 @@ const JudgePage = () => {
           </Card>
 
           {gongControlCard}
+
+          {goldenBuzzerCard}
 
           {soundboardCard}
         </Stack>
@@ -1196,9 +1389,41 @@ const JudgePage = () => {
 
           {gongControlCard}
 
+          {goldenBuzzerCard}
+
           {soundboardCard}
         </Stack>
       )}
+
+      <Dialog open={goldenConfirmOpen} onClose={() => !goldenBusy && setGoldenConfirmOpen(false)}>
+        <DialogTitle>⭐ Hit the Golden Buzzer?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            This overrides <strong>every judge's score</strong> for
+            {' '}<strong>{currentlyPlaying?.title || 'this video'}</strong>{' '}
+            with a perfect 5.0 and locks them in.
+          </Typography>
+          <Typography variant="body2" color="warning.main">
+            You only get ONE golden buzzer per stream. There is no undo.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setGoldenConfirmOpen(false)} disabled={goldenBusy}>
+            Not yet
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={goldenBusy ? <CircularProgress size={16} /> : <StarIcon />}
+            onClick={handleGoldenBuzzer}
+            disabled={goldenBusy}
+            sx={{ bgcolor: '#d4a900', color: '#1a1200', fontWeight: 800, '&:hover': { bgcolor: '#ffd700' } }}
+          >
+            Slam it
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <GoldenBuzzerSplash event={goldenBuzzerEvent} />
     </Box>
   );
 };

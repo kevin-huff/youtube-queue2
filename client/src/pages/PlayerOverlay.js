@@ -5,6 +5,7 @@ import { keyframes } from '@emotion/react';
 import { useSocket } from '../contexts/SocketContext';
 import { useSyncedYouTubePlayer } from '../hooks/useSyncedYouTubePlayer';
 import PlayerControlPanel from '../components/PlayerControlPanel';
+import GoldenBuzzerSplash from '../components/GoldenBuzzerSplash';
 import { GONG_IMAGE_URL, GONG_AUDIO_URL, getActiveGongEntries } from '../constants/gongs';
 import { formatTimestamp } from '../utils/format';
 
@@ -173,7 +174,8 @@ const PlayerOverlay = () => {
     votingState,
     startVotingSession,
     overlayShowPlayer,
-    gongState
+    gongState,
+    goldenBuzzerEvent
   } = useSocket();
 
   const [pendingSeek, setPendingSeek] = useState(null);
@@ -623,6 +625,8 @@ const PlayerOverlay = () => {
           </Box>
         )}
       </Box>
+
+      <GoldenBuzzerSplash event={goldenBuzzerEvent} />
     </OverlayContainer>
   );
 };

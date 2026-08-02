@@ -73,6 +73,8 @@ export const SocketProvider = ({ children }) => {
   const [votingState, setVotingState] = useState(null);
   const [overlayShowPlayer, setOverlayShowPlayer] = useState(null); // null=auto, true=show, false=hide
   const [gongState, setGongState] = useState(null);
+  const [goldenBuzzerState, setGoldenBuzzerState] = useState(null);
+  const [goldenBuzzerEvent, setGoldenBuzzerEvent] = useState(null);
   // Track if a route/page explicitly requested a channel connection.
   // When true, suppress provider auto-connect to the user's default channel.
   const explicitConnectRef = useRef(false);
@@ -139,6 +141,8 @@ export const SocketProvider = ({ children }) => {
     setVotingState(null);
     setOverlayShowPlayer(null);
     setGongState(null);
+    setGoldenBuzzerState(null);
+    setGoldenBuzzerEvent(null);
     setActiveChannelId(null);
     // Reset explicit suppression once channel is torn down
     explicitConnectRef.current = false;
@@ -164,6 +168,7 @@ export const SocketProvider = ({ children }) => {
     } else {
       setGongState(null);
     }
+    setGoldenBuzzerState(payload.goldenBuzzerState || null);
     const initialOverlay = payload.overlayState && typeof payload.overlayState.showPlayer === 'boolean'
       ? payload.overlayState.showPlayer
       : null;
@@ -517,6 +522,12 @@ export const SocketProvider = ({ children }) => {
     socket.on('gong:update', (payload = {}) => {
       setGongState(payload);
     });
+    socket.on('golden_buzzer:state', (payload = {}) => {
+      setGoldenBuzzerState(payload);
+    });
+    socket.on('golden_buzzer:activated', (payload = {}) => {
+      setGoldenBuzzerEvent({ ...payload, receivedAt: Date.now() });
+    });
 
     socket.on('error', (error) => {
       console.error('Channel socket error:', error);
@@ -855,7 +866,12 @@ export const SocketProvider = ({ children }) => {
 
   const revealNextJudge = useCallback((queueItemId, cupId, options = {}) => (
     callVotingEndpoint(queueItemId, cupId, 'reveal-next', {
-      channelId: options.channelId
+      channelId: options.channelId,
+      payload: options.judgeId !== undefined && options.judgeId !== null
+        ? { judgeId: options.judgeId }
+        : options.random
+          ? { random: true }
+          : {}
     })
   ), [callVotingEndpoint]);
 
@@ -935,7 +951,8 @@ export const SocketProvider = ({ children }) => {
     votingState,
     overlayShowPlayer,
     gongState,
-    
+    goldenBuzzerState,
+    goldenBuzzerEvent,
 
     // Controls
     connectToChannel,
@@ -993,6 +1010,8 @@ export const SocketProvider = ({ children }) => {
     votingState,
     overlayShowPlayer,
     gongState,
+    goldenBuzzerState,
+    goldenBuzzerEvent,
     connectToChannel,
     cleanupChannelSocket,
     playNext,
