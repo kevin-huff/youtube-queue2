@@ -10,6 +10,11 @@ const TERMINAL_QUEUE_STATUSES = ['SCORED', 'PLAYED', 'SKIPPED', 'REMOVED', 'REJE
 const DUPLICATE_ACTIVE_STATUSES = ['PENDING', 'APPROVED', 'TOP_EIGHT', 'PLAYING'];
 const DUPLICATE_HISTORY_STATUSES = TERMINAL_QUEUE_STATUSES;
 
+// A finished cup must never collect new submissions — assigning to one would
+// corrupt standings that are already published. Every other lifecycle state
+// (DRAFT, SCHEDULED, LIVE) is fair game once a producer marks the cup active.
+const TERMINAL_CUP_STATUSES = ['COMPLETED', 'CANCELLED'];
+
 const CUP_INCLUDE_SELECTION = {
   id: true,
   title: true,
@@ -1769,6 +1774,45 @@ class QueueService {
     }
   }
 
+  // Resolves the cup that incoming submissions should be filed under, and makes
+  // the "no cup" case loud. A silent null here means a whole show's worth of
+  // videos gets stranded with no cup, which is only discoverable after the fact.
+  async _findAssignableCup() {
+    const activeCup = await this.db.cup.findFirst({
+      where: {
+        channelId: this.channelId,
+        isActive: true,
+        status: { notIn: TERMINAL_CUP_STATUSES }
+      }
+    });
+
+    if (activeCup) {
+      return activeCup;
+    }
+
+    const strandedCup = await this.db.cup.findFirst({
+      where: {
+        channelId: this.channelId,
+        isActive: false,
+        status: { notIn: TERMINAL_CUP_STATUSES }
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, title: true, status: true }
+    });
+
+    if (strandedCup) {
+      logger.warn('Submission not assigned to a cup: an unfinished cup exists but is not marked active', {
+        channelId: this.channelId,
+        cupId: strandedCup.id,
+        cupTitle: strandedCup.title,
+        cupStatus: strandedCup.status,
+        hint: 'Use "Set Active" on the cup so submissions attach to it'
+      });
+    }
+
+    return null;
+  }
+
   async addToQueue(videoData, submitter, options = {}) {
     try {
       const isVipSubmission = Boolean(options.isVip);
@@ -1795,14 +1839,11 @@ class QueueService {
       // Generate a unique alias for this specific video submission
       const randomAlias = await this._generateUniqueAlias();
 
-      // Find active cup for auto-assignment
-      const activeCup = await this.db.cup.findFirst({
-        where: {
-          channelId: this.channelId,
-          isActive: true,
-          status: 'LIVE'
-        }
-      });
+      // Find active cup for auto-assignment. `isActive` is the single source of
+      // truth for "which cup is current" — the same flag the dashboard, overlays
+      // and public cup endpoints read. Requiring a particular status here as well
+      // used to strand submissions with a null cupId whenever the two disagreed.
+      const activeCup = await this._findAssignableCup();
 
       let vipIds = [];
       try {

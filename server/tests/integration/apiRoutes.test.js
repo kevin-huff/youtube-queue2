@@ -244,6 +244,122 @@ describeIfDb('API integration (DB)', () => {
     expect(third.body.cup.slug).toBe('friday-cup-3');
   });
 
+  test('creating a LIVE cup takes the active slot from the previous cup', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-live', accountUsername: 'ownerlive' });
+    const user = {
+      id: seed.account.id,
+      username: seed.account.username,
+      displayName: seed.account.displayName,
+      channels: [{ id: seed.channel.id, roles: ['OWNER'], ownershipRole: 'OWNER' }]
+    };
+    const { app } = buildTestApp({ prisma, user, queueChannelId: seed.channel.id });
+
+    const created = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Tonight', slug: 'tonight', status: 'LIVE' });
+
+    expect(created.status).toBe(201);
+    expect(created.body.cup.isActive).toBe(true);
+
+    const previous = await prisma.cup.findUnique({ where: { id: seed.cup.id } });
+    expect(previous.isActive).toBe(false);
+
+    const active = await prisma.cup.findMany({
+      where: { channelId: seed.channel.id, isActive: true }
+    });
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(created.body.cup.id);
+  });
+
+  test('creating a DRAFT cup leaves an existing active cup alone', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-draft', accountUsername: 'ownerdraft' });
+    const user = {
+      id: seed.account.id,
+      username: seed.account.username,
+      displayName: seed.account.displayName,
+      channels: [{ id: seed.channel.id, roles: ['OWNER'], ownershipRole: 'OWNER' }]
+    };
+    const { app } = buildTestApp({ prisma, user, queueChannelId: seed.channel.id });
+
+    const created = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Next Week', slug: 'next-week', status: 'DRAFT' });
+
+    expect(created.status).toBe(201);
+    expect(created.body.cup.isActive).toBe(false);
+
+    const previous = await prisma.cup.findUnique({ where: { id: seed.cup.id } });
+    expect(previous.isActive).toBe(true);
+  });
+
+  test('a new cup adopts the active slot when no cup holds it', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-free', accountUsername: 'ownerfree' });
+    await prisma.cup.update({ where: { id: seed.cup.id }, data: { isActive: false } });
+
+    const user = {
+      id: seed.account.id,
+      username: seed.account.username,
+      displayName: seed.account.displayName,
+      channels: [{ id: seed.channel.id, roles: ['OWNER'], ownershipRole: 'OWNER' }]
+    };
+    const { app } = buildTestApp({ prisma, user, queueChannelId: seed.channel.id });
+
+    const created = await request(app)
+      .post(`/api/channels/${seed.channel.id}/cups`)
+      .send({ title: 'Prep', slug: 'prep', status: 'DRAFT' });
+
+    expect(created.status).toBe(201);
+    expect(created.body.cup.isActive).toBe(true);
+  });
+
+  test('completing a cup releases the active slot', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-done', accountUsername: 'ownerdone' });
+    const user = {
+      id: seed.account.id,
+      username: seed.account.username,
+      displayName: seed.account.displayName,
+      channels: [{ id: seed.channel.id, roles: ['OWNER'], ownershipRole: 'OWNER' }]
+    };
+    const { app } = buildTestApp({ prisma, user, queueChannelId: seed.channel.id });
+
+    const updated = await request(app)
+      .patch(`/api/channels/${seed.channel.id}/cups/${seed.cup.id}`)
+      .send({ status: 'COMPLETED' });
+
+    expect(updated.status).toBe(200);
+    expect(updated.body.cup.status).toBe('COMPLETED');
+    expect(updated.body.cup.isActive).toBe(false);
+  });
+
+  test('submissions attach to the active cup even when it is not LIVE', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-sched', accountUsername: 'ownersched' });
+    await prisma.cup.update({
+      where: { id: seed.cup.id },
+      data: { status: 'SCHEDULED', isActive: true }
+    });
+
+    const queueService = new QueueService({ emit: jest.fn() }, seed.channel.id);
+    queueService.db = prisma;
+    const cup = await queueService._findAssignableCup();
+
+    expect(cup).not.toBeNull();
+    expect(cup.id).toBe(seed.cup.id);
+  });
+
+  test('submissions never attach to a completed cup', async () => {
+    const seed = await seedBasicCup(prisma, { accountId: 'acct-term', accountUsername: 'ownerterm' });
+    await prisma.cup.update({
+      where: { id: seed.cup.id },
+      data: { status: 'COMPLETED', isActive: true }
+    });
+
+    const queueService = new QueueService({ emit: jest.fn() }, seed.channel.id);
+    queueService.db = prisma;
+    const cup = await queueService._findAssignableCup();
+
+    expect(cup).toBeNull();
+  });
+
   test('VIP review action adds and removes VIP entry', async () => {
     const seed = await seedBasicCup(prisma, { accountId: 'acct-vip', accountUsername: 'ownervip' });
     const queueService = new QueueService({ emit: jest.fn() }, seed.channel.id);

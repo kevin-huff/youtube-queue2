@@ -1,4 +1,5 @@
 const QueueService = require('../../src/services/QueueService');
+const logger = require('../../src/utils/logger');
 
 const VIDEO = {
   url: 'https://youtube.com/watch?v=abc12345678',
@@ -112,6 +113,64 @@ describe('QueueService.addToQueue transactional checks', () => {
 
     const result = await service.addToQueue(VIDEO, 'viewer1');
     expect(result.queueItem.position).toBe(8);
+  });
+});
+
+describe('QueueService.addToQueue cup auto-assignment', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('assigns the active cup regardless of its lifecycle status', async () => {
+    const { service, tx } = buildService();
+    service.db.cup.findFirst.mockResolvedValue({ id: 'cup-1', status: 'SCHEDULED' });
+
+    await service.addToQueue(VIDEO, 'viewer1');
+
+    expect(tx.queueItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ cupId: 'cup-1' }) })
+    );
+  });
+
+  test('never assigns a finished cup', async () => {
+    const { service } = buildService();
+
+    await service._findAssignableCup();
+
+    expect(service.db.cup.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isActive: true,
+          status: { notIn: ['COMPLETED', 'CANCELLED'] }
+        })
+      })
+    );
+  });
+
+  test('warns when an unfinished cup exists but is not marked active', async () => {
+    const { service } = buildService();
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+    service.db.cup.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'cup-2', title: 'Notthemama', status: 'LIVE' });
+
+    const result = await service._findAssignableCup();
+
+    expect(result).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('not marked active'),
+      expect.objectContaining({ cupId: 'cup-2', cupStatus: 'LIVE' })
+    );
+  });
+
+  test('stays quiet when the channel simply has no cups', async () => {
+    const { service } = buildService();
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const result = await service._findAssignableCup();
+
+    expect(result).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

@@ -29,6 +29,8 @@ module.exports = (router, { helpers }) => {
 
   const isUniqueViolation = (error) => error?.code === 'P2002';
 
+  const TERMINAL_CUP_STATUSES = ['COMPLETED', 'CANCELLED'];
+
   router.post('/channels/:channelId/cups',
     requireAuth,
     requireChannelRole(['OWNER', 'MANAGER', 'PRODUCER']),
@@ -44,18 +46,76 @@ module.exports = (router, { helpers }) => {
         const normalizedChannelId = req.params.channelId.toLowerCase();
 
         const slug = await uniqueSlug(channelManager.prisma.cup, normalizedChannelId, req.body.slug);
-        const cup = await channelManager.prisma.cup.create({
-          data: {
-            channelId: normalizedChannelId,
-            title: req.body.title,
-            slug,
-            theme: req.body.theme || null,
-            description: req.body.description || null,
-            status: req.body.status || 'DRAFT',
-            seriesId: req.body.seriesId || null,
-            metadata: req.body.metadata || {}
+
+        const status = typeof req.body.status === 'string'
+          ? req.body.status.toUpperCase()
+          : 'DRAFT';
+
+        // `isActive` defaults to false, so a brand new cup looks open in the UI
+        // while submissions silently land with no cup until someone remembers to
+        // hit "Set Active". Creating a cup as LIVE means "this is tonight's show",
+        // so it takes the active slot outright; a DRAFT or SCHEDULED cup is being
+        // prepped for later and only adopts the slot when nothing else holds it.
+        // Run as one transaction so concurrent creates can't both claim the flag.
+        const { cup, stoleFrom } = await channelManager.prisma.$transaction(async (tx) => {
+          const existingActive = await tx.cup.findFirst({
+            where: {
+              channelId: normalizedChannelId,
+              isActive: true,
+              status: { notIn: TERMINAL_CUP_STATUSES }
+            },
+            select: { id: true, title: true }
+          });
+
+          const claimsActive = status === 'LIVE' || !existingActive;
+
+          if (claimsActive && existingActive) {
+            await tx.cup.updateMany({
+              where: { channelId: normalizedChannelId, isActive: true },
+              data: { isActive: false }
+            });
           }
+
+          const created = await tx.cup.create({
+            data: {
+              channelId: normalizedChannelId,
+              title: req.body.title,
+              slug,
+              theme: req.body.theme || null,
+              description: req.body.description || null,
+              status,
+              seriesId: req.body.seriesId || null,
+              metadata: req.body.metadata || {},
+              isActive: claimsActive
+            }
+          });
+
+          return { cup: created, stoleFrom: claimsActive ? existingActive : null };
         });
+
+        if (cup.isActive) {
+          logger.info(
+            `Cup ${cup.id} activated on create for channel ${normalizedChannelId}`,
+            stoleFrom
+              ? { deactivated: stoleFrom.id, deactivatedTitle: stoleFrom.title, reason: 'created as LIVE' }
+              : { reason: 'no active cup existed' }
+          );
+
+          // Overlays and the producer dashboard track the active cup, so tell
+          // them it moved rather than waiting for a reload.
+          try {
+            const queueService = channelManager.getQueueService(normalizedChannelId);
+            if (queueService?.io) {
+              queueService.io.emit('setting:updated', { key: 'activeCupId', value: cup.id });
+            }
+          } catch (emitError) {
+            logger.warn('Failed to broadcast active cup update after create', {
+              channelId: normalizedChannelId,
+              cupId: cup.id,
+              error: emitError?.message || emitError
+            });
+          }
+        }
 
         logger.info(`Cup created: ${cup.title} (${cup.id})`);
         res.status(201).json({ cup });
@@ -518,6 +578,14 @@ module.exports = (router, { helpers }) => {
               updates[field] = req.body[field];
             }
           }
+        }
+
+        // A finished cup must not stay the active one: it would keep absorbing
+        // the active slot while refusing submissions, so the next cup created
+        // can't adopt it either. Releasing the flag here leaves the channel with
+        // no active cup, which the next create picks up automatically.
+        if (TERMINAL_CUP_STATUSES.includes(updates.status)) {
+          updates.isActive = false;
         }
 
         const cup = await channelManager.prisma.cup.update({
