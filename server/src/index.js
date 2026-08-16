@@ -16,6 +16,7 @@ const apiRoutes = require('./api');
 const socketHandler = require('./socket');
 const TwitchBot = require('./bot/TwitchBot');
 const ChannelManager = require('./services/ChannelManager');
+const PrismaSessionStore = require('./services/PrismaSessionStore');
 const AdEventService = require('./services/AdEventService');
 const VideoService = require('./services/VideoService');
 const RoleService = require('./services/RoleService');
@@ -45,7 +46,8 @@ class Server {
     this.videoService = null;
     this.roleService = null;
     this.adEventService = null;
-    this.sessionStore = new session.MemoryStore();
+    // DB-backed sessions: logins survive restarts and deploys
+    this.sessionStore = new PrismaSessionStore();
     this.sessionCleanupInterval = null;
   }
 
@@ -212,7 +214,7 @@ class Server {
   }
 
   _startSessionCleanup() {
-    if (!this.sessionStore || typeof this.sessionStore.destroy !== 'function') {
+    if (!this.sessionStore || typeof this.sessionStore.prune !== 'function') {
       return;
     }
 
@@ -221,29 +223,11 @@ class Server {
     }
 
     const sweep = () => {
-      const now = Date.now();
-      let removed = 0;
-
-      if (this.sessionStore.sessions && typeof this.sessionStore.destroy === 'function') {
-        for (const [sid, raw] of Object.entries(this.sessionStore.sessions)) {
-          let sess = raw;
-          if (typeof raw === 'string') {
-            try { sess = JSON.parse(raw); } catch (err) { logger.warn('Failed to parse session data', { error: err?.message }); continue; }
-          }
-          const exp = sess?.cookie?.expires ? new Date(sess.cookie.expires).getTime() : null;
-          if (exp && exp <= now) {
-            this.sessionStore.destroy(sid, () => {});
-            removed++;
-          }
-        }
-      }
-
-      if (removed > 0 && logger.debug) {
-        logger.debug('Pruned expired sessions from memory store', { removed });
-      }
+      this.sessionStore.prune().catch((error) => {
+        logger.warn('Session prune failed', { error: error?.message || error });
+      });
     };
 
-    sweep();
     this.sessionCleanupInterval = setInterval(sweep, 30 * 60 * 1000);
     if (typeof this.sessionCleanupInterval.unref === 'function') {
       this.sessionCleanupInterval.unref();

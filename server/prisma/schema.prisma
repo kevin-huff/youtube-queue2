@@ -423,3 +423,14 @@ enum LockType {
   MANUAL
   FORCED
 }
+
+model Session {
+  sid       String   @id
+  data      String
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt])
+  @@map("sessions")
+}
