@@ -52,6 +52,9 @@ class TwitchBot {
         this.channelBannedUsers.set(channelId, new Set());
       }
 
+      // Restore persisted bans so restarts don't unban anyone
+      await Promise.all(activeChannels.map((channelId) => this._loadBannedUsers(channelId)));
+
       this.client = new tmi.Client(this.config);
 
       // Set up event listeners
@@ -536,6 +539,36 @@ class TwitchBot {
     }
   }
 
+  // Bans live in the channel's bot settings (key: banned_users) so they
+  // survive restarts. The in-memory Set stays the hot path for message checks.
+  async _loadBannedUsers(channelId) {
+    try {
+      const queueService = this.channelManager.getQueueService(channelId);
+      if (!queueService) return;
+      const raw = await queueService.getSetting('banned_users', '[]');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        this.channelBannedUsers.set(
+          channelId,
+          new Set(list.map((name) => String(name).toLowerCase()))
+        );
+      }
+    } catch (error) {
+      logger.warn('Failed to load banned users', { channelId, error: error?.message || error });
+    }
+  }
+
+  async _persistBannedUsers(channelId) {
+    try {
+      const queueService = this.channelManager.getQueueService(channelId);
+      if (!queueService) return;
+      const bannedUsers = this.channelBannedUsers.get(channelId) || new Set();
+      await queueService.updateSetting('banned_users', JSON.stringify(Array.from(bannedUsers)));
+    } catch (error) {
+      logger.warn('Failed to persist banned users', { channelId, error: error?.message || error });
+    }
+  }
+
   async handleBanCommand(channel, channelId, target) {
     const username = target.replace('@', '').toLowerCase();
     let channelBannedUsers = this.channelBannedUsers.get(channelId);
@@ -543,8 +576,9 @@ class TwitchBot {
       channelBannedUsers = new Set();
       this.channelBannedUsers.set(channelId, channelBannedUsers);
     }
-    
+
     channelBannedUsers.add(username);
+    await this._persistBannedUsers(channelId);
     await this.sendPersonalityMessage(channel, `${username} has been banned from submitting videos.`, {
       intent: 'A moderator banned this user from submitting videos. Announce the ban.',
       facts: { bannedUser: username },
@@ -563,6 +597,7 @@ class TwitchBot {
     const channelBannedUsers = this.channelBannedUsers.get(channelId);
     if (channelBannedUsers) {
       channelBannedUsers.delete(username);
+      await this._persistBannedUsers(channelId);
     }
     
     await this.sendPersonalityMessage(channel, `${username} has been unbanned and can now submit videos.`, {
