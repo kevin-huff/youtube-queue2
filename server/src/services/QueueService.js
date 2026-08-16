@@ -2,6 +2,7 @@ const { getDatabase } = require('../database/connection');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const anonNames = require('../constants/anonNames');
+const { computeCupScoring } = require('./cupScoring');
 
 const ACTIVE_QUEUE_STATUSES = ['PENDING', 'APPROVED', 'TOP_EIGHT', 'PLAYING'];
 const ORDERABLE_QUEUE_STATUSES = ['TOP_EIGHT', 'APPROVED', 'PENDING'];
@@ -28,6 +29,9 @@ const CHAT_VOTE_BROADCAST_INTERVAL_MS = 750;
 const CHAT_JUDGE_ID = 'chat';
 const CHAT_JUDGE_NAME = 'Chat';
 const GOLDEN_BUZZER_SCORE = 5;
+const VOTING_SNAPSHOT_KEY = 'voting_state_snapshot';
+const VOTING_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const VOTING_SNAPSHOT_DEBOUNCE_MS = 750;
 const VOTING_STAGES = {
   COLLECTING: 'collecting',
   REVEALING: 'revealing',
@@ -107,13 +111,111 @@ class QueueService {
     // In-memory on purpose: "once per stream" resets with the server, and
     // producers can reset it explicitly mid-stream.
     this.goldenBuzzerUsage = new Map();
+    // Serializes async voting mutations; sync mutators are single-tick atomic
+    this._votingOpChain = Promise.resolve();
+    this._votingPersistTimer = null;
   }
 
   async initialize() {
     this.db = getDatabase();
     await this.loadSettings();
     await this.cleanupOldItems();
+    await this._restoreVotingState();
     logger.info(`QueueService initialized for channel: ${this.channelId}`);
+  }
+
+  // Chain async voting mutations so their await points can't interleave.
+  // NEVER call this from inside an already-locked method — the chain is not
+  // reentrant and nesting deadlocks it.
+  _withVotingLock(fn) {
+    const run = this._votingOpChain.then(fn, fn);
+    this._votingOpChain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  _clearVotingPersistTimer() {
+    if (this._votingPersistTimer) {
+      clearTimeout(this._votingPersistTimer);
+      this._votingPersistTimer = null;
+    }
+  }
+
+  _scheduleVotingStatePersist() {
+    if (this._votingPersistTimer) {
+      return;
+    }
+    this._votingPersistTimer = setTimeout(() => {
+      this._votingPersistTimer = null;
+      this._persistVotingState().catch((error) => {
+        logger.warn('Failed to persist voting snapshot', { channelId: this.channelId, error: error?.message || error });
+      });
+    }, VOTING_SNAPSHOT_DEBOUNCE_MS);
+    if (typeof this._votingPersistTimer.unref === 'function') {
+      this._votingPersistTimer.unref();
+    }
+  }
+
+  // Snapshot the live voting session (plus chat votes) so a crash or deploy
+  // mid-judging can resume instead of losing the round. An empty value marks
+  // "no active session".
+  async _persistVotingState() {
+    if (!this.db) {
+      return;
+    }
+    const value = this.votingState && this.isVotingActive()
+      ? JSON.stringify({
+          version: 1,
+          savedAt: new Date().toISOString(),
+          votingState: this.votingState,
+          chatVotes: this.chatVotes instanceof Map ? Array.from(this.chatVotes.entries()) : []
+        })
+      : '';
+
+    await this.db.botSetting.upsert({
+      where: {
+        channelId_key: { channelId: this.channelId, key: VOTING_SNAPSHOT_KEY }
+      },
+      update: { value },
+      create: { channelId: this.channelId, key: VOTING_SNAPSHOT_KEY, value }
+    });
+  }
+
+  async _restoreVotingState() {
+    try {
+      const row = await this.db.botSetting.findUnique({
+        where: {
+          channelId_key: { channelId: this.channelId, key: VOTING_SNAPSHOT_KEY }
+        }
+      });
+      if (!row?.value) {
+        return;
+      }
+
+      const parsed = JSON.parse(row.value);
+      const snapshot = parsed?.votingState;
+      if (!snapshot || [VOTING_STAGES.COMPLETED, VOTING_STAGES.CANCELLED].includes(snapshot.stage)) {
+        return;
+      }
+
+      const savedAt = new Date(parsed.savedAt || 0).getTime();
+      if (!savedAt || Date.now() - savedAt > VOTING_SNAPSHOT_MAX_AGE_MS) {
+        logger.info('Ignoring stale voting snapshot', { channelId: this.channelId, savedAt: parsed.savedAt });
+        return;
+      }
+
+      this.votingState = snapshot;
+      this.chatVotes = new Map(Array.isArray(parsed.chatVotes) ? parsed.chatVotes : []);
+      this._recalculateVotingAggregates();
+      this._touchVotingState('restored', { savedAt: parsed.savedAt });
+      this._broadcastVotingState('restored');
+      logger.info('Restored voting session from snapshot', {
+        channelId: this.channelId,
+        queueItemId: snapshot.queueItemId,
+        stage: snapshot.stage
+      });
+    } catch (error) {
+      logger.warn('Failed to restore voting snapshot', { channelId: this.channelId, error: error?.message || error });
+    }
   }
 
   getVotingState() {
@@ -445,6 +547,8 @@ class QueueService {
     if (this.votingState.history.length > 100) {
       this.votingState.history = this.votingState.history.slice(-100);
     }
+
+    this._scheduleVotingStatePersist();
   }
 
   _deriveJudgeName({ session = null, score = null, fallback = 'Judge' } = {}) {
@@ -719,6 +823,7 @@ class QueueService {
     this.chatVotes.set(username.toLowerCase(), numeric);
     this._recalculateChatVoteAggregates();
     this._scheduleChatVoteBroadcast();
+    this._scheduleVotingStatePersist();
 
     return {
       count: this.votingState.chat.count,
@@ -822,6 +927,10 @@ class QueueService {
   }
 
   async startVoting(queueItemId, options = {}) {
+    return this._withVotingLock(() => this._doStartVoting(queueItemId, options));
+  }
+
+  async _doStartVoting(queueItemId, options = {}) {
     if (this.isVotingActive() && this.votingState?.queueItemId !== queueItemId) {
       throw new Error('Another voting session is already in progress');
     }
@@ -1059,10 +1168,19 @@ class QueueService {
     this._resetChatVotes();
     this._broadcastVotingEnded(reason);
 
+    // Terminal transition: clear the crash-recovery snapshot right away
+    // (and drop the pending debounce — this flush supersedes it)
+    this._clearVotingPersistTimer();
+    this._persistVotingState().catch(() => {});
+
     return snapshot;
   }
 
   async advanceJudgeReveal(options = {}) {
+    return this._withVotingLock(() => this._doAdvanceJudgeReveal(options));
+  }
+
+  async _doAdvanceJudgeReveal(options = {}) {
     if (!this.votingState) {
       throw new Error('No voting session in progress');
     }
@@ -1216,6 +1334,10 @@ class QueueService {
   }
 
   async revealSocialScore() {
+    return this._withVotingLock(() => this._doRevealSocialScore());
+  }
+
+  async _doRevealSocialScore() {
     if (!this.votingState) {
       throw new Error('No voting session in progress');
     }
@@ -1299,123 +1421,31 @@ class QueueService {
         ]
       });
 
-      const byVideo = new Map();
-      for (const item of allTerminal) {
-        const arr = byVideo.get(item.videoId) || [];
-        arr.push(item);
-        byVideo.set(item.videoId, arr);
-      }
-      const prevAvgByItemId = new Map();
-      for (const [_videoId, items] of byVideo.entries()) {
-        const averages = items.map((it) => {
-          const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];
-          if (!scores.length) return null;
-          const total = scores.reduce((s, x) => s + Number(x.score), 0);
-          return total / scores.length;
+      // Ephemeral entry for the video currently being judged, scored with the
+      // same duplicate rule as the reveal (a golden buzzer save is exempt from
+      // the must-beat-previous zeroing, matching revealAverage/revealSocialScore).
+      const extraEntries = [];
+      const identity = this.votingState.queueItem?.submitterUsername || this.votingState.queueItem?.publicSubmitterName || null;
+      const avgToBeat = this.votingState?.duplicate?.averageToBeat;
+      const avgNow = this.votingState?.computedAverage;
+      if (identity && typeof avgNow === 'number') {
+        const zeroed = typeof avgToBeat === 'number'
+          && !(avgNow > avgToBeat)
+          && !this.votingState.goldenBuzzer;
+        extraEntries.push({
+          submitterUsername: identity,
+          score: zeroed ? 0 : Number(avgNow.toFixed(5)),
+          judgeCount: 0
         });
-        for (let i = 1; i < items.length; i += 1) {
-          const prev = averages[i - 1];
-          if (typeof prev === 'number') {
-            prevAvgByItemId.set(items[i].id, Number(prev.toFixed(5)));
-          }
-        }
       }
 
-      // Compute per-video averages from judge scores
-      const videos = queueItems.map((item) => {
-        const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
-        const judgeCount = judgeScores.length;
-        const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
-        if (!judgeCount) {
-          return {
-            queueItemId: item.id,
-            submitterUsername,
-            judgeCount: 0,
-            averageScore: null,
-            totalScore: null
-          };
-        }
-        const totalScore = judgeScores.reduce((sum, score) => sum + Number(score.score), 0);
-        const averageScore = totalScore / judgeCount;
-        return {
-          queueItemId: item.id,
-          submitterUsername,
-          judgeCount,
-          totalScore: Number(totalScore.toFixed(5)),
-          averageScore: Number(averageScore.toFixed(5))
-        };
+      // Shared scoring pipeline (minimal video shape; the preview only emits standings)
+      const { standings } = computeCupScoring({
+        queueItems,
+        terminalItems: allTerminal,
+        extraEntries,
+        detail: 'minimal'
       });
-
-      // Apply duplicate penalty to historical videos
-      const penalizedVideos = videos.map((v) => {
-        const prev = prevAvgByItemId.get(v.queueItemId);
-        if (typeof v.averageScore === 'number' && typeof prev === 'number') {
-          if (!(v.averageScore > prev)) {
-            return { ...v, averageScore: 0, totalScore: 0 };
-          }
-        }
-        return v;
-      });
-
-      // Baseline C: mean of penalized video averages in the cup (fallback 3.4)
-      const DEFAULT_BASELINE = 3.4;
-      const scoredValues = penalizedVideos
-        .map((v) => (typeof v.averageScore === 'number' ? v.averageScore : null))
-        .filter((n) => typeof n === 'number');
-      const cupBaseline = scoredValues.length > 0
-        ? (scoredValues.reduce((s, n) => s + n, 0) / scoredValues.length)
-        : DEFAULT_BASELINE;
-
-      // Aggregate by submitter
-      const byUser = new Map();
-      penalizedVideos
-        .filter((v) => typeof v.averageScore === 'number')
-        .forEach((v) => {
-          const key = v.submitterUsername;
-          const existing = byUser.get(key) || { submitterUsername: key, scores: [], totalJudgeCount: 0 };
-          existing.scores.push(v.averageScore);
-          existing.totalJudgeCount += (v.judgeCount || 0);
-          byUser.set(key, existing);
-        });
-
-      // Add ephemeral current video to submitter’s scores using duplicate rule
-      try {
-        const identity = this.votingState.queueItem?.submitterUsername || this.votingState.queueItem?.publicSubmitterName || null;
-        const avgToBeat = this.votingState?.duplicate?.averageToBeat;
-        const avgNow = this.votingState?.computedAverage;
-        if (identity && typeof avgNow === 'number') {
-          const currentScore = (typeof avgToBeat === 'number' && !(avgNow > avgToBeat)) ? 0 : Number(avgNow.toFixed(5));
-          const entry = byUser.get(identity) || { submitterUsername: identity, scores: [], totalJudgeCount: 0 };
-          entry.scores.push(currentScore);
-          byUser.set(identity, entry);
-        }
-      } catch (e) {
-        // ignore
-      }
-
-      // Compute shrunk top-5 standings
-      const K = 5;
-      const standings = Array.from(byUser.values())
-        .map((entry) => {
-          const sorted = entry.scores.slice().sort((a, b) => b - a);
-          const n = Math.min(sorted.length, K);
-          const sumTop = sorted.slice(0, n).reduce((s, x) => s + x, 0);
-          const padded = (sumTop + (K - n) * cupBaseline) / K;
-          const totalScore = entry.scores.reduce((s, x) => s + x, 0);
-          return {
-            submitterUsername: entry.submitterUsername,
-            totalScore: Number(totalScore.toFixed(5)),
-            averageScore: Number(padded.toFixed(5)),
-            judgeCount: entry.totalJudgeCount,
-            videoCount: entry.scores.length
-          };
-        })
-        .sort((a, b) => {
-          if ((b.averageScore ?? 0) !== (a.averageScore ?? 0)) return (b.averageScore ?? 0) - (a.averageScore ?? 0);
-          if ((b.videoCount || 0) !== (a.videoCount || 0)) return (b.videoCount || 0) - (a.videoCount || 0);
-          return (b.judgeCount || 0) - (a.judgeCount || 0);
-        })
-        .map((entry, index) => ({ ...entry, rank: index + 1 }));
 
       // Cup metadata
       const cup = await this.db.cup.findUnique({
@@ -1467,6 +1497,11 @@ class QueueService {
       finalAverage: this.votingState.revealedAverage,
       finalSocial: this.votingState.revealedSocial
     });
+
+    // Terminal transition: clear the crash-recovery snapshot right away
+    // (and drop the pending debounce — this flush supersedes it)
+    this._clearVotingPersistTimer();
+    this._persistVotingState().catch(() => {});
 
     const snapshot = this.getVotingState();
 
@@ -1713,6 +1748,27 @@ class QueueService {
     logger.info(`Queue ${enabled ? 'enabled' : 'disabled'}`);
   }
 
+  // Run an interactive transaction at Serializable isolation, retrying on
+  // write conflicts (Prisma P2034). The callback must be safe to re-run: any
+  // failed attempt is fully rolled back before the retry.
+  async _runSerializableTransaction(fn, { retries = 3 } = {}) {
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.db.$transaction(fn, { isolationLevel: 'Serializable' });
+      } catch (error) {
+        attempt += 1;
+        if (error?.code !== 'P2034' || attempt >= retries) {
+          throw error;
+        }
+        logger.warn('Retrying serializable transaction after write conflict', {
+          channelId: this.channelId,
+          attempt
+        });
+      }
+    }
+  }
+
   async addToQueue(videoData, submitter, options = {}) {
     try {
       const isVipSubmission = Boolean(options.isVip);
@@ -1721,82 +1777,20 @@ class QueueService {
         throw new Error('Queue is currently disabled');
       }
 
-      // Check queue size limit
       const rawMaxSize = parseInt(await this.getSetting('max_queue_size', '0'), 10);
       const maxSize = Number.isNaN(rawMaxSize) || rawMaxSize <= 0 ? Infinity : rawMaxSize;
-      const currentSize = await this.getQueueSize();
-      
-      if (currentSize >= maxSize) {
-        throw new Error(`Queue is full (max ${maxSize} items)`);
-      }
-
       const maxPerUserSetting = parseInt(await this.getSetting('max_per_user', '3'), 10);
-      if (!Number.isNaN(maxPerUserSetting) && maxPerUserSetting > 0 && !isVipSubmission) {
-        const activeItems = await this.db.queueItem.findMany({
-          where: {
-            channelId: this.channelId,
-            submitterUsername: submitter,
-            status: { in: ACTIVE_QUEUE_STATUSES }
-          },
-          select: { id: true }
-        });
 
-        let activeNonVipCount = activeItems.length;
-        if (activeItems.length > 0) {
-          try {
-            const vipIds = await this._getVipList();
-            if (Array.isArray(vipIds) && vipIds.length) {
-              const vipSet = new Set(vipIds);
-              activeNonVipCount = activeItems.reduce(
-                (count, item) => count + (vipSet.has(item.id) ? 0 : 1),
-                0
-              );
-            }
-          } catch (vipListError) {
-            logger.warn('Failed to read VIP queue when enforcing per-user limit', {
-              channelId: this.channelId,
-              submitter,
-              error: vipListError
-            });
-          }
-        }
+      // Check user cooldown
+      await this.checkSubmissionCooldown(submitter);
 
-        if (activeNonVipCount >= maxPerUserSetting) {
-          throw new Error(`You already have ${maxPerUserSetting} video${maxPerUserSetting === 1 ? '' : 's'} in the queue.`);
-        }
-      }
-
+      // Duplicate history feeds the submission warning; the authoritative
+      // active-duplicate check re-runs inside the transaction below.
       const duplicateInfo = await this.getDuplicateInfo(videoData.videoId);
 
       if (duplicateInfo.activeItem) {
         throw new Error('This video is already in the queue');
       }
-
-      // Check user cooldown
-      await this.checkSubmissionCooldown(submitter);
-
-      // Get next position
-      const nextPosition = await this.getNextPosition();
-
-      // Create user if not exists (scoped to this channel)
-      await this.db.user.upsert({
-        where: { 
-          twitchUsername_channelId: {
-            twitchUsername: submitter,
-            channelId: this.channelId
-          }
-        },
-        update: { 
-          submissionCount: { increment: 1 },
-          lastSubmission: new Date()
-        },
-        create: { 
-          twitchUsername: submitter,
-          channelId: this.channelId,
-          submissionCount: 1,
-          lastSubmission: new Date()
-        }
-      });
 
       // Generate a unique alias for this specific video submission
       const randomAlias = await this._generateUniqueAlias();
@@ -1810,31 +1804,124 @@ class QueueService {
         }
       });
 
-      // Add to queue
+      let vipIds = [];
+      try {
+        const list = await this._getVipList();
+        if (Array.isArray(list)) {
+          vipIds = list;
+        }
+      } catch (vipListError) {
+        logger.warn('Failed to read VIP queue when enforcing per-user limit', {
+          channelId: this.channelId,
+          submitter,
+          error: vipListError
+        });
+      }
+
       const initialStatus = options.initialStatus || 'APPROVED';
 
-      const queueItem = await this.db.queueItem.create({
-        data: {
-          channelId: this.channelId,
-          videoUrl: videoData.url,
-          videoId: videoData.videoId,
-          platform: videoData.platform,
-          title: videoData.title,
-          thumbnailUrl: videoData.thumbnail,
-          duration: videoData.duration,
-          startTime: videoData.startTime || 0,
-          submitterUsername: submitter,
-          submitterAlias: randomAlias,
-          position: nextPosition,
-          status: initialStatus,
-          cupId: activeCup?.id // Auto-assign to active cup if one exists
-        },
-        include: {
-          submitter: {
-            select: SUBMITTER_SELECT
-          },
-          cup: true
+      // Size, per-user, and duplicate checks race against concurrent
+      // submissions, so they run with the insert in one serializable
+      // transaction (retried on write conflicts).
+      const queueItem = await this._runSerializableTransaction(async (tx) => {
+        const currentSize = await tx.queueItem.count({
+          where: {
+            channelId: this.channelId,
+            status: { in: ACTIVE_QUEUE_STATUSES }
+          }
+        });
+
+        if (currentSize >= maxSize) {
+          throw new Error(`Queue is full (max ${maxSize} items)`);
         }
+
+        if (!Number.isNaN(maxPerUserSetting) && maxPerUserSetting > 0 && !isVipSubmission) {
+          const activeItems = await tx.queueItem.findMany({
+            where: {
+              channelId: this.channelId,
+              submitterUsername: submitter,
+              status: { in: ACTIVE_QUEUE_STATUSES }
+            },
+            select: { id: true }
+          });
+
+          const vipSet = new Set(vipIds);
+          const activeNonVipCount = activeItems.reduce(
+            (count, item) => count + (vipSet.has(item.id) ? 0 : 1),
+            0
+          );
+
+          if (activeNonVipCount >= maxPerUserSetting) {
+            throw new Error(`You already have ${maxPerUserSetting} video${maxPerUserSetting === 1 ? '' : 's'} in the queue.`);
+          }
+        }
+
+        const activeDuplicate = await tx.queueItem.findFirst({
+          where: {
+            channelId: this.channelId,
+            videoId: videoData.videoId,
+            status: { in: DUPLICATE_ACTIVE_STATUSES }
+          },
+          select: { id: true }
+        });
+
+        if (activeDuplicate) {
+          throw new Error('This video is already in the queue');
+        }
+
+        const lastItem = await tx.queueItem.findFirst({
+          where: {
+            channelId: this.channelId,
+            status: { in: ACTIVE_QUEUE_STATUSES }
+          },
+          orderBy: { position: 'desc' },
+          select: { position: true }
+        });
+        const nextPosition = lastItem ? lastItem.position + 1 : 1;
+
+        // Create user if not exists (scoped to this channel)
+        await tx.user.upsert({
+          where: {
+            twitchUsername_channelId: {
+              twitchUsername: submitter,
+              channelId: this.channelId
+            }
+          },
+          update: {
+            submissionCount: { increment: 1 },
+            lastSubmission: new Date()
+          },
+          create: {
+            twitchUsername: submitter,
+            channelId: this.channelId,
+            submissionCount: 1,
+            lastSubmission: new Date()
+          }
+        });
+
+        return tx.queueItem.create({
+          data: {
+            channelId: this.channelId,
+            videoUrl: videoData.url,
+            videoId: videoData.videoId,
+            platform: videoData.platform,
+            title: videoData.title,
+            thumbnailUrl: videoData.thumbnail,
+            duration: videoData.duration,
+            startTime: videoData.startTime || 0,
+            submitterUsername: submitter,
+            submitterAlias: randomAlias,
+            position: nextPosition,
+            status: initialStatus,
+            cupId: activeCup?.id // Auto-assign to active cup if one exists
+          },
+          include: {
+            submitter: {
+              select: SUBMITTER_SELECT
+            },
+            cup: true
+          }
+        });
       });
 
       const hydratedItem = await this._hydrateQueueItem(queueItem);

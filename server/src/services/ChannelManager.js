@@ -3,6 +3,7 @@ const QueueService = require('./QueueService');
 const JudgeService = require('./JudgeService');
 const logger = require('../utils/logger');
 const { getDatabase } = require('../database/connection');
+const { computeCupScoring } = require('./cupScoring');
 
 const SERIES_POINTS_TABLE = [15, 12, 10, 8, 6, 5, 4, 2];
 const SERIES_PARTICIPATION_POINTS = 1; // participation point for anyone outside the Top 8
@@ -73,64 +74,6 @@ const getBestFinish = (placements = []) => {
     best = Math.min(best, value);
   });
   return Number.isFinite(best) ? best : null;
-};
-
-const buildCupScoreData = (queueItems) => {
-  const videos = queueItems.map((item) => {
-    const judgeScores = Array.isArray(item.judgeScores) ? item.judgeScores : [];
-    const judgeCount = judgeScores.length;
-    const submitterUsername = item.submitter?.twitchUsername || item.submitterUsername;
-
-    if (!judgeCount) {
-      return {
-        queueItemId: item.id,
-      videoId: item.videoId,
-      videoUrl: item.videoUrl,
-      title: item.title,
-      thumbnailUrl: item.thumbnailUrl,
-      submitterUsername,
-      publicSubmitterName: submitterUsername,
-      status: item.status,
-      judgeCount: 0,
-      averageScore: null,
-      totalScore: null,
-      judgeScores: [],
-      playedAt: item.playedAt,
-      createdAt: item.createdAt
-      };
-    }
-
-    const totalScore = judgeScores.reduce((sum, score) => sum + Number(score.score), 0);
-    const averageScore = totalScore / judgeCount;
-
-    return {
-      queueItemId: item.id,
-      videoId: item.videoId,
-      videoUrl: item.videoUrl,
-      title: item.title,
-      thumbnailUrl: item.thumbnailUrl,
-      submitterUsername,
-      publicSubmitterName: submitterUsername,
-      status: item.status,
-      judgeCount,
-      totalScore: Number(totalScore.toFixed(5)),
-      averageScore: Number(averageScore.toFixed(5)),
-      judgeScores: judgeScores.map(score => ({
-        score: Number(score.score),
-        judgeName: score.judgeName || score.judgeSession?.judgeName || 'Anonymous',
-        comment: score.comment,
-        isLocked: score.isLocked
-      })),
-      playedAt: item.playedAt,
-      createdAt: item.createdAt
-    };
-  });
-
-  // Initial return uses only videos; standings are built after duplicate penalties
-  return {
-    videos,
-    standings: []
-  };
 };
 
 class ChannelManager {
@@ -343,93 +286,12 @@ class ChannelManager {
       })
     ]);
 
-    const { videos } = buildCupScoreData(queueItems);
-
-    // Build previous-average map per item (last prior run of same videoId)
-    const byVideo = new Map();
-    for (const item of allTerminal) {
-      const arr = byVideo.get(item.videoId) || [];
-      arr.push(item);
-      byVideo.set(item.videoId, arr);
-    }
-    const prevAvgByItemId = new Map();
-    for (const [_videoId, items] of byVideo.entries()) {
-      // items already sorted
-      const averages = items.map((it) => {
-        const scores = Array.isArray(it.judgeScores) ? it.judgeScores : [];
-        if (!scores.length) return null;
-        const total = scores.reduce((s, x) => s + Number(x.score), 0);
-        return total / scores.length;
-      });
-      for (let i = 1; i < items.length; i += 1) {
-        const prev = averages[i - 1];
-        if (typeof prev === 'number') {
-          prevAvgByItemId.set(items[i].id, Number(prev.toFixed(5)));
-        }
-      }
-    }
-
-    // Apply rule: if not strictly greater than previous average, force 0
-    const penalizedVideos = videos.map((v) => {
-      const prev = prevAvgByItemId.get(v.queueItemId);
-      if (typeof v.averageScore === 'number' && typeof prev === 'number') {
-        if (!(v.averageScore > prev)) {
-          return { ...v, averageScore: 0, totalScore: 0 };
-        }
-      }
-      return v;
+    // Shared scoring pipeline: per-video averages, duplicate penalty against
+    // the previous run, cup baseline, shrunk top-K standings.
+    const { videos: penalizedVideos, standings } = computeCupScoring({
+      queueItems,
+      terminalItems: allTerminal
     });
-
-    // Build standings using shrunk top-K with cup baseline
-    const DEFAULT_BASELINE = 3.4;
-    const K = 5;
-    const scoredValues = penalizedVideos
-      .map((v) => (typeof v.averageScore === 'number' ? v.averageScore : null))
-      .filter((n) => typeof n === 'number');
-    const cupBaseline = scoredValues.length > 0
-      ? (scoredValues.reduce((s, n) => s + n, 0) / scoredValues.length)
-      : DEFAULT_BASELINE;
-
-    const byUser = new Map();
-    penalizedVideos
-      .filter((v) => typeof v.averageScore === 'number')
-      .forEach((v) => {
-        const key = v.submitterUsername;
-        const existing = byUser.get(key) || {
-          submitterUsername: key,
-          scores: [],
-          totalJudgeCount: 0
-        };
-        existing.scores.push(v.averageScore);
-        existing.totalJudgeCount += (v.judgeCount || 0);
-        byUser.set(key, existing);
-      });
-
-    const standings = Array.from(byUser.values())
-      .map((entry) => {
-        const sorted = entry.scores.slice().sort((a, b) => b - a);
-        const n = Math.min(sorted.length, K);
-        const sumTop = sorted.slice(0, n).reduce((s, x) => s + x, 0);
-        const padded = (sumTop + (K - n) * cupBaseline) / K;
-        const totalScore = entry.scores.reduce((s, x) => s + x, 0);
-        return {
-          submitterUsername: entry.submitterUsername,
-          totalScore: Number(totalScore.toFixed(5)),
-          averageScore: Number(padded.toFixed(5)),
-          judgeCount: entry.totalJudgeCount,
-          videoCount: entry.scores.length
-        };
-      })
-      .sort((a, b) => {
-        if ((b.averageScore ?? 0) !== (a.averageScore ?? 0)) {
-          return (b.averageScore ?? 0) - (a.averageScore ?? 0);
-        }
-        if ((b.videoCount || 0) !== (a.videoCount || 0)) {
-          return (b.videoCount || 0) - (a.videoCount || 0);
-        }
-        return (b.judgeCount || 0) - (a.judgeCount || 0);
-      })
-      .map((entry, index) => ({ ...entry, rank: index + 1 }));
 
     await this.prisma.$transaction([
       this.prisma.cupStanding.deleteMany({ where: { cupId } }),
